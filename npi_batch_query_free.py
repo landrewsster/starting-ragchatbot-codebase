@@ -60,6 +60,24 @@ TAXONOMY_SETS = [
     },
 ]
 
+# The NPI API's taxonomy_description parameter is a text search on the description,
+# not the code. These search terms retrieve the right candidates; results are then
+# filtered client-side to the exact taxonomy code.
+TAXONOMY_SEARCH_TERMS = {
+    "207VX0000X": "Complex Family Planning",
+    "207VG0400X": "Gynecology",
+    "2080N0001X": "Neonatal-Perinatal",
+    "207V00000X": "Obstetrics & Gynecology",
+    "163WX0002X": "Obstetric/Gynecologic",
+    "163WX0003X": "Inpatient Obstetric",
+    "163WM0102X": "Maternal Newborn",
+    "163WN0002X": "Neonatal Intensive Care",
+    "163WW0101X": "Wound Care",
+    "163WP1700X": "Perinatal",
+    "175M00000X": "Midwife",
+    "176B00000X": "Midwife",   # filtered client-side to exact code
+}
+
 # ── CSV columns ────────────────────────────────────────────────────────────────
 
 CSV_COLUMNS = [
@@ -185,43 +203,51 @@ def flatten_provider(record: dict, query_taxonomy_code: str) -> dict:
 
 def fetch_all_for_taxonomy(taxonomy_code: str) -> list[dict]:
     """
-    Page through the NPI registry and return every provider record
-    matching the given taxonomy code + shared filters.
+    Page through the NPI registry and return every provider record whose
+    taxonomies list contains *taxonomy_code* exactly.
+
+    The API's taxonomy_description param does text matching on descriptions,
+    not codes, so we use a mapped search term to retrieve candidates and then
+    filter client-side by the exact code.
     """
-    providers = []
-    skip = 0
+    search_term = TAXONOMY_SEARCH_TERMS.get(taxonomy_code, taxonomy_code)
+    matched, skip = [], 0
 
     while True:
         params = {
-            "version":          "2.1",
-            "enumeration_type": ENUM_TYPE,
-            "taxonomy_description": taxonomy_code,
-            "state":            STATE,
-            "country_code":     COUNTRY_CODE,
-            "limit":            PAGE_SIZE,
-            "skip":             skip,
+            "version":              "2.1",
+            "enumeration_type":     ENUM_TYPE,
+            "taxonomy_description": search_term,
+            "state":                STATE,
+            "country_code":         COUNTRY_CODE,
+            "limit":                PAGE_SIZE,
+            "skip":                 skip,
         }
 
         resp = requests.get(NPI_API_URL, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
-        results = data.get("results", [])
-        providers.extend(results)
-
+        results      = data.get("results", [])
         result_count = data.get("result_count", 0)
+
+        # Filter to providers that carry the exact taxonomy code
+        page_matched = [
+            r for r in results
+            if any(t.get("code") == taxonomy_code for t in r.get("taxonomies", []))
+        ]
+        matched.extend(page_matched)
         skip += len(results)
 
-        print(f"    page {skip // PAGE_SIZE}: {len(results)} records "
-              f"(total so far: {len(providers)} / {result_count})")
+        print(f"    fetched {skip}/{result_count} candidates — "
+              f"{len(matched)} match code {taxonomy_code} so far")
 
-        # Stop when we've received everything or the page was empty
-        if not results or len(providers) >= result_count:
+        if not results or skip >= result_count:
             break
 
         time.sleep(PAUSE_SEC)
 
-    return providers
+    return matched
 
 # ── Per-set runner ─────────────────────────────────────────────────────────────
 
