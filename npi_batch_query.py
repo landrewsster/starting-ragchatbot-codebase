@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """
-Batch NPI Registry queries across multiple taxonomy codes.
+Batch NPI Registry queries across two named taxonomy sets.
 
 For each taxonomy code this script:
-  1. Searches the NPI registry for providers in STATE with that taxonomy.
+  1. Searches the NPI registry for Individual providers in Minnesota (Primary
+     Location, United States) with that taxonomy.
   2. Fetches the complete record for every NPI returned.
-  3. Appends the results to OUTPUT_FILE (JSON).
+  3. Writes one CSV row per provider to the set's output file.
 
-If OUTPUT_FILE already exists the script skips taxonomy codes that were
-already processed, so interrupted runs can be safely resumed.
+Interrupted runs can be safely resumed — already-processed taxonomy codes
+are detected from the existing CSV and skipped.
 
 Usage:
     python npi_batch_query.py
-
-Configuration:
-    Edit STATE, TAXONOMY_CODES, and OUTPUT_FILE below, or override via
-    environment variables NPI_STATE and NPI_OUTPUT.
 """
 
+import csv
 import json
 import os
 import sys
@@ -26,18 +24,41 @@ from pathlib import Path
 from dotenv import load_dotenv
 import anthropic
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# ── Shared filters ─────────────────────────────────────────────────────────────
 
-STATE           = os.getenv("NPI_STATE",        "Minnesota")
-COUNTRY         = os.getenv("NPI_COUNTRY",      "United States")
-ADDRESS_TYPE    = os.getenv("NPI_ADDRESS_TYPE",  "Primary Location")
-NPI_TYPE        = os.getenv("NPI_TYPE",          "Individual")
+STATE        = "Minnesota"
+COUNTRY      = "United States"
+ADDRESS_TYPE = "Primary Location"
+NPI_TYPE     = "Individual"
 
-TAXONOMY_CODES = [
-    # Add taxonomy codes here
+# ── Taxonomy sets ──────────────────────────────────────────────────────────────
+
+TAXONOMY_SETS = [
+    {
+        "label":       "physicians",
+        "output_file": Path("npi_results_physicians.csv"),
+        "taxonomy_codes": [
+            "207VX0000X",   # Obstetrics & Gynecology - Complex Family Planning
+            "207VG0400X",   # Obstetrics & Gynecology - Gynecology
+            "2080N0001X",   # Neonatal-Perinatal Medicine
+            "207V00000X",   # Obstetrics & Gynecology
+        ],
+    },
+    {
+        "label":       "nurses_and_midwives",
+        "output_file": Path("npi_results_nurses_midwives.csv"),
+        "taxonomy_codes": [
+            "163WX0002X",   # Obstetric/Gynecologic Registered Nurse
+            "163WX0003X",   # Inpatient Obstetric Registered Nurse
+            "163WM0102X",   # Maternal Newborn Registered Nurse
+            "163WN0002X",   # Neonatal Intensive Care Registered Nurse
+            "163WW0101X",   # Wound Care Registered Nurse
+            "163WP1700X",   # Perinatal Registered Nurse
+            "175M00000X",   # Midwife
+            "176B00000X",   # Midwife, Lay
+        ],
+    },
 ]
-
-OUTPUT_FILE = Path(os.getenv("NPI_OUTPUT", "npi_results.json"))
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -47,7 +68,6 @@ NPI_MCP_SERVER = {
     "name": "npi-registry",
 }
 
-# Ask Claude to return only a JSON array of NPI strings so parsing is reliable
 SEARCH_SYSTEM_PROMPT = """\
 You are an NPI Registry data extraction assistant.
 Use the NPI registry tools to find providers matching the request.
@@ -56,7 +76,6 @@ Example: ["1234567890", "0987654321"]
 Output nothing else — no explanation, no markdown fences.\
 """
 
-# Ask Claude to return the full provider record as a JSON object
 DETAIL_SYSTEM_PROMPT = """\
 You are an NPI Registry data extraction assistant.
 Use the NPI registry tools to retrieve full details for the given NPI number.
@@ -68,10 +87,50 @@ Output nothing else — no explanation, no markdown fences.\
 
 MODEL = "claude-sonnet-4-6"
 
+# CSV columns — every provider row will contain these fields
+CSV_COLUMNS = [
+    "npi",
+    "enumeration_type",
+    "status",
+    "enumeration_date",
+    "last_updated",
+    "last_name",
+    "first_name",
+    "middle_name",
+    "name_prefix",
+    "name_suffix",
+    "credential",
+    "gender",
+    "sole_proprietor",
+    "primary_address_1",
+    "primary_address_2",
+    "primary_city",
+    "primary_state",
+    "primary_postal_code",
+    "primary_country_code",
+    "primary_telephone",
+    "primary_fax",
+    "mailing_address_1",
+    "mailing_address_2",
+    "mailing_city",
+    "mailing_state",
+    "mailing_postal_code",
+    "mailing_country_code",
+    "mailing_telephone",
+    "mailing_fax",
+    "taxonomy_codes",           # semicolon-separated list
+    "taxonomy_descriptions",    # semicolon-separated list
+    "taxonomy_licenses",        # semicolon-separated list
+    "taxonomy_states",          # semicolon-separated list
+    "primary_taxonomy_code",
+    "identifiers",              # semicolon-separated "type:value" pairs
+    "other_names",              # semicolon-separated
+    "query_taxonomy_code",      # the taxonomy code used to find this provider
+]
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _extract_json(text: str, *, array: bool):
-    """Pull the first JSON array or object out of an arbitrary text string."""
     open_ch, close_ch = ('[', ']') if array else ('{', '}')
     start = text.find(open_ch)
     end   = text.rfind(close_ch) + 1
@@ -90,17 +149,90 @@ def _text_from_response(response) -> str:
     )
 
 
+def _addr(addresses: list, purpose: str) -> dict:
+    """Return the first address block matching *purpose* ('LOCATION' or 'MAILING')."""
+    for a in addresses:
+        if isinstance(a, dict) and a.get("address_purpose", "").upper() == purpose:
+            return a
+    return {}
+
+
+def flatten_provider(record: dict, query_taxonomy_code: str) -> dict:
+    """Convert a raw NPI API record dict into a flat CSV row dict."""
+    basic     = record.get("basic", {})
+    addresses = record.get("addresses", [])
+    taxonomies = record.get("taxonomies", [])
+    identifiers = record.get("identifiers", [])
+    other_names = record.get("other_names", [])
+
+    loc  = _addr(addresses, "LOCATION")
+    mail = _addr(addresses, "MAILING")
+
+    tax_codes  = [t.get("code", "")        for t in taxonomies]
+    tax_descs  = [t.get("desc", "")        for t in taxonomies]
+    tax_lic    = [t.get("license", "")     for t in taxonomies]
+    tax_states = [t.get("state", "")       for t in taxonomies]
+    primary_tx = next((t.get("code", "") for t in taxonomies if t.get("primary")), "")
+
+    ident_strs = [
+        f"{i.get('type', '')}:{i.get('identifier', '')}"
+        for i in identifiers if isinstance(i, dict)
+    ]
+
+    other_name_strs = [
+        " ".join(filter(None, [
+            n.get("prefix", ""), n.get("first_name", ""),
+            n.get("middle_name", ""), n.get("last_name", ""),
+            n.get("suffix", ""),
+        ]))
+        for n in other_names if isinstance(n, dict)
+    ]
+
+    return {
+        "npi":                  record.get("npi", ""),
+        "enumeration_type":     record.get("enumerationType", ""),
+        "status":               basic.get("status", ""),
+        "enumeration_date":     basic.get("enumeration_date", ""),
+        "last_updated":         basic.get("last_updated", ""),
+        "last_name":            basic.get("last_name", ""),
+        "first_name":           basic.get("first_name", ""),
+        "middle_name":          basic.get("middle_name", ""),
+        "name_prefix":          basic.get("name_prefix", ""),
+        "name_suffix":          basic.get("name_suffix", ""),
+        "credential":           basic.get("credential", ""),
+        "gender":               basic.get("gender", ""),
+        "sole_proprietor":      basic.get("sole_proprietor", ""),
+        "primary_address_1":    loc.get("address_1", ""),
+        "primary_address_2":    loc.get("address_2", ""),
+        "primary_city":         loc.get("city", ""),
+        "primary_state":        loc.get("state", ""),
+        "primary_postal_code":  loc.get("postal_code", ""),
+        "primary_country_code": loc.get("country_code", ""),
+        "primary_telephone":    loc.get("telephone_number", ""),
+        "primary_fax":          loc.get("fax_number", ""),
+        "mailing_address_1":    mail.get("address_1", ""),
+        "mailing_address_2":    mail.get("address_2", ""),
+        "mailing_city":         mail.get("city", ""),
+        "mailing_state":        mail.get("state", ""),
+        "mailing_postal_code":  mail.get("postal_code", ""),
+        "mailing_country_code": mail.get("country_code", ""),
+        "mailing_telephone":    mail.get("telephone_number", ""),
+        "mailing_fax":          mail.get("fax_number", ""),
+        "taxonomy_codes":           "; ".join(tax_codes),
+        "taxonomy_descriptions":    "; ".join(tax_descs),
+        "taxonomy_licenses":        "; ".join(tax_lic),
+        "taxonomy_states":          "; ".join(tax_states),
+        "primary_taxonomy_code":    primary_tx,
+        "identifiers":              "; ".join(ident_strs),
+        "other_names":              "; ".join(other_name_strs),
+        "query_taxonomy_code":      query_taxonomy_code,
+    }
+
+
 # ── Core queries ───────────────────────────────────────────────────────────────
 
-def search_npis(
-    client: anthropic.Anthropic,
-    state: str,
-    taxonomy_code: str,
-    country: str,
-    address_type: str,
-    npi_type: str,
-) -> list[str]:
-    """Return NPI numbers for providers matching all supplied filters."""
+def search_npis(client: anthropic.Anthropic, taxonomy_code: str) -> list[str]:
+    """Return NPI numbers for Individual providers in Minnesota matching *taxonomy_code*."""
     response = client.beta.messages.create(
         model=MODEL,
         max_tokens=2048,
@@ -109,10 +241,10 @@ def search_npis(
             "role": "user",
             "content": (
                 f"Search the NPI registry for healthcare providers with ALL of the following filters:\n"
-                f"  - NPI Type: {npi_type}\n"
-                f"  - State: {state}\n"
-                f"  - Country: {country}\n"
-                f"  - Address Type: {address_type}\n"
+                f"  - NPI Type: {NPI_TYPE}\n"
+                f"  - State: {STATE}\n"
+                f"  - Country: {COUNTRY}\n"
+                f"  - Address Type: {ADDRESS_TYPE}\n"
                 f"  - Taxonomy code: {taxonomy_code}\n"
                 "Return a JSON array of NPI number strings."
             ),
@@ -122,8 +254,6 @@ def search_npis(
     )
 
     raw = _extract_json(_text_from_response(response), array=True)
-
-    # Accept both plain NPI strings and objects that contain an "npi" key
     npis: list[str] = []
     for item in raw:
         if isinstance(item, str):
@@ -153,6 +283,58 @@ def fetch_npi_details(client: anthropic.Anthropic, npi: str) -> dict:
     return result
 
 
+# ── Per-set runner ─────────────────────────────────────────────────────────────
+
+def run_taxonomy_set(client: anthropic.Anthropic, taxonomy_set: dict) -> None:
+    label        = taxonomy_set["label"]
+    output_file  = taxonomy_set["output_file"]
+    tax_codes    = taxonomy_set["taxonomy_codes"]
+
+    print(f"\n{'═' * 60}")
+    print(f"  Set: {label}  →  {output_file}")
+    print(f"  Filters: {NPI_TYPE} | {STATE}, {COUNTRY} | {ADDRESS_TYPE}")
+    print(f"  Taxonomy codes: {', '.join(tax_codes)}")
+    print(f"{'═' * 60}")
+
+    # Detect already-processed taxonomy codes so the run can be resumed
+    done: set[str] = set()
+    file_exists = output_file.exists()
+    if file_exists:
+        with open(output_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("query_taxonomy_code"):
+                    done.add(row["query_taxonomy_code"])
+        print(f"  Resuming — {len(done)} taxonomy code(s) already in {output_file}.")
+
+    # Open CSV for appending (write header only if file is new)
+    with open(output_file, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        if not file_exists:
+            writer.writeheader()
+
+        for taxonomy_code in tax_codes:
+            if taxonomy_code in done:
+                print(f"\n  skip  {taxonomy_code} (already in CSV)")
+                continue
+
+            print(f"\n  ── {taxonomy_code} ──")
+            print("    Searching for NPI numbers...", end=" ", flush=True)
+            npis = search_npis(client, taxonomy_code)
+            print(f"{len(npis)} found.")
+
+            for i, npi in enumerate(npis, 1):
+                print(f"    [{i}/{len(npis)}] NPI {npi}...", end=" ", flush=True)
+                details  = fetch_npi_details(client, npi)
+                flat_row = flatten_provider(details, taxonomy_code)
+                writer.writerow(flat_row)
+                csvfile.flush()   # persist row immediately
+                print("saved.")
+
+    total_rows = sum(1 for _ in open(output_file, encoding="utf-8")) - 1  # minus header
+    print(f"\n  {label} complete — {total_rows} provider row(s) in {output_file.resolve()}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -164,58 +346,14 @@ def main() -> None:
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Load existing output so interrupted runs can be resumed
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE) as f:
-            output = json.load(f)
-        done = {q["taxonomy_code"] for q in output.get("queries", [])}
-        print(f"Resuming — {len(done)} taxonomy code(s) already in {OUTPUT_FILE}.")
-    else:
-        output = {
-            "state": STATE,
-            "country": COUNTRY,
-            "address_type": ADDRESS_TYPE,
-            "npi_type": NPI_TYPE,
-            "queries": [],
-        }
-        done = set()
+    for taxonomy_set in TAXONOMY_SETS:
+        run_taxonomy_set(client, taxonomy_set)
 
-    for taxonomy_code in TAXONOMY_CODES:
-        if taxonomy_code in done:
-            print(f"  skip  {taxonomy_code} (already processed)")
-            continue
-
-        print(f"\n── Taxonomy {taxonomy_code} ──")
-        print(f"  Filters: {NPI_TYPE} | {STATE}, {COUNTRY} | {ADDRESS_TYPE}")
-        print("  Searching for NPI numbers...", end=" ", flush=True)
-        npis = search_npis(client, STATE, taxonomy_code, COUNTRY, ADDRESS_TYPE, NPI_TYPE)
-        print(f"{len(npis)} found.")
-
-        providers: list[dict] = []
-        for i, npi in enumerate(npis, 1):
-            print(f"  [{i}/{len(npis)}] Fetching full record for NPI {npi}...", end=" ", flush=True)
-            details = fetch_npi_details(client, npi)
-            providers.append(details)
-            print("done.")
-
-        output["queries"].append({
-            "taxonomy_code": taxonomy_code,
-            "state": STATE,
-            "country": COUNTRY,
-            "address_type": ADDRESS_TYPE,
-            "npi_type": NPI_TYPE,
-            "provider_count": len(providers),
-            "providers": providers,
-        })
-
-        # Write after every taxonomy so progress is never lost on interruption
-        with open(OUTPUT_FILE, "w") as f:
-            json.dump(output, f, indent=2)
-        print(f"  Saved {len(providers)} provider(s) → {OUTPUT_FILE}")
-
-    total = sum(q["provider_count"] for q in output["queries"])
-    print(f"\nComplete — {len(output['queries'])} taxonomy code(s), {total} total provider(s).")
-    print(f"Output file: {OUTPUT_FILE.resolve()}")
+    print(f"\n{'═' * 60}")
+    print("  All sets complete.")
+    for ts in TAXONOMY_SETS:
+        print(f"    {ts['label']:25s} → {ts['output_file'].resolve()}")
+    print(f"{'═' * 60}")
 
 
 if __name__ == "__main__":
