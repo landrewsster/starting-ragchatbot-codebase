@@ -78,7 +78,7 @@ TAXONOMY_SEARCH_TERMS = {
 CSV_COLUMNS = [
     "npi", "enumeration_type", "status", "enumeration_date", "last_updated",
     "last_name", "first_name", "middle_name", "name_prefix", "name_suffix",
-    "credential", "gender", "sole_proprietor",
+    "credential", "gender", "sole_proprietor", "organization_name",
     "primary_address_1", "primary_address_2", "primary_city", "primary_state",
     "primary_postal_code", "primary_country_code", "primary_telephone", "primary_fax",
     "mailing_address_1", "mailing_address_2", "mailing_city", "mailing_state",
@@ -113,6 +113,7 @@ def flatten_provider(record, query_taxonomy_code):
         "credential":           basic.get("credential", ""),
         "gender":               basic.get("gender", ""),
         "sole_proprietor":      basic.get("sole_proprietor", ""),
+        "organization_name":    basic.get("organization_name", ""),
         "primary_address_1":    loc.get("address_1", ""),
         "primary_address_2":    loc.get("address_2", ""),
         "primary_city":         loc.get("city", ""),
