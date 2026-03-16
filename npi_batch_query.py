@@ -28,12 +28,22 @@ import anthropic
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-STATE = os.getenv("NPI_STATE", "CA")
+STATE           = os.getenv("NPI_STATE",        "Minnesota")
+COUNTRY         = os.getenv("NPI_COUNTRY",      "United States")
+ADDRESS_TYPE    = os.getenv("NPI_ADDRESS_TYPE",  "Primary Location")
+NPI_TYPE        = os.getenv("NPI_TYPE",          "Individual")
 
 TAXONOMY_CODES = [
-    "207Q00000X",   # Family Medicine
-    "207R00000X",   # Internal Medicine
-    "363L00000X",   # Nurse Practitioner
+    "207V00000X",   # Obstetrics & Gynecology
+    "2080N0001X",   # Neonatal-Perinatal Medicine
+    "163WX0002X",   # Obstetric/Gynecologic Registered Nurse
+    "163WX0003X",   # Inpatient Obstetric Registered Nurse
+    "163WM0102X",   # Maternal Newborn Registered Nurse
+    "163WN0002X",   # Neonatal Intensive Care Registered Nurse
+    "163WW0101X",   # Wound Care Registered Nurse
+    "163WP1700X",   # Perinatal Registered Nurse
+    "175M00000X",   # Midwife
+    "176B00000X",   # Midwife, Lay
 ]
 
 OUTPUT_FILE = Path(os.getenv("NPI_OUTPUT", "npi_results.json"))
@@ -91,8 +101,15 @@ def _text_from_response(response) -> str:
 
 # ── Core queries ───────────────────────────────────────────────────────────────
 
-def search_npis(client: anthropic.Anthropic, state: str, taxonomy_code: str) -> list[str]:
-    """Return a list of NPI number strings for providers in *state* matching *taxonomy_code*."""
+def search_npis(
+    client: anthropic.Anthropic,
+    state: str,
+    taxonomy_code: str,
+    country: str,
+    address_type: str,
+    npi_type: str,
+) -> list[str]:
+    """Return NPI numbers for providers matching all supplied filters."""
     response = client.beta.messages.create(
         model=MODEL,
         max_tokens=2048,
@@ -100,8 +117,12 @@ def search_npis(client: anthropic.Anthropic, state: str, taxonomy_code: str) -> 
         messages=[{
             "role": "user",
             "content": (
-                f"Search the NPI registry for healthcare providers in {state} "
-                f"with taxonomy code {taxonomy_code}. "
+                f"Search the NPI registry for healthcare providers with ALL of the following filters:\n"
+                f"  - NPI Type: {npi_type}\n"
+                f"  - State: {state}\n"
+                f"  - Country: {country}\n"
+                f"  - Address Type: {address_type}\n"
+                f"  - Taxonomy code: {taxonomy_code}\n"
                 "Return a JSON array of NPI number strings."
             ),
         }],
@@ -159,7 +180,13 @@ def main() -> None:
         done = {q["taxonomy_code"] for q in output.get("queries", [])}
         print(f"Resuming — {len(done)} taxonomy code(s) already in {OUTPUT_FILE}.")
     else:
-        output = {"state": STATE, "queries": []}
+        output = {
+            "state": STATE,
+            "country": COUNTRY,
+            "address_type": ADDRESS_TYPE,
+            "npi_type": NPI_TYPE,
+            "queries": [],
+        }
         done = set()
 
     for taxonomy_code in TAXONOMY_CODES:
@@ -167,9 +194,10 @@ def main() -> None:
             print(f"  skip  {taxonomy_code} (already processed)")
             continue
 
-        print(f"\n── Taxonomy {taxonomy_code} in {STATE} ──")
+        print(f"\n── Taxonomy {taxonomy_code} ──")
+        print(f"  Filters: {NPI_TYPE} | {STATE}, {COUNTRY} | {ADDRESS_TYPE}")
         print("  Searching for NPI numbers...", end=" ", flush=True)
-        npis = search_npis(client, STATE, taxonomy_code)
+        npis = search_npis(client, STATE, taxonomy_code, COUNTRY, ADDRESS_TYPE, NPI_TYPE)
         print(f"{len(npis)} found.")
 
         providers: list[dict] = []
@@ -182,6 +210,9 @@ def main() -> None:
         output["queries"].append({
             "taxonomy_code": taxonomy_code,
             "state": STATE,
+            "country": COUNTRY,
+            "address_type": ADDRESS_TYPE,
+            "npi_type": NPI_TYPE,
             "provider_count": len(providers),
             "providers": providers,
         })
