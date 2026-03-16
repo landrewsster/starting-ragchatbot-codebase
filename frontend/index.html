@@ -49,6 +49,24 @@
                         </div>
                     </details>
                 </div>
+
+                <!-- NPI Provider Search -->
+                <div class="sidebar-section">
+                    <details class="npi-collapsible" open>
+                        <summary class="npi-header">NPI Provider Search</summary>
+                        <div class="npi-form">
+                            <div class="npi-field">
+                                <label for="npiState">State</label>
+                                <input type="text" id="npiState" placeholder="e.g. CA, Texas" maxlength="50">
+                            </div>
+                            <div class="npi-field">
+                                <label for="npiTaxonomies">Taxonomies <span class="npi-hint">(comma-separated)</span></label>
+                                <input type="text" id="npiTaxonomies" placeholder="e.g. 207Q00000X, Nurse">
+                            </div>
+                            <button id="npiSearchButton" class="npi-search-btn">Search NPI Registry</button>
+                        </div>
+                    </details>
+                </div>
             </aside>
 
             <!-- Main Chat Area -->

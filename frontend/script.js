@@ -5,7 +5,7 @@ const API_URL = '/api';
 let currentSessionId = null;
 
 // DOM elements
-let chatMessages, chatInput, sendButton, totalCourses, courseTitles;
+let chatMessages, chatInput, sendButton, totalCourses, courseTitles, npiState, npiTaxonomies, npiSearchButton;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,6 +15,9 @@ document.addEventListener('DOMContentLoaded', () => {
     sendButton = document.getElementById('sendButton');
     totalCourses = document.getElementById('totalCourses');
     courseTitles = document.getElementById('courseTitles');
+    npiState = document.getElementById('npiState');
+    npiTaxonomies = document.getElementById('npiTaxonomies');
+    npiSearchButton = document.getElementById('npiSearchButton');
     
     setupEventListeners();
     createNewSession();
@@ -30,6 +33,12 @@ function setupEventListeners() {
     });
     
     
+    // NPI search
+    npiSearchButton.addEventListener('click', searchNPI);
+    npiTaxonomies.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') searchNPI();
+    });
+
     // Suggested questions
     document.querySelectorAll('.suggested-item').forEach(button => {
         button.addEventListener('click', (e) => {
@@ -150,6 +159,54 @@ async function createNewSession() {
     currentSessionId = null;
     chatMessages.innerHTML = '';
     addMessage('Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?', 'assistant', null, true);
+}
+
+// NPI Registry Search
+async function searchNPI() {
+    const state = npiState.value.trim();
+    if (!state) {
+        npiState.focus();
+        return;
+    }
+
+    const taxonomiesRaw = npiTaxonomies.value.trim();
+    const taxonomies = taxonomiesRaw
+        ? taxonomiesRaw.split(',').map(t => t.trim()).filter(Boolean)
+        : [];
+
+    // Show query in chat as user message
+    const displayQuery = taxonomies.length
+        ? `NPI search — State: ${state} | Taxonomies: ${taxonomies.join(', ')}`
+        : `NPI search — State: ${state}`;
+    addMessage(displayQuery, 'user');
+
+    // Disable button while loading
+    npiSearchButton.disabled = true;
+    const loadingMessage = createLoadingMessage();
+    chatMessages.appendChild(loadingMessage);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+        const response = await fetch(`${API_URL}/npi`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state, taxonomies: taxonomies.length ? taxonomies : null })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'NPI search failed');
+        }
+
+        const data = await response.json();
+        loadingMessage.remove();
+        addMessage(data.answer, 'assistant');
+    } catch (error) {
+        loadingMessage.remove();
+        addMessage(`Error: ${error.message}`, 'assistant');
+    } finally {
+        npiSearchButton.disabled = false;
+    }
 }
 
 // Load course statistics

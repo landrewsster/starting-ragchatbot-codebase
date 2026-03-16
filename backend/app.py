@@ -51,6 +51,17 @@ class CourseStats(BaseModel):
     total_courses: int
     course_titles: List[str]
 
+class NPIQueryRequest(BaseModel):
+    """Request model for NPI registry queries"""
+    state: str
+    taxonomies: Optional[List[str]] = None
+    session_id: Optional[str] = None
+
+class NPIQueryResponse(BaseModel):
+    """Response model for NPI registry queries"""
+    answer: str
+    session_id: str
+
 # API Endpoints
 
 @app.post("/api/query", response_model=QueryResponse)
@@ -70,6 +81,23 @@ async def query_documents(request: QueryRequest):
             sources=sources,
             session_id=session_id
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/npi", response_model=NPIQueryResponse)
+async def query_npi(request: NPIQueryRequest):
+    """Search the NPI registry by state and optional taxonomies"""
+    try:
+        session_id = request.session_id or rag_system.session_manager.create_session()
+
+        taxonomy_part = f" with taxonomies: {', '.join(request.taxonomies)}" if request.taxonomies else ""
+        query = (
+            f"Search the NPI registry for healthcare providers in {request.state}{taxonomy_part}. "
+            "List the results with NPI numbers, provider names, addresses, and taxonomy descriptions."
+        )
+
+        answer = rag_system.ai_generator.generate_mcp_response(query=query)
+        return NPIQueryResponse(answer=answer, session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
