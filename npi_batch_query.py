@@ -34,16 +34,7 @@ ADDRESS_TYPE    = os.getenv("NPI_ADDRESS_TYPE",  "Primary Location")
 NPI_TYPE        = os.getenv("NPI_TYPE",          "Individual")
 
 TAXONOMY_CODES = [
-    "207V00000X",   # Obstetrics & Gynecology
-    "2080N0001X",   # Neonatal-Perinatal Medicine
-    "163WX0002X",   # Obstetric/Gynecologic Registered Nurse
-    "163WX0003X",   # Inpatient Obstetric Registered Nurse
-    "163WM0102X",   # Maternal Newborn Registered Nurse
-    "163WN0002X",   # Neonatal Intensive Care Registered Nurse
-    "163WW0101X",   # Wound Care Registered Nurse
-    "163WP1700X",   # Perinatal Registered Nurse
-    "175M00000X",   # Midwife
-    "176B00000X",   # Midwife, Lay
+    # Add taxonomy codes here
 ]
 
 OUTPUT_FILE = Path(os.getenv("NPI_OUTPUT", "npi_results.json"))
