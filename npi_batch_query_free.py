@@ -56,12 +56,13 @@ def lookup_organization(address_1: str, city: str, state: str) -> str:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-NPI_API_URL  = "https://npiregistry.cms.hhs.gov/api/"
-STATE        = "MN"
-COUNTRY_CODE = "US"
-ENUM_TYPE    = "NPI-1"
-PAGE_SIZE    = 200
-PAUSE_SEC    = 0.3
+NPI_API_URL       = "https://npiregistry.cms.hhs.gov/api/"
+STATE             = "MN"
+COUNTRY_CODE      = "US"
+ENUM_TYPE         = "NPI-1"
+PAGE_SIZE         = 200
+PAUSE_SEC         = 0.3
+LOOKUP_ORG        = False   # Set True to enable Nominatim org lookup (adds ~1s per provider)
 
 TAXONOMY_SETS = [
     {
@@ -199,7 +200,7 @@ def flatten_provider(record, query_taxonomy_code):
                                      loc.get("address_1", ""),
                                      loc.get("city", ""),
                                      loc.get("state", ""),
-                                 ),
+                                 ) if LOOKUP_ORG else "",
     }
 
 # ── NPI API fetch ──────────────────────────────────────────────────────────────
