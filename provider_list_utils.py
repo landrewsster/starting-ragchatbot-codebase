@@ -738,8 +738,8 @@ def compare_datasets(
 
     # ── Category keys
     matched_keys      = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
-    multi_spec_keys   = {k for k in mn_counts if mn_counts[k] > 1}
-    mn_only_keys      = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 0}
+    multi_spec_keys   = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
+    mn_only_keys      = {k for k in mn_counts if npi_counts.get(k, 0) == 0}
     npi_only_keys     = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
 
     # ── File 1: 1:1 matched — show NPI row + MN row adjacent, sorted by name
