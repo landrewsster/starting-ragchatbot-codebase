@@ -177,7 +177,7 @@ def clean_df(
         )
 
     # Strip leading/trailing whitespace from all remaining string columns
-    str_cols = df.select_dtypes(include="object").columns
+    str_cols = df.select_dtypes(include=["object", "str"]).columns
     for col in str_cols:
         df[col] = df[col].fillna("").astype(str).str.strip()
 
@@ -285,12 +285,20 @@ def flag_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     Add duplicate-inspection columns without removing any rows.
 
     Adds:
-        _name_key   — normalised 'last|first' used for matching
-        _dupe_count — how many rows share this name key (1 = unique)
-        _dupe_group — integer group ID shared by all rows with the same name
-                      (0 for rows that appear only once)
+        _name_key    — normalised 'last|first' used for matching
+        _dupe_count  — how many rows share this name key (1 = unique)
+        _dupe_group  — integer group ID shared by all rows with the same name
+                       (0 for rows that appear only once)
+        _zip_match   — 'Y' if another row in the same dupe group shares the
+                       same zip5 but comes from a different source file,
+                       indicating a strong cross-file match; 'N' otherwise
+        _files_in_group — comma-separated list of source files that contain
+                          this name, so you can see at a glance whether a
+                          name appears in just one file or across multiple
 
     Rows with _dupe_count > 1 are potential duplicates for review.
+    In the dupes review file they are sorted by _dupe_group then source_file
+    so every group of matching rows appears together.
     """
     df = df.copy()
     if NPI_LAST not in df.columns or NPI_FIRST not in df.columns:
@@ -307,10 +315,53 @@ def flag_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     group_map = {k: i + 1 for i, k in enumerate(sorted(dupe_keys))}
     df["_dupe_group"] = df["_name_key"].map(group_map).fillna(0).astype(int)
 
-    n_groups = len(dupe_keys)
-    n_rows   = (df["_dupe_count"] > 1).sum()
-    print(f"  Duplicate check: {n_groups} name(s) appear in more than one file "
-          f"({n_rows} total rows flagged).")
+    # ── _files_in_group: which source files contain this name
+    if "source_file" in df.columns:
+        files_per_key = (
+            df[df["_dupe_count"] > 1]
+            .groupby("_name_key")["source_file"]
+            .apply(lambda s: ", ".join(sorted(s.unique())))
+        )
+        df["_files_in_group"] = df["_name_key"].map(files_per_key).fillna("")
+    else:
+        df["_files_in_group"] = ""
+
+    # ── _zip_match: Y if another row in the same group from a different file
+    #               shares this row's zip5
+    df["_zip_match"] = "N"
+    if NPI_ZIP in df.columns and "source_file" in df.columns:
+        dupes_df = df[df["_dupe_count"] > 1].copy()
+        dupes_df["_zip_norm"] = dupes_df[NPI_ZIP].apply(_norm_zip)
+        for idx, row in dupes_df.iterrows():
+            group_rows = dupes_df[
+                (dupes_df["_dupe_group"] == row["_dupe_group"]) &
+                (dupes_df["source_file"] != row["source_file"]) &
+                (dupes_df["_zip_norm"] == row["_zip_norm"]) &
+                (dupes_df["_zip_norm"] != "")
+            ]
+            if not group_rows.empty:
+                df.at[idx, "_zip_match"] = "Y"
+
+    # ── Cross-file only: flag rows whose name appears in >1 distinct source file
+    if "source_file" in df.columns:
+        cross_keys = set(
+            df[df["_dupe_count"] > 1]
+            .groupby("_name_key")["source_file"]
+            .filter(lambda s: s.nunique() > 1)
+            .index
+        )
+        # Recompute: only count as dupe if name spans multiple files
+        cross_file_mask = df["_name_key"].isin(
+            df.groupby("_name_key")["source_file"]
+            .transform("nunique") > 1
+            if "source_file" in df.columns else pd.Series(False, index=df.index)
+        )
+
+    n_groups     = len(dupe_keys)
+    n_rows       = (df["_dupe_count"] > 1).sum()
+    n_zip_match  = (df["_zip_match"] == "Y").sum()
+    print(f"  Duplicate check: {n_groups} name(s) appear more than once "
+          f"({n_rows} total rows); {n_zip_match} also share a zip code.")
     return df
 
 
@@ -623,19 +674,21 @@ def cmd_merge(args):
     dedup_on = getattr(args, "dedup_on", "none") or "none"
 
     df = load_provider_files(paths, sheet=getattr(args, "sheet", None), col_map=col_map or None)
-    df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup,
-                  dedup_on=dedup_on, sort_keys=sort_keys)
 
-    # ── Duplicate flagging (always runs; exports a review file if dupes found)
+    # ── Flag duplicates BEFORE any dedup so the review file captures all matches
     df = flag_duplicates(df)
     out = args.output or "merged_providers.csv"
     dupes = df[df["_dupe_count"] > 1].sort_values(["_dupe_group", "source_file"])
     if not dupes.empty:
         dupe_out = Path(out).with_name(f"dupes_{Path(out).name}")
         dupes.to_csv(dupe_out, index=False)
-        print(f"  Review file    : {len(dupes)} rows in {dupe_out.resolve()}")
-        print(f"  (Duplicates are kept in the main file — remove manually after review.)")
+        print(f"  Review file    : {len(dupes)} rows → {dupe_out.resolve()}")
+        print(f"  Columns to review: source_file | _dupe_group | _zip_match | _files_in_group")
+        print(f"  (All rows kept in main file — delete unwanted rows after review.)")
 
+    # ── Then clean/normalise/dedup/sort
+    df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup,
+                  dedup_on=dedup_on, sort_keys=sort_keys)
     df.to_csv(out, index=False)
     print(f"\n  Merged: {len(df)} rows → {Path(out).resolve()}")
 
