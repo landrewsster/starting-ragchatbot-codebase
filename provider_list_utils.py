@@ -182,21 +182,44 @@ def clean_df(
 
 # ── Loading helpers ────────────────────────────────────────────────────────────
 
-def load_npi_csvs(paths: list[Path]) -> pd.DataFrame:
-    """Load one or more NPI CSV files and concatenate them."""
+def _load_one(path: Path, sheet: str | None = None) -> pd.DataFrame:
+    """Load a single CSV or Excel file into a DataFrame."""
+    suffix = path.suffix.lower()
+    if suffix in (".xlsx", ".xls"):
+        df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str)
+    elif suffix == ".csv":
+        df = pd.read_csv(path, dtype=str)
+    else:
+        sys.exit(f"Unsupported file type '{suffix}' for {path}. Use .csv, .xlsx, or .xls.")
+    df.columns = df.columns.astype(str).str.strip()
+    # Ensure zip5 is always present
+    if "zip5" not in df.columns and "primary_postal_code" in df.columns:
+        df["zip5"] = df["primary_postal_code"].apply(_norm_zip)
+    return df
+
+
+def load_provider_files(paths: list[Path], sheet: str | None = None) -> pd.DataFrame:
+    """
+    Load one or more CSV or Excel provider files and concatenate them.
+
+    Files with different column sets are stacked; missing columns are filled
+    with empty strings rather than raising an error.
+    """
     frames = []
     for p in paths:
         print(f"  Loading {p} …")
-        df = pd.read_csv(p, dtype=str)
-        # Ensure zip5 is always present (derive from postal code if missing)
-        if "zip5" not in df.columns and "primary_postal_code" in df.columns:
-            df["zip5"] = df["primary_postal_code"].apply(_norm_zip)
+        df = _load_one(p, sheet=sheet)
+        print(f"    {len(df)} rows, {len(df.columns)} columns")
         frames.append(df)
     if not frames:
-        sys.exit("No NPI files loaded.")
-    combined = pd.concat(frames, ignore_index=True)
-    print(f"  Loaded {len(combined)} total rows from {len(paths)} file(s).")
+        sys.exit("No provider files loaded.")
+    combined = pd.concat(frames, ignore_index=True).fillna("")
+    print(f"  Total: {len(combined)} rows from {len(paths)} file(s).")
     return combined
+
+
+# Keep old name as an alias so any existing callers still work.
+load_npi_csvs = load_provider_files
 
 
 def load_external_excel(
@@ -465,11 +488,9 @@ def cmd_clean(args):
     for path in paths:
         print(f"\n{'─'*60}")
         print(f"  Cleaning: {path}")
-        df = pd.read_csv(path, dtype=str)
-        if "zip5" not in df.columns and "primary_postal_code" in df.columns:
-            df["zip5"] = df["primary_postal_code"].apply(_norm_zip)
+        df = _load_one(path, sheet=getattr(args, "sheet", None))
         df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup, sort_keys=sort_keys)
-        out = args.output or path.with_name(f"cleaned_{path.name}")
+        out = args.output or path.with_stem(f"cleaned_{path.stem}").with_suffix(".csv")
         df.to_csv(out, index=False)
         print(f"  Saved {len(df)} rows → {Path(out).resolve()}")
 
@@ -481,8 +502,8 @@ def cmd_merge(args):
         sort_keys = ADDRESS_SORT_KEYS
     else:
         sort_keys = args.sort.split(",") if args.sort else None
-    df = load_npi_csvs(paths)
-    df = clean_df(df, active_only=args.active_only, dedup=True, sort_keys=sort_keys)
+    df = load_provider_files(paths, sheet=getattr(args, "sheet", None))
+    df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup, sort_keys=sort_keys)
     out = args.output or "merged_providers.csv"
     df.to_csv(out, index=False)
     print(f"\n  Merged: {len(df)} unique rows → {Path(out).resolve()}")
@@ -557,9 +578,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # ── clean ──────────────────────────────────────────────────────────────────
-    p_clean = sub.add_parser("clean", help="Clean and deduplicate one or more NPI CSV files.")
-    p_clean.add_argument("files", nargs="+", help="NPI CSV file(s) to clean.")
-    p_clean.add_argument("-o", "--output", help="Output path (only used when a single file is given).")
+    p_clean = sub.add_parser("clean", help="Clean and deduplicate one or more provider files (CSV or Excel).")
+    p_clean.add_argument("files", nargs="+", help="Provider file(s) to clean (.csv or .xlsx).")
+    p_clean.add_argument("-o", "--output", help="Output CSV path (only used when a single file is given).")
+    p_clean.add_argument("--sheet", default=None, help="Excel sheet name or index (default: first sheet).")
     p_clean.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
     p_clean.add_argument("--no-dedup", action="store_true", help="Skip NPI deduplication.")
     p_clean.add_argument("--sort", help="Comma-separated sort keys (default: last_name,first_name,primary_city).")
@@ -567,10 +589,12 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Sort by zip5, city, address_1 to group co-located providers (useful for health-system annotation).")
 
     # ── merge ──────────────────────────────────────────────────────────────────
-    p_merge = sub.add_parser("merge", help="Merge multiple NPI CSV files into one deduplicated file.")
-    p_merge.add_argument("files", nargs="+", help="NPI CSV file(s) to merge.")
+    p_merge = sub.add_parser("merge", help="Merge multiple provider files (CSV or Excel) into one deduplicated CSV.")
+    p_merge.add_argument("files", nargs="+", help="Provider file(s) to merge (.csv or .xlsx).")
     p_merge.add_argument("-o", "--output", default="merged_providers.csv", help="Output CSV path.")
+    p_merge.add_argument("--sheet", default=None, help="Excel sheet name or index applied to all Excel inputs (default: first sheet).")
     p_merge.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
+    p_merge.add_argument("--no-dedup", action="store_true", help="Skip NPI deduplication.")
     p_merge.add_argument("--sort", help="Comma-separated sort keys.")
     p_merge.add_argument("--sort-by-address", action="store_true",
                          help="Sort by zip5, city, address_1 to group co-located providers.")
