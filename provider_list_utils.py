@@ -693,6 +693,127 @@ def cmd_merge(args):
     print(f"\n  Merged: {len(df)} rows → {Path(out).resolve()}")
 
 
+def compare_datasets(
+    npi_df: pd.DataFrame,
+    mn_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split providers into three mutually exclusive output sets based on how
+    their name appears across the NPI dataset and the MN licensing list.
+
+    Categories (from the MN list's perspective):
+        matched_1to1    mn_count == 1  AND  npi_count == 1
+                        Clean 1:1 match. Both the NPI row and MN row are
+                        included, sorted adjacent for easy comparison.
+
+        multi_specialty mn_count > 1
+                        Provider appears more than once in the MN list
+                        (multiple specialties/licenses). All their MN rows
+                        are included, plus their NPI row(s) if any exist.
+
+        mn_only         mn_count == 1  AND  npi_count == 0
+                        In the MN list but no matching name in NPI data.
+
+        npi_only        npi_count > 0  AND  mn_count == 0
+                        In the NPI data but no matching name in MN list.
+                        Returned for completeness; not written by default.
+
+    All DataFrames include a '_name_key' column (normalised last|first) and
+    a 'source_file' column so every row can be traced to its origin file.
+    """
+    npi = npi_df.copy()
+    mn  = mn_df.copy()
+
+    npi["_name_key"] = npi[NPI_LAST].apply(_norm_str) + "|" + npi[NPI_FIRST].apply(_norm_str)
+    mn["_name_key"]  = mn[NPI_LAST].apply(_norm_str)  + "|" + mn[NPI_FIRST].apply(_norm_str)
+
+    npi_counts = npi["_name_key"].value_counts().to_dict()
+    mn_counts  = mn["_name_key"].value_counts().to_dict()
+
+    # Tag each MN row with counts from both datasets
+    mn["_npi_count"] = mn["_name_key"].map(npi_counts).fillna(0).astype(int)
+    mn["_mn_count"]  = mn["_name_key"].map(mn_counts).fillna(0).astype(int)
+    npi["_npi_count"] = npi["_name_key"].map(npi_counts).fillna(0).astype(int)
+    npi["_mn_count"]  = npi["_name_key"].map(mn_counts).fillna(0).astype(int)
+
+    # ── Category keys
+    matched_keys      = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
+    multi_spec_keys   = {k for k in mn_counts if mn_counts[k] > 1}
+    mn_only_keys      = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 0}
+    npi_only_keys     = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
+
+    # ── File 1: 1:1 matched — show NPI row + MN row adjacent, sorted by name
+    npi_matched = npi[npi["_name_key"].isin(matched_keys)].copy()
+    mn_matched  = mn[mn["_name_key"].isin(matched_keys)].copy()
+    matched_1to1 = (
+        pd.concat([npi_matched, mn_matched], ignore_index=True)
+        .sort_values(["_name_key", "source_file"])
+        .reset_index(drop=True)
+    )
+
+    # ── File 2: multi-specialty — all MN rows + NPI rows if name exists in NPI
+    npi_multi = npi[npi["_name_key"].isin(multi_spec_keys)].copy()
+    mn_multi  = mn[mn["_name_key"].isin(multi_spec_keys)].copy()
+    multi_specialty = (
+        pd.concat([npi_multi, mn_multi], ignore_index=True)
+        .sort_values(["_name_key", "source_file"])
+        .reset_index(drop=True)
+    )
+
+    # ── File 3: MN list only, no NPI match
+    mn_only = mn[mn["_name_key"].isin(mn_only_keys)].copy().reset_index(drop=True)
+
+    # ── File 4 (informational): NPI only, no MN match
+    npi_only = npi[npi["_name_key"].isin(npi_only_keys)].copy().reset_index(drop=True)
+
+    return matched_1to1, multi_specialty, mn_only, npi_only
+
+
+def cmd_compare(args):
+    print(f"\n{'─'*60}")
+    col_map = _parse_map(getattr(args, "map", None) or [])
+
+    # Load and clean NPI files
+    npi_paths = [Path(f) for f in args.npi]
+    npi_df = load_provider_files(npi_paths, col_map=col_map or None)
+    npi_df = clean_df(npi_df, active_only=False, dedup=True, dedup_on="npi")
+
+    # Load and clean MN list
+    mn_path = Path(args.mn_list)
+    mn_df = load_provider_files([mn_path], sheet=getattr(args, "sheet", None), col_map=col_map or None)
+    mn_df = clean_df(mn_df, active_only=False, dedup=False)
+
+    if NPI_LAST not in npi_df.columns or NPI_LAST not in mn_df.columns:
+        sys.exit("Both datasets must have 'last_name' and 'first_name' columns. "
+                 "Use --map to rename columns if needed.")
+
+    print(f"\n  Comparing {len(npi_df)} NPI rows vs {len(mn_df)} MN list rows …")
+    matched, multi, mn_only, npi_only = compare_datasets(npi_df, mn_df)
+
+    stem = args.output_prefix or "compare"
+    out_matched = f"{stem}_matched_1to1.csv"
+    out_multi   = f"{stem}_multi_specialty.csv"
+    out_mn_only = f"{stem}_mn_only.csv"
+    out_npi_only = f"{stem}_npi_only.csv"
+
+    matched.to_csv(out_matched,  index=False)
+    multi.to_csv(out_multi,      index=False)
+    mn_only.to_csv(out_mn_only,  index=False)
+    npi_only.to_csv(out_npi_only, index=False)
+
+    n_matched_providers = matched["_name_key"].nunique()
+    n_multi_providers   = multi["_name_key"].nunique()
+
+    print(f"\n  {'─'*56}")
+    print(f"  1:1 matched providers : {n_matched_providers:>6}  ({len(matched)} rows)  → {out_matched}")
+    print(f"  Multi-specialty (MN)  : {n_multi_providers:>6}  ({len(multi)} rows)  → {out_multi}")
+    print(f"  MN list only          : {len(mn_only):>6}  (no NPI match)     → {out_mn_only}")
+    print(f"  NPI only              : {len(npi_only):>6}  (no MN match)      → {out_npi_only}")
+    print(f"  {'─'*56}")
+    print(f"  In each file, rows with the same provider are adjacent.")
+    print(f"  Use 'source_file' to see which row came from which dataset.")
+
+
 def cmd_add_county(args):
     print(f"\n{'─'*60}")
     path = Path(args.file)
@@ -795,6 +916,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("--sort-by-address", action="store_true",
                          help="Sort by zip5, city, address_1 to group co-located providers.")
 
+    # ── compare ────────────────────────────────────────────────────────────────
+    p_cmp = sub.add_parser(
+        "compare",
+        help="Split providers into 3 files: 1:1 NPI+MN matches, MN multi-specialty, MN-only."
+    )
+    p_cmp.add_argument("--npi",     nargs="+", required=True,
+                       help="Cleaned NPI CSV file(s).")
+    p_cmp.add_argument("--mn-list", required=True, dest="mn_list",
+                       help="MN Physician and PA list (.xlsx or .csv).")
+    p_cmp.add_argument("--sheet",   default=None,
+                       help="Excel sheet name for the MN list (default: first sheet).")
+    p_cmp.add_argument("--map",     nargs="+", metavar="SRC=TGT", dest="map",
+                       help="Column renames applied to MN list before comparing, "
+                            "e.g. --map 'address_line1=primary_address_1' 'zip=zip5'.")
+    p_cmp.add_argument("--output-prefix", default="compare", dest="output_prefix",
+                       help="Prefix for output filenames (default: 'compare').")
+
     # ── add-county ─────────────────────────────────────────────────────────────
     p_ac = sub.add_parser("add-county",
                           help="Join county name and FIPS from an HRSA ZIP-to-county crosswalk.")
@@ -827,6 +965,8 @@ def main():
         cmd_clean(args)
     elif args.command == "merge":
         cmd_merge(args)
+    elif args.command == "compare":
+        cmd_compare(args)
     elif args.command == "add-county":
         cmd_add_county(args)
     elif args.command == "crossref":
