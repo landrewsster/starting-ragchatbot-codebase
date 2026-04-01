@@ -251,8 +251,9 @@ def load_provider_files(
     """
     Load one or more CSV or Excel provider files and concatenate them.
 
-    Files with different column sets are stacked; missing columns are filled
-    with empty strings rather than raising an error.
+    A 'source_file' column is always added so every row can be traced back to
+    its origin file.  Files with different column sets are stacked; missing
+    columns are filled with empty strings rather than raising an error.
 
     col_map : optional dict of {source_column: target_column} renames applied
               to any file that contains the source column.  Columns not present
@@ -269,6 +270,7 @@ def load_provider_files(
             if rename:
                 print(f"    Column remap: {rename}")
                 df = df.rename(columns=rename)
+        df["source_file"] = p.name
         print(f"    {len(df)} rows, {len(df.columns)} columns")
         frames.append(df)
     if not frames:
@@ -276,6 +278,40 @@ def load_provider_files(
     combined = pd.concat(frames, ignore_index=True).fillna("")
     print(f"  Total: {len(combined)} rows from {len(paths)} file(s).")
     return combined
+
+
+def flag_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add duplicate-inspection columns without removing any rows.
+
+    Adds:
+        _name_key   — normalised 'last|first' used for matching
+        _dupe_count — how many rows share this name key (1 = unique)
+        _dupe_group — integer group ID shared by all rows with the same name
+                      (0 for rows that appear only once)
+
+    Rows with _dupe_count > 1 are potential duplicates for review.
+    """
+    df = df.copy()
+    if NPI_LAST not in df.columns or NPI_FIRST not in df.columns:
+        print("  WARNING: Cannot flag duplicates — last_name or first_name column missing.")
+        return df
+
+    df["_name_key"] = (
+        df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
+    )
+    counts = df["_name_key"].map(df["_name_key"].value_counts())
+    df["_dupe_count"] = counts.astype(int)
+
+    dupe_keys = df.loc[df["_dupe_count"] > 1, "_name_key"].unique()
+    group_map = {k: i + 1 for i, k in enumerate(sorted(dupe_keys))}
+    df["_dupe_group"] = df["_name_key"].map(group_map).fillna(0).astype(int)
+
+    n_groups = len(dupe_keys)
+    n_rows   = (df["_dupe_count"] > 1).sum()
+    print(f"  Duplicate check: {n_groups} name(s) appear in more than one file "
+          f"({n_rows} total rows flagged).")
+    return df
 
 
 # Keep old name as an alias so any existing callers still work.
@@ -583,12 +619,23 @@ def cmd_merge(args):
         sort_keys = ADDRESS_SORT_KEYS
     else:
         sort_keys = args.sort.split(",") if args.sort else None
-    col_map = _parse_map(getattr(args, "map", None) or [])
-    dedup_on = getattr(args, "dedup_on", "npi") or "npi"
+    col_map  = _parse_map(getattr(args, "map", None) or [])
+    dedup_on = getattr(args, "dedup_on", "none") or "none"
+
     df = load_provider_files(paths, sheet=getattr(args, "sheet", None), col_map=col_map or None)
     df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup,
                   dedup_on=dedup_on, sort_keys=sort_keys)
+
+    # ── Duplicate flagging (always runs; exports a review file if dupes found)
+    df = flag_duplicates(df)
     out = args.output or "merged_providers.csv"
+    dupes = df[df["_dupe_count"] > 1].sort_values(["_dupe_group", "source_file"])
+    if not dupes.empty:
+        dupe_out = Path(out).with_name(f"dupes_{Path(out).name}")
+        dupes.to_csv(dupe_out, index=False)
+        print(f"  Review file    : {len(dupes)} rows in {dupe_out.resolve()}")
+        print(f"  (Duplicates are kept in the main file — remove manually after review.)")
+
     df.to_csv(out, index=False)
     print(f"\n  Merged: {len(df)} rows → {Path(out).resolve()}")
 
@@ -683,10 +730,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("-o", "--output", default="merged_providers.csv", help="Output CSV path.")
     p_merge.add_argument("--sheet", default=None, help="Excel sheet name or index applied to all Excel inputs (default: first sheet).")
     p_merge.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
-    p_merge.add_argument("--no-dedup", action="store_true", help="Skip deduplication entirely.")
-    p_merge.add_argument("--dedup-on", default="npi", dest="dedup_on",
+    p_merge.add_argument("--no-dedup", action="store_true", help="Skip deduplication (default behaviour — all rows kept).")
+    p_merge.add_argument("--dedup-on", default="none", dest="dedup_on",
                          choices=["npi", "name", "name+zip", "name+city", "none"],
-                         help="Dedup strategy (default: npi). Use 'name' when files lack NPI numbers.")
+                         help="Dedup strategy (default: none — keep all rows and flag dupes for review). "
+                              "Set to 'name' to auto-remove duplicates by last+first name after you have reviewed them.")
     p_merge.add_argument("--map", nargs="+", metavar="SRC=TGT", dest="map",
                          help="Rename columns before merging, e.g. --map 'Provider Last Name=last_name' 'Zip=zip5'. "
                               "Applied only to files that contain the source column name.")
