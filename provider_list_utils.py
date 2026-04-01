@@ -10,12 +10,20 @@ Usage examples:
     # Clean and deduplicate one or more NPI CSV files
     python3 provider_list_utils.py clean npi_results_physicians.csv
 
-    # Merge all three NPI output files into one deduplicated CSV
+    # Clean and sort by practice address (for health system annotation)
+    python3 provider_list_utils.py clean npi_results_physicians.csv --sort-by-address
+
+    # Merge all three NPI output files into one deduplicated file, sorted by address
     python3 provider_list_utils.py merge \\
         npi_results_physicians.csv \\
         npi_results_nurses.csv \\
         npi_results_physician_assistants.csv \\
-        -o merged_providers.csv
+        -o merged_providers.csv --sort-by-address
+
+    # Add county name and FIPS from an HRSA ZIP-to-county crosswalk
+    python3 provider_list_utils.py add-county \\
+        merged_providers.csv \\
+        --crosswalk hrsa_zip_county.csv
 
     # Cross-reference NPI CSV(s) against an external Excel roster
     python3 provider_list_utils.py crossref \\
@@ -56,7 +64,10 @@ NPI_ID     = "npi"
 NPI_STATUS = "status"
 
 # Default sort order for NPI data
-DEFAULT_SORT_KEYS = [NPI_LAST, NPI_FIRST, NPI_CITY]
+DEFAULT_SORT_KEYS   = [NPI_LAST, NPI_FIRST, NPI_CITY]
+
+# Sort order for grouping by practice address (useful for health-system annotation)
+ADDRESS_SORT_KEYS   = ["zip5", "primary_city", "primary_address_1", NPI_LAST, NPI_FIRST]
 
 # ── Name / field normalisation helpers ────────────────────────────────────────
 
@@ -352,11 +363,105 @@ def crossref(
     return matched, npi_only, external_only
 
 
+# ── HRSA ZIP-to-county crosswalk ──────────────────────────────────────────────
+
+def load_hrsa_crosswalk(path: Path) -> pd.DataFrame:
+    """
+    Load an HRSA ZIP-to-county crosswalk file (CSV or Excel).
+
+    Accepts the standard HRSA formats as well as common variants.  The
+    returned DataFrame always has three normalised columns:
+        _xw_zip        – 5-digit ZIP string
+        county_name    – county name (title-cased)
+        county_fips    – 5-digit FIPS code string (state 2 + county 3)
+
+    Typical HRSA crosswalk column names handled automatically:
+        ZIP / ZIP_CODE / ZIPCODE / ZIP5
+        COUNTY / COUNTY_NAME / CNTY_NAME / CNTY / CO_NAME
+        STCOU / COUNTY_FIPS / FIPS / CO_FIPS / FIPS_CODE
+    """
+    suffix = path.suffix.lower()
+    print(f"  Loading HRSA crosswalk {path} …")
+    if suffix in (".xlsx", ".xls"):
+        xw = pd.read_excel(path, dtype=str)
+    else:
+        xw = pd.read_csv(path, dtype=str)
+    xw.columns = xw.columns.astype(str).str.strip()
+    print(f"  Crosswalk columns: {list(xw.columns)}")
+
+    lower = {c.lower(): c for c in xw.columns}
+
+    def _find(candidates: list[str]) -> str | None:
+        for name in candidates:
+            if name in lower:
+                return lower[name]
+        return None
+
+    col_zip   = _find(["zip_code", "zip", "zipcode", "zip5", "zcta", "zcta5"])
+    col_county = _find(["county_name", "county", "cnty_name", "cnty", "co_name", "countyname"])
+    col_fips   = _find(["stcou", "county_fips", "fips", "co_fips", "fips_code", "countyfips", "geoid"])
+
+    missing = [role for role, col in [("zip", col_zip), ("county", col_county), ("fips", col_fips)] if col is None]
+    if missing:
+        print(
+            f"\n  WARNING: Could not auto-detect crosswalk columns for: {missing}\n"
+            f"  Available: {list(xw.columns)}\n"
+            f"  county_name and county_fips will be blank for undetected fields.\n"
+        )
+
+    result = pd.DataFrame()
+    result["_xw_zip"]     = xw[col_zip].apply(_norm_zip) if col_zip else ""
+    result["county_name"] = xw[col_county].apply(_title) if col_county else ""
+    result["county_fips"] = (
+        xw[col_fips].apply(lambda v: re.sub(r"[^0-9]", "", str(v)).zfill(5) if not pd.isna(v) else "")
+        if col_fips else ""
+    )
+
+    # A single ZIP may appear in multiple counties (split ZIPs); keep the
+    # row with the longest county name as a simple tiebreaker, then dedup.
+    result["_name_len"] = result["county_name"].str.len()
+    result = (
+        result.sort_values("_name_len", ascending=False)
+              .drop_duplicates(subset=["_xw_zip"], keep="first")
+              .drop(columns=["_name_len"])
+              .reset_index(drop=True)
+    )
+    print(f"  Crosswalk: {len(result)} unique ZIP entries loaded.")
+    return result
+
+
+def add_county(df: pd.DataFrame, crosswalk: pd.DataFrame) -> pd.DataFrame:
+    """
+    Join county_name and county_fips onto a provider DataFrame using zip5.
+
+    Rows whose zip5 is not found in the crosswalk receive empty strings.
+    If county columns already exist they are overwritten.
+    """
+    for col in ("county_name", "county_fips"):
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
+    merged = df.merge(
+        crosswalk.rename(columns={"_xw_zip": "zip5"}),
+        on="zip5",
+        how="left",
+    )
+    merged["county_name"] = merged["county_name"].fillna("")
+    merged["county_fips"] = merged["county_fips"].fillna("")
+
+    matched = (merged["county_name"] != "").sum()
+    print(f"  County lookup: {matched} of {len(merged)} rows matched.")
+    return merged
+
+
 # ── CLI subcommands ────────────────────────────────────────────────────────────
 
 def cmd_clean(args):
     paths = [Path(f) for f in args.files]
-    sort_keys = args.sort.split(",") if args.sort else None
+    if args.sort_by_address:
+        sort_keys = ADDRESS_SORT_KEYS
+    else:
+        sort_keys = args.sort.split(",") if args.sort else None
     for path in paths:
         print(f"\n{'─'*60}")
         print(f"  Cleaning: {path}")
@@ -372,12 +477,31 @@ def cmd_clean(args):
 def cmd_merge(args):
     print(f"\n{'─'*60}")
     paths = [Path(f) for f in args.files]
-    sort_keys = args.sort.split(",") if args.sort else None
+    if args.sort_by_address:
+        sort_keys = ADDRESS_SORT_KEYS
+    else:
+        sort_keys = args.sort.split(",") if args.sort else None
     df = load_npi_csvs(paths)
     df = clean_df(df, active_only=args.active_only, dedup=True, sort_keys=sort_keys)
     out = args.output or "merged_providers.csv"
     df.to_csv(out, index=False)
     print(f"\n  Merged: {len(df)} unique rows → {Path(out).resolve()}")
+
+
+def cmd_add_county(args):
+    print(f"\n{'─'*60}")
+    path = Path(args.file)
+    print(f"  Loading provider file {path} …")
+    df = pd.read_csv(path, dtype=str)
+    if "zip5" not in df.columns and "primary_postal_code" in df.columns:
+        df["zip5"] = df["primary_postal_code"].apply(_norm_zip)
+
+    xw = load_hrsa_crosswalk(Path(args.crosswalk))
+    df = add_county(df, xw)
+
+    out = args.output or path.with_name(f"county_{path.name}")
+    df.to_csv(out, index=False)
+    print(f"  Saved {len(df)} rows → {Path(out).resolve()}")
 
 
 def cmd_crossref(args):
@@ -439,6 +563,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
     p_clean.add_argument("--no-dedup", action="store_true", help="Skip NPI deduplication.")
     p_clean.add_argument("--sort", help="Comma-separated sort keys (default: last_name,first_name,primary_city).")
+    p_clean.add_argument("--sort-by-address", action="store_true",
+                         help="Sort by zip5, city, address_1 to group co-located providers (useful for health-system annotation).")
 
     # ── merge ──────────────────────────────────────────────────────────────────
     p_merge = sub.add_parser("merge", help="Merge multiple NPI CSV files into one deduplicated file.")
@@ -446,6 +572,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("-o", "--output", default="merged_providers.csv", help="Output CSV path.")
     p_merge.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
     p_merge.add_argument("--sort", help="Comma-separated sort keys.")
+    p_merge.add_argument("--sort-by-address", action="store_true",
+                         help="Sort by zip5, city, address_1 to group co-located providers.")
+
+    # ── add-county ─────────────────────────────────────────────────────────────
+    p_ac = sub.add_parser("add-county",
+                          help="Join county name and FIPS from an HRSA ZIP-to-county crosswalk.")
+    p_ac.add_argument("file", help="Provider CSV file to enrich.")
+    p_ac.add_argument("--crosswalk", required=True,
+                      help="HRSA ZIP-to-county crosswalk file (.csv or .xlsx). "
+                           "Download from: https://data.hrsa.gov/  or the HUD USPS crosswalk.")
+    p_ac.add_argument("-o", "--output", help="Output CSV path (default: county_<input>.csv).")
 
     # ── crossref ───────────────────────────────────────────────────────────────
     p_cr = sub.add_parser("crossref", help="Cross-reference NPI data against an external Excel roster.")
@@ -468,6 +605,8 @@ def main():
         cmd_clean(args)
     elif args.command == "merge":
         cmd_merge(args)
+    elif args.command == "add-county":
+        cmd_add_county(args)
     elif args.command == "crossref":
         cmd_crossref(args)
     print(f"\n{'─'*60}\n  Done.\n")
