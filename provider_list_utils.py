@@ -114,12 +114,34 @@ def _title(value) -> str:
     return str(value).strip().title()
 
 
+def _parse_map(map_args: list[str]) -> dict[str, str]:
+    """
+    Parse --map arguments of the form 'Source Column Name=target_col'.
+
+    Example:
+        ["Provider Last Name=last_name", "Zip Code=zip5"]
+        → {"Provider Last Name": "last_name", "Zip Code": "zip5"}
+    """
+    result = {}
+    for item in (map_args or []):
+        if "=" not in item:
+            sys.exit(
+                f"Invalid --map value: '{item}'\n"
+                f"  Expected format:  'Source Column=target_column'\n"
+                f"  Example:          'Provider Last Name=last_name'"
+            )
+        src, _, tgt = item.partition("=")
+        result[src.strip()] = tgt.strip()
+    return result
+
+
 # ── Cleaning ───────────────────────────────────────────────────────────────────
 
 def clean_df(
     df: pd.DataFrame,
     active_only: bool = False,
     dedup: bool = True,
+    dedup_on: str = "npi",
     sort_keys: list[str] | None = None,
 ) -> pd.DataFrame:
     """
@@ -127,9 +149,11 @@ def clean_df(
 
     Parameters
     ----------
-    df          : DataFrame loaded from an NPI CSV.
+    df          : DataFrame loaded from a provider CSV or Excel file.
     active_only : If True, keep only rows where status == 'A'.
-    dedup       : If True, drop rows with duplicate NPI numbers (keep first).
+    dedup       : If True, deduplicate using the strategy in dedup_on.
+    dedup_on    : Dedup strategy — 'npi' (default), 'name', 'name+zip',
+                  'name+city', or 'none'.
     sort_keys   : Column names to sort by. Defaults to last/first/city.
     """
     df = df.copy()
@@ -163,13 +187,34 @@ def clean_df(
         df = df[df[NPI_STATUS].str.upper() == "A"].copy()
         print(f"    active_only: kept {len(df)} of {before} rows")
 
-    # ── Deduplicate by NPI
-    if dedup and NPI_ID in df.columns:
-        before = len(df)
-        df = df.drop_duplicates(subset=[NPI_ID], keep="first").copy()
-        removed = before - len(df)
-        if removed:
-            print(f"    dedup: removed {removed} duplicate NPI row(s)")
+    # ── Deduplicate
+    if dedup and dedup_on != "none":
+        if dedup_on == "npi":
+            if NPI_ID in df.columns:
+                before = len(df)
+                df = df.drop_duplicates(subset=[NPI_ID], keep="first").copy()
+                removed = before - len(df)
+                if removed:
+                    print(f"    dedup (npi): removed {removed} duplicate NPI row(s)")
+        elif dedup_on in ("name", "name+zip", "name+city"):
+            key_parts: dict[str, pd.Series] = {}
+            if NPI_LAST in df.columns and NPI_FIRST in df.columns:
+                key_parts["_dk_name"] = (
+                    df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
+                )
+            if dedup_on == "name+zip" and NPI_ZIP in df.columns:
+                key_parts["_dk_zip"] = df[NPI_ZIP].apply(_norm_zip)
+            if dedup_on == "name+city" and NPI_CITY in df.columns:
+                key_parts["_dk_city"] = df[NPI_CITY].apply(_norm_str)
+            if key_parts:
+                for col, series in key_parts.items():
+                    df[col] = series
+                before = len(df)
+                df = df.drop_duplicates(subset=list(key_parts.keys()), keep="first").copy()
+                removed = before - len(df)
+                if removed:
+                    print(f"    dedup ({dedup_on}): removed {removed} duplicate row(s)")
+                df = df.drop(columns=list(key_parts.keys()))
 
     # ── Sort
     keys = sort_keys or DEFAULT_SORT_KEYS
@@ -198,17 +243,32 @@ def _load_one(path: Path, sheet: str | None = None) -> pd.DataFrame:
     return df
 
 
-def load_provider_files(paths: list[Path], sheet: str | None = None) -> pd.DataFrame:
+def load_provider_files(
+    paths: list[Path],
+    sheet: str | None = None,
+    col_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
     """
     Load one or more CSV or Excel provider files and concatenate them.
 
     Files with different column sets are stacked; missing columns are filled
     with empty strings rather than raising an error.
+
+    col_map : optional dict of {source_column: target_column} renames applied
+              to any file that contains the source column.  Columns not present
+              in a given file are silently skipped, so the same map can be
+              passed for all files without affecting NPI files that don't have
+              those source column names.
     """
     frames = []
     for p in paths:
         print(f"  Loading {p} …")
         df = _load_one(p, sheet=sheet)
+        if col_map:
+            rename = {src: tgt for src, tgt in col_map.items() if src in df.columns}
+            if rename:
+                print(f"    Column remap: {rename}")
+                df = df.rename(columns=rename)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
         frames.append(df)
     if not frames:
@@ -479,6 +539,27 @@ def add_county(df: pd.DataFrame, crosswalk: pd.DataFrame) -> pd.DataFrame:
 
 # ── CLI subcommands ────────────────────────────────────────────────────────────
 
+def cmd_inspect(args):
+    """Print column names and one example value per column for each file."""
+    for fname in args.files:
+        path = Path(fname)
+        print(f"\n{'═'*60}")
+        print(f"  File   : {path}")
+        df = _load_one(path, sheet=getattr(args, "sheet", None))
+        print(f"  Rows   : {len(df)}")
+        print(f"  Columns: {len(df.columns)}")
+        print()
+        for col in df.columns:
+            sample = df[col].dropna().astype(str)
+            sample = sample[sample.str.strip() != ""]
+            example = sample.iloc[0] if len(sample) else "(empty)"
+            # Truncate long examples for readability
+            if len(example) > 60:
+                example = example[:57] + "..."
+            print(f"    {col!r:<45}  e.g. {example!r}")
+    print(f"\n{'═'*60}")
+
+
 def cmd_clean(args):
     paths = [Path(f) for f in args.files]
     if args.sort_by_address:
@@ -502,11 +583,14 @@ def cmd_merge(args):
         sort_keys = ADDRESS_SORT_KEYS
     else:
         sort_keys = args.sort.split(",") if args.sort else None
-    df = load_provider_files(paths, sheet=getattr(args, "sheet", None))
-    df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup, sort_keys=sort_keys)
+    col_map = _parse_map(getattr(args, "map", None) or [])
+    dedup_on = getattr(args, "dedup_on", "npi") or "npi"
+    df = load_provider_files(paths, sheet=getattr(args, "sheet", None), col_map=col_map or None)
+    df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup,
+                  dedup_on=dedup_on, sort_keys=sort_keys)
     out = args.output or "merged_providers.csv"
     df.to_csv(out, index=False)
-    print(f"\n  Merged: {len(df)} unique rows → {Path(out).resolve()}")
+    print(f"\n  Merged: {len(df)} rows → {Path(out).resolve()}")
 
 
 def cmd_add_county(args):
@@ -577,6 +661,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    # ── inspect ────────────────────────────────────────────────────────────────
+    p_inspect = sub.add_parser("inspect", help="Show column names and sample values for one or more files.")
+    p_inspect.add_argument("files", nargs="+", help="File(s) to inspect (.csv or .xlsx).")
+    p_inspect.add_argument("--sheet", default=None, help="Excel sheet name or index (default: first sheet).")
+
     # ── clean ──────────────────────────────────────────────────────────────────
     p_clean = sub.add_parser("clean", help="Clean and deduplicate one or more provider files (CSV or Excel).")
     p_clean.add_argument("files", nargs="+", help="Provider file(s) to clean (.csv or .xlsx).")
@@ -594,7 +683,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("-o", "--output", default="merged_providers.csv", help="Output CSV path.")
     p_merge.add_argument("--sheet", default=None, help="Excel sheet name or index applied to all Excel inputs (default: first sheet).")
     p_merge.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
-    p_merge.add_argument("--no-dedup", action="store_true", help="Skip NPI deduplication.")
+    p_merge.add_argument("--no-dedup", action="store_true", help="Skip deduplication entirely.")
+    p_merge.add_argument("--dedup-on", default="npi", dest="dedup_on",
+                         choices=["npi", "name", "name+zip", "name+city", "none"],
+                         help="Dedup strategy (default: npi). Use 'name' when files lack NPI numbers.")
+    p_merge.add_argument("--map", nargs="+", metavar="SRC=TGT", dest="map",
+                         help="Rename columns before merging, e.g. --map 'Provider Last Name=last_name' 'Zip=zip5'. "
+                              "Applied only to files that contain the source column name.")
     p_merge.add_argument("--sort", help="Comma-separated sort keys.")
     p_merge.add_argument("--sort-by-address", action="store_true",
                          help="Sort by zip5, city, address_1 to group co-located providers.")
@@ -625,7 +720,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
-    if args.command == "clean":
+    if args.command == "inspect":
+        cmd_inspect(args)
+    elif args.command == "clean":
         cmd_clean(args)
     elif args.command == "merge":
         cmd_merge(args)
