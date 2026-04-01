@@ -657,6 +657,34 @@ def cmd_clean(args):
         print(f"\n{'─'*60}")
         print(f"  Cleaning: {path}")
         df = _load_one(path, sheet=getattr(args, "sheet", None))
+
+        # ── Optionally save dropped rows before removing them
+        if getattr(args, "save_dropped", False) and not args.no_dedup:
+            if NPI_ID in df.columns:
+                dropped = df[df.duplicated(subset=[NPI_ID], keep="first")]
+                if not dropped.empty:
+                    # Mark which NPI rows differ in any field vs the kept row
+                    kept = df.drop_duplicates(subset=[NPI_ID], keep="first").set_index(NPI_ID)
+                    diff_flags = []
+                    for _, row in dropped.iterrows():
+                        npi_val = row[NPI_ID]
+                        if npi_val in kept.index:
+                            diffs = [
+                                col for col in df.columns
+                                if col != NPI_ID and str(row[col]) != str(kept.loc[npi_val, col])
+                            ]
+                            diff_flags.append(", ".join(diffs) if diffs else "(identical)")
+                        else:
+                            diff_flags.append("(no kept row found)")
+                    dropped = dropped.copy()
+                    dropped["_fields_differing_from_kept"] = diff_flags
+                    drop_out = path.with_stem(f"dropped_{path.stem}").with_suffix(".csv")
+                    dropped.to_csv(drop_out, index=False)
+                    print(f"  Dropped rows ({len(dropped)}) → {Path(drop_out).resolve()}")
+                    print(f"  Check '_fields_differing_from_kept' column — '(identical)' means safe to discard.")
+                else:
+                    print(f"  No duplicate NPI rows found — nothing dropped.")
+
         df = clean_df(df, active_only=args.active_only, dedup=not args.no_dedup, sort_keys=sort_keys)
         out = args.output or path.with_stem(f"cleaned_{path.stem}").with_suffix(".csv")
         df.to_csv(out, index=False)
@@ -894,6 +922,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--sheet", default=None, help="Excel sheet name or index (default: first sheet).")
     p_clean.add_argument("--active-only", action="store_true", help="Keep only active providers (status=A).")
     p_clean.add_argument("--no-dedup", action="store_true", help="Skip NPI deduplication.")
+    p_clean.add_argument("--save-dropped", action="store_true", dest="save_dropped",
+                         help="Save removed duplicate rows to dropped_<filename>.csv before discarding. "
+                              "Adds a '_fields_differing_from_kept' column so you can verify whether "
+                              "the dropped rows were truly identical or had different data.")
     p_clean.add_argument("--sort", help="Comma-separated sort keys (default: last_name,first_name,primary_city).")
     p_clean.add_argument("--sort-by-address", action="store_true",
                          help="Sort by zip5, city, address_1 to group co-located providers (useful for health-system annotation).")
