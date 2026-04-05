@@ -822,28 +822,25 @@ def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 def compare_datasets(
     npi_df: pd.DataFrame,
     mn_df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split providers into four output sets using normalised name + address + zip
-    as the match key (more precise than name alone).
+    Split providers into six output sets.
 
     The MN list is first consolidated: rows sharing the same name+address are
     collapsed into one row with specialty/license fields concatenated.
 
-    Categories (from the MN list's perspective):
-        matched_1to1    Exactly 1 NPI match AND 1 MN match on name+address.
-                        Both rows shown adjacent for comparison.
-
-        multi_specialty After consolidation, provider still appears under
-                        multiple addresses in MN (multiple practice locations)
-                        AND has at least one NPI match.  All their MN rows
-                        included with their NPI row(s).
-
-        mn_only         No NPI match on name+address (npi_count == 0).
-                        Includes both single-entry and multi-location providers
-                        with no NPI data.
-
-        npi_only        In NPI data but no matching name+address in MN list.
+    Categories:
+        matched_1to1    Exactly 1 NPI match AND 1 MN match on name+zip.
+        multi_specialty MN provider appears >1 time AND has ≥1 NPI match.
+        mn_only         No name match in NPI at all.
+        npi_only_mn     In NPI with MN address, but no name match in MN list
+                        (after last+initial matching).
+        npi_only_oos    In NPI with a non-MN primary_state address.
+        possible        Name matches but zip differs (home vs work address),
+                        PLUS last-name+first-initial weak matches for MN-address
+                        NPI-only providers.  '_match_type' column distinguishes:
+                            'name_only'       — full name match, zip differs
+                            'lastname+initial' — last name + first initial match
 
     '_mn_specialty_count' > 1 on a MN row means specialties were concatenated
     during consolidation.  '_match_key' shows the full key used for matching.
@@ -920,7 +917,7 @@ def compare_datasets(
     # ── File 3: MN list only, no name match in NPI at all
     mn_only  = mn[mn["_name_key"].isin(mn_name_keys - shared_name_keys)].copy().reset_index(drop=True)
 
-    # ── File 4: NPI only, no name match in MN at all
+    # ── File 4: NPI only, no name match in MN at all (will be split further below)
     npi_only = npi[npi["_name_key"].isin(npi_name_keys - shared_name_keys)].copy().reset_index(drop=True)
 
     # ── File 5: possible matches — name agrees, zip differs (review for home vs work address)
@@ -932,8 +929,55 @@ def compare_datasets(
         .sort_values(["_name_key", "source_file"])
         .reset_index(drop=True)
     )
+    possible["_match_type"] = "name_only"
 
-    return matched_1to1, multi_specialty, mn_only, npi_only, possible
+    # ── Split NPI-only into MN-address vs out-of-state
+    if "primary_state" in npi_only.columns:
+        oos_mask     = npi_only["primary_state"].str.strip().str.upper() != "MN"
+        npi_only_oos = npi_only[oos_mask].copy().reset_index(drop=True)
+        npi_only_mn  = npi_only[~oos_mask].copy().reset_index(drop=True)
+    else:
+        npi_only_oos = pd.DataFrame(columns=npi_only.columns)
+        npi_only_mn  = npi_only.copy()
+
+    # ── Last name + first initial matching for MN-address NPI-only providers
+    #    Catches cases where first name is recorded differently between datasets
+    def _make_key_last_initial(df):
+        last       = df[NPI_LAST].apply(_norm_str)
+        first_init = df[NPI_FIRST].apply(lambda v: _norm_str(v)[:1] if _norm_str(v) else "")
+        return last + "|" + first_init
+
+    if not npi_only_mn.empty:
+        npi_only_mn["_li_key"] = _make_key_last_initial(npi_only_mn)
+        mn["_li_key"]          = _make_key_last_initial(mn)
+
+        li_npi_keys   = set(npi_only_mn["_li_key"].unique()) - {"", "|"}
+        li_mn_keys    = set(mn["_li_key"].unique())          - {"", "|"}
+        li_match_keys = li_npi_keys & li_mn_keys
+
+        if li_match_keys:
+            li_npi_rows = npi_only_mn[npi_only_mn["_li_key"].isin(li_match_keys)].copy()
+            li_mn_rows  = mn[mn["_li_key"].isin(li_match_keys)].copy()
+            li_npi_rows["_match_type"] = "lastname+initial"
+            li_mn_rows["_match_type"]  = "lastname+initial"
+            li_npi_rows = li_npi_rows.drop(columns=["_li_key"], errors="ignore")
+            li_mn_rows  = li_mn_rows.drop(columns=["_li_key"],  errors="ignore")
+            li_possible = (
+                pd.concat([li_npi_rows, li_mn_rows], ignore_index=True)
+                .sort_values(["_name_key", "source_file"])
+                .reset_index(drop=True)
+            )
+            possible    = pd.concat([possible, li_possible], ignore_index=True)
+            # Remove from npi_only_mn — they now appear in possible
+            npi_only_mn = npi_only_mn[~npi_only_mn["_li_key"].isin(li_match_keys)].copy()
+            n_li = li_npi_rows["_name_key"].nunique()
+            print(f"  Last+initial matches: {n_li} NPI-only MN-address provider(s) "
+                  f"moved to possible_matches.")
+
+        npi_only_mn = npi_only_mn.drop(columns=["_li_key"], errors="ignore").reset_index(drop=True)
+        mn          = mn.drop(columns=["_li_key"], errors="ignore")
+
+    return matched_1to1, multi_specialty, mn_only, npi_only_mn, npi_only_oos, possible
 
 
 
@@ -956,35 +1000,42 @@ def cmd_compare(args):
                  "Use --map to rename columns if needed.")
 
     print(f"\n  Comparing {len(npi_df)} NPI rows vs {len(mn_df)} MN list rows …")
-    matched, multi, mn_only, npi_only, possible = compare_datasets(npi_df, mn_df)
+    matched, multi, mn_only, npi_only, npi_only_oos, possible = compare_datasets(npi_df, mn_df)
 
     ts   = datetime.now().strftime("%Y%m%d_%H%M")
     stem = f"{args.output_prefix or 'compare'}_{ts}"
-    out_matched  = f"{stem}_matched_1to1.csv"
-    out_multi    = f"{stem}_multi_specialty.csv"
-    out_mn_only  = f"{stem}_mn_only.csv"
-    out_npi_only = f"{stem}_npi_only.csv"
-    out_possible = f"{stem}_possible_matches.csv"
+    out_matched      = f"{stem}_matched_1to1.csv"
+    out_multi        = f"{stem}_multi_specialty.csv"
+    out_mn_only      = f"{stem}_mn_only.csv"
+    out_npi_only     = f"{stem}_npi_only.csv"
+    out_npi_only_oos = f"{stem}_npi_only_out_of_state.csv"
+    out_possible     = f"{stem}_possible_matches.csv"
 
-    matched.to_csv(out_matched,   index=False)
-    multi.to_csv(out_multi,       index=False)
-    mn_only.to_csv(out_mn_only,   index=False)
-    npi_only.to_csv(out_npi_only, index=False)
-    possible.to_csv(out_possible, index=False)
+    matched.to_csv(out_matched,          index=False)
+    multi.to_csv(out_multi,              index=False)
+    mn_only.to_csv(out_mn_only,          index=False)
+    npi_only.to_csv(out_npi_only,        index=False)
+    npi_only_oos.to_csv(out_npi_only_oos, index=False)
+    possible.to_csv(out_possible,        index=False)
 
-    n_matched_providers  = matched["_name_key"].nunique()
-    n_multi_providers    = multi["_name_key"].nunique()
-    n_possible_providers = possible["_name_key"].nunique()
+    n_matched_providers  = matched["_name_key"].nunique()  if not matched.empty  else 0
+    n_multi_providers    = multi["_name_key"].nunique()    if not multi.empty    else 0
+    n_possible_providers = possible["_name_key"].nunique() if not possible.empty else 0
+    n_name_only     = possible[possible["_match_type"] == "name_only"]["_name_key"].nunique()    if not possible.empty else 0
+    n_last_initial  = possible[possible["_match_type"] == "lastname+initial"]["_name_key"].nunique() if not possible.empty else 0
 
-    print(f"\n  {'─'*56}")
-    print(f"  1:1 matched (name+zip): {n_matched_providers:>6}  ({len(matched)} rows)    → {out_matched}")
-    print(f"  Possible (name only)  : {n_possible_providers:>6}  ({len(possible)} rows)    → {out_possible}")
-    print(f"  Multi-specialty (MN)  : {n_multi_providers:>6}  ({len(multi)} rows)    → {out_multi}")
-    print(f"  MN list only          : {len(mn_only):>6}  (no name match)    → {out_mn_only}")
-    print(f"  NPI only              : {len(npi_only):>6}  (no name match)    → {out_npi_only}")
-    print(f"  {'─'*56}")
-    print(f"  In each file, rows with the same provider are adjacent.")
-    print(f"  Use 'source_file' and 'zip5' to compare addresses in possible_matches.")
+    print(f"\n  {'─'*60}")
+    print(f"  1:1 matched (name+zip)         : {n_matched_providers:>5}  ({len(matched)} rows)  → {out_matched}")
+    print(f"  Possible matches               : {n_possible_providers:>5}  ({len(possible)} rows)  → {out_possible}")
+    print(f"    • name_only (zip differs)    : {n_name_only:>5}  (home vs work address)")
+    print(f"    • lastname+initial (weak)    : {n_last_initial:>5}  (MN-address NPI-only)")
+    print(f"  Multi-specialty (MN)           : {n_multi_providers:>5}  ({len(multi)} rows)  → {out_multi}")
+    print(f"  MN list only                   : {len(mn_only):>5}  (no name match)  → {out_mn_only}")
+    print(f"  NPI only (MN address, no match): {len(npi_only):>5}  rows             → {out_npi_only}")
+    print(f"  NPI only (out of state)        : {len(npi_only_oos):>5}  rows             → {out_npi_only_oos}")
+    print(f"  {'─'*60}")
+    print(f"  '_match_type' in possible_matches: 'name_only' or 'lastname+initial'")
+    print(f"  Use 'source_file' and 'zip5' to compare addresses.")
 
 
 def cmd_add_county(args):
