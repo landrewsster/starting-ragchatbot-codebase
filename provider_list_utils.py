@@ -721,80 +721,194 @@ def cmd_merge(args):
     print(f"\n  Merged: {len(df)} rows → {Path(out).resolve()}")
 
 
+_ADDR_ABBREVS_COMPILED = [
+    (re.compile(r'\bsuite\b',     re.I), 'ste'),
+    (re.compile(r'\bstreet\b',    re.I), 'st'),
+    (re.compile(r'\bavenue\b',    re.I), 'ave'),
+    (re.compile(r'\bboulevard\b', re.I), 'blvd'),
+    (re.compile(r'\bdrive\b',     re.I), 'dr'),
+    (re.compile(r'\broad\b',      re.I), 'rd'),
+    (re.compile(r'\blane\b',      re.I), 'ln'),
+    (re.compile(r'\bcourt\b',     re.I), 'ct'),
+    (re.compile(r'\bcircle\b',    re.I), 'cir'),
+    (re.compile(r'\bplace\b',     re.I), 'pl'),
+    (re.compile(r'\bnorthwest\b', re.I), 'nw'),
+    (re.compile(r'\bnortheast\b', re.I), 'ne'),
+    (re.compile(r'\bsouthwest\b', re.I), 'sw'),
+    (re.compile(r'\bsoutheast\b', re.I), 'se'),
+    (re.compile(r'\bnorth\b',     re.I), 'n'),
+    (re.compile(r'\bsouth\b',     re.I), 's'),
+    (re.compile(r'\beast\b',      re.I), 'e'),
+    (re.compile(r'\bwest\b',      re.I), 'w'),
+]
+
+# MN list fields to concatenate when collapsing same-name+address rows
+_MN_CONCAT_FIELDS = [
+    "license_type_desc", "license_nbr", "license_status_desc",
+    "expire_date_char", "grant_date_char", "specialty boards", "certification",
+]
+
+
+def _norm_addr(value) -> str:
+    """Normalise a street address for exact comparison.
+    Lowercases, standardises common abbreviations (Suite→ste, Street→st, etc.),
+    strips punctuation, and collapses whitespace.
+    """
+    if pd.isna(value) or not str(value).strip():
+        return ""
+    s = str(value).lower()
+    for pattern, replacement in _ADDR_ABBREVS_COMPILED:
+        s = pattern.sub(replacement, s)
+    s = _NON_ALPHA.sub(' ', s)
+    s = _WHITESPACE.sub(' ', s).strip()
+    return s
+
+
+def _make_match_key_addr(df: pd.DataFrame) -> pd.Series:
+    """Build a normalised last|first||address_1|zip5 match key."""
+    name = df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
+    addr = (
+        df.get("primary_address_1", pd.Series("", index=df.index)).apply(_norm_addr)
+        + "|" +
+        df.get(NPI_ZIP, pd.Series("", index=df.index)).apply(_norm_zip)
+    )
+    return name + "||" + addr
+
+
+def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """
+    Within a MN list DataFrame, collapse rows that share the same normalised
+    name + address_1 + zip5 into a single row.
+
+    Fields in _MN_CONCAT_FIELDS (specialty, license type, etc.) are
+    concatenated with ' | ' so no information is lost.  All other fields
+    keep the first value.  A '_mn_specialty_count' column records how many
+    rows were merged into each output row (1 = no consolidation needed).
+
+    Returns (consolidated_df, n_rows_removed).
+    """
+    df = df.copy()
+    df["_grp"] = _make_match_key_addr(df)
+    before = len(df)
+
+    def _agg(group):
+        if len(group) == 1:
+            row = group.iloc[0].copy()
+            row["_mn_specialty_count"] = 1
+            return row
+        row = group.iloc[0].copy()
+        for field in _MN_CONCAT_FIELDS:
+            if field in group.columns:
+                vals = group[field].fillna("").astype(str)
+                seen, deduped = set(), []
+                for v in (v.strip() for v in vals if v.strip()):
+                    if v.lower() not in seen:
+                        seen.add(v.lower())
+                        deduped.append(v)
+                row[field] = " | ".join(deduped)
+        if "discipined" in group.columns:
+            row["discipined"] = (
+                "Y" if (group["discipined"].str.upper() == "Y").any()
+                else group.iloc[0]["discipined"]
+            )
+        row["_mn_specialty_count"] = len(group)
+        return row
+
+    consolidated = (
+        df.groupby("_grp", sort=False, group_keys=False)
+        .apply(_agg)
+        .reset_index(drop=True)
+        .drop(columns=["_grp"])
+    )
+    return consolidated, before - len(consolidated)
+
+
 def compare_datasets(
     npi_df: pd.DataFrame,
     mn_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split providers into three mutually exclusive output sets based on how
-    their name appears across the NPI dataset and the MN licensing list.
+    Split providers into four output sets using normalised name + address + zip
+    as the match key (more precise than name alone).
+
+    The MN list is first consolidated: rows sharing the same name+address are
+    collapsed into one row with specialty/license fields concatenated.
 
     Categories (from the MN list's perspective):
-        matched_1to1    mn_count == 1  AND  npi_count == 1
-                        Clean 1:1 match. Both the NPI row and MN row are
-                        included, sorted adjacent for easy comparison.
+        matched_1to1    Exactly 1 NPI match AND 1 MN match on name+address.
+                        Both rows shown adjacent for comparison.
 
-        multi_specialty mn_count > 1
-                        Provider appears more than once in the MN list
-                        (multiple specialties/licenses). All their MN rows
-                        are included, plus their NPI row(s) if any exist.
+        multi_specialty After consolidation, provider still appears under
+                        multiple addresses in MN (multiple practice locations)
+                        AND has at least one NPI match.  All their MN rows
+                        included with their NPI row(s).
 
-        mn_only         mn_count == 1  AND  npi_count == 0
-                        In the MN list but no matching name in NPI data.
+        mn_only         No NPI match on name+address (npi_count == 0).
+                        Includes both single-entry and multi-location providers
+                        with no NPI data.
 
-        npi_only        npi_count > 0  AND  mn_count == 0
-                        In the NPI data but no matching name in MN list.
-                        Returned for completeness; not written by default.
+        npi_only        In NPI data but no matching name+address in MN list.
 
-    All DataFrames include a '_name_key' column (normalised last|first) and
-    a 'source_file' column so every row can be traced to its origin file.
+    '_mn_specialty_count' > 1 on a MN row means specialties were concatenated
+    during consolidation.  '_match_key' shows the full key used for matching.
     """
     npi = npi_df.copy()
     mn  = mn_df.copy()
 
-    npi["_name_key"] = npi[NPI_LAST].apply(_norm_str) + "|" + npi[NPI_FIRST].apply(_norm_str)
-    mn["_name_key"]  = mn[NPI_LAST].apply(_norm_str)  + "|" + mn[NPI_FIRST].apply(_norm_str)
+    # ── Consolidate same-name+address MN rows before matching
+    mn, n_collapsed = consolidate_mn_specialties(mn)
+    if n_collapsed:
+        print(f"  MN consolidation: {n_collapsed} specialty rows merged "
+              f"(same name+address → one row with concatenated specialties).")
 
-    npi_counts = npi["_name_key"].value_counts().to_dict()
-    mn_counts  = mn["_name_key"].value_counts().to_dict()
+    # ── Build match keys
+    npi["_match_key"] = _make_match_key_addr(npi)
+    mn["_match_key"]  = _make_match_key_addr(mn)
+    npi["_name_key"]  = npi[NPI_LAST].apply(_norm_str) + "|" + npi[NPI_FIRST].apply(_norm_str)
+    mn["_name_key"]   = mn[NPI_LAST].apply(_norm_str)  + "|" + mn[NPI_FIRST].apply(_norm_str)
 
-    # Tag each MN row with counts from both datasets
-    mn["_npi_count"] = mn["_name_key"].map(npi_counts).fillna(0).astype(int)
-    mn["_mn_count"]  = mn["_name_key"].map(mn_counts).fillna(0).astype(int)
-    npi["_npi_count"] = npi["_name_key"].map(npi_counts).fillna(0).astype(int)
-    npi["_mn_count"]  = npi["_name_key"].map(mn_counts).fillna(0).astype(int)
+    npi_counts = npi["_match_key"].value_counts().to_dict()
+    mn_counts  = mn["_match_key"].value_counts().to_dict()
+
+    mn["_npi_count"]  = mn["_match_key"].map(npi_counts).fillna(0).astype(int)
+    mn["_mn_count"]   = mn["_match_key"].map(mn_counts).fillna(0).astype(int)
+    npi["_npi_count"] = npi["_match_key"].map(npi_counts).fillna(0).astype(int)
+    npi["_mn_count"]  = npi["_match_key"].map(mn_counts).fillna(0).astype(int)
 
     # ── Category keys
-    matched_keys      = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
-    multi_spec_keys   = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
-    mn_only_keys      = {k for k in mn_counts if npi_counts.get(k, 0) == 0}
-    npi_only_keys     = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
+    matched_keys    = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
+    multi_spec_keys = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
+    mn_only_keys    = {k for k in mn_counts if npi_counts.get(k, 0) == 0}
+    npi_only_keys   = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
 
-    # ── File 1: 1:1 matched — show NPI row + MN row adjacent, sorted by name
-    npi_matched = npi[npi["_name_key"].isin(matched_keys)].copy()
-    mn_matched  = mn[mn["_name_key"].isin(matched_keys)].copy()
+    # ── File 1: 1:1 matched
     matched_1to1 = (
-        pd.concat([npi_matched, mn_matched], ignore_index=True)
+        pd.concat([
+            npi[npi["_match_key"].isin(matched_keys)],
+            mn[mn["_match_key"].isin(matched_keys)],
+        ], ignore_index=True)
         .sort_values(["_name_key", "source_file"])
         .reset_index(drop=True)
     )
 
-    # ── File 2: multi-specialty — all MN rows + NPI rows if name exists in NPI
-    npi_multi = npi[npi["_name_key"].isin(multi_spec_keys)].copy()
-    mn_multi  = mn[mn["_name_key"].isin(multi_spec_keys)].copy()
+    # ── File 2: multi-location in MN + at least one NPI match
     multi_specialty = (
-        pd.concat([npi_multi, mn_multi], ignore_index=True)
+        pd.concat([
+            npi[npi["_match_key"].isin(multi_spec_keys)],
+            mn[mn["_match_key"].isin(multi_spec_keys)],
+        ], ignore_index=True)
         .sort_values(["_name_key", "source_file"])
         .reset_index(drop=True)
     )
 
     # ── File 3: MN list only, no NPI match
-    mn_only = mn[mn["_name_key"].isin(mn_only_keys)].copy().reset_index(drop=True)
+    mn_only  = mn[mn["_match_key"].isin(mn_only_keys)].copy().reset_index(drop=True)
 
-    # ── File 4 (informational): NPI only, no MN match
-    npi_only = npi[npi["_name_key"].isin(npi_only_keys)].copy().reset_index(drop=True)
+    # ── File 4: NPI only, no MN match
+    npi_only = npi[npi["_match_key"].isin(npi_only_keys)].copy().reset_index(drop=True)
 
     return matched_1to1, multi_specialty, mn_only, npi_only
+
 
 
 def cmd_compare(args):
