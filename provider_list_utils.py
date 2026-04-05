@@ -857,9 +857,16 @@ def compare_datasets(
         print(f"  MN consolidation: {n_collapsed} specialty rows merged "
               f"(same name+address → one row with concatenated specialties).")
 
-    # ── Build match keys
-    npi["_match_key"] = _make_match_key_addr(npi)
-    mn["_match_key"]  = _make_match_key_addr(mn)
+    # ── Build match keys: name+zip for cross-dataset matching
+    #    (full address is too strict — NPI and MN licensing board often record
+    #     different addresses for the same provider; zip is more consistent)
+    def _make_key_name_zip(df):
+        name = df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
+        zip_ = df.get(NPI_ZIP, pd.Series("", index=df.index)).apply(_norm_zip)
+        return name + "||" + zip_
+
+    npi["_match_key"] = _make_key_name_zip(npi)
+    mn["_match_key"]  = _make_key_name_zip(mn)
     npi["_name_key"]  = npi[NPI_LAST].apply(_norm_str) + "|" + npi[NPI_FIRST].apply(_norm_str)
     mn["_name_key"]   = mn[NPI_LAST].apply(_norm_str)  + "|" + mn[NPI_FIRST].apply(_norm_str)
 
