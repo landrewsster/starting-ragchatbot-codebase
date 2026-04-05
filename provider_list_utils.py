@@ -47,6 +47,7 @@ Requirements:
 import argparse
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -932,7 +933,8 @@ def cmd_compare(args):
     print(f"\n  Comparing {len(npi_df)} NPI rows vs {len(mn_df)} MN list rows …")
     matched, multi, mn_only, npi_only = compare_datasets(npi_df, mn_df)
 
-    stem = args.output_prefix or "compare"
+    ts   = datetime.now().strftime("%Y%m%d_%H%M")
+    stem = f"{args.output_prefix or 'compare'}_{ts}"
     out_matched = f"{stem}_matched_1to1.csv"
     out_multi   = f"{stem}_multi_specialty.csv"
     out_mn_only = f"{stem}_mn_only.csv"
