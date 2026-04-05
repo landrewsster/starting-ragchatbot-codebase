@@ -878,13 +878,26 @@ def compare_datasets(
     npi["_npi_count"] = npi["_match_key"].map(npi_counts).fillna(0).astype(int)
     npi["_mn_count"]  = npi["_match_key"].map(mn_counts).fillna(0).astype(int)
 
-    # ── Category keys
+    # ── Name-only keys (used for possible-match detection)
+    npi_name_keys = set(npi["_name_key"].unique())
+    mn_name_keys  = set(mn["_name_key"].unique())
+    shared_name_keys = npi_name_keys & mn_name_keys
+
+    # ── Category keys (name+zip)
     matched_keys    = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
     multi_spec_keys = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
     mn_only_keys    = {k for k in mn_counts if npi_counts.get(k, 0) == 0}
     npi_only_keys   = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
 
-    # ── File 1: 1:1 matched
+    # Name keys that already have a clean name+zip match (exclude from possible)
+    already_matched_name_keys = {k.split("||")[0] for k in matched_keys}
+    already_matched_name_keys |= {k.split("||")[0] for k in multi_spec_keys}
+
+    # ── Possible matches: name found in both datasets but zip differs
+    #    (likely same provider with home zip in MN list vs work zip in NPI)
+    possible_name_keys = shared_name_keys - already_matched_name_keys
+
+    # ── File 1: 1:1 matched (name + zip)
     matched_1to1 = (
         pd.concat([
             npi[npi["_match_key"].isin(matched_keys)],
@@ -904,13 +917,23 @@ def compare_datasets(
         .reset_index(drop=True)
     )
 
-    # ── File 3: MN list only, no NPI match
-    mn_only  = mn[mn["_match_key"].isin(mn_only_keys)].copy().reset_index(drop=True)
+    # ── File 3: MN list only, no name match in NPI at all
+    mn_only  = mn[mn["_name_key"].isin(mn_name_keys - shared_name_keys)].copy().reset_index(drop=True)
 
-    # ── File 4: NPI only, no MN match
-    npi_only = npi[npi["_match_key"].isin(npi_only_keys)].copy().reset_index(drop=True)
+    # ── File 4: NPI only, no name match in MN at all
+    npi_only = npi[npi["_name_key"].isin(npi_name_keys - shared_name_keys)].copy().reset_index(drop=True)
 
-    return matched_1to1, multi_specialty, mn_only, npi_only
+    # ── File 5: possible matches — name agrees, zip differs (review for home vs work address)
+    possible = (
+        pd.concat([
+            npi[npi["_name_key"].isin(possible_name_keys)],
+            mn[mn["_name_key"].isin(possible_name_keys)],
+        ], ignore_index=True)
+        .sort_values(["_name_key", "source_file"])
+        .reset_index(drop=True)
+    )
+
+    return matched_1to1, multi_specialty, mn_only, npi_only, possible
 
 
 
@@ -933,31 +956,35 @@ def cmd_compare(args):
                  "Use --map to rename columns if needed.")
 
     print(f"\n  Comparing {len(npi_df)} NPI rows vs {len(mn_df)} MN list rows …")
-    matched, multi, mn_only, npi_only = compare_datasets(npi_df, mn_df)
+    matched, multi, mn_only, npi_only, possible = compare_datasets(npi_df, mn_df)
 
     ts   = datetime.now().strftime("%Y%m%d_%H%M")
     stem = f"{args.output_prefix or 'compare'}_{ts}"
-    out_matched = f"{stem}_matched_1to1.csv"
-    out_multi   = f"{stem}_multi_specialty.csv"
-    out_mn_only = f"{stem}_mn_only.csv"
+    out_matched  = f"{stem}_matched_1to1.csv"
+    out_multi    = f"{stem}_multi_specialty.csv"
+    out_mn_only  = f"{stem}_mn_only.csv"
     out_npi_only = f"{stem}_npi_only.csv"
+    out_possible = f"{stem}_possible_matches.csv"
 
-    matched.to_csv(out_matched,  index=False)
-    multi.to_csv(out_multi,      index=False)
-    mn_only.to_csv(out_mn_only,  index=False)
+    matched.to_csv(out_matched,   index=False)
+    multi.to_csv(out_multi,       index=False)
+    mn_only.to_csv(out_mn_only,   index=False)
     npi_only.to_csv(out_npi_only, index=False)
+    possible.to_csv(out_possible, index=False)
 
-    n_matched_providers = matched["_name_key"].nunique()
-    n_multi_providers   = multi["_name_key"].nunique()
+    n_matched_providers  = matched["_name_key"].nunique()
+    n_multi_providers    = multi["_name_key"].nunique()
+    n_possible_providers = possible["_name_key"].nunique()
 
     print(f"\n  {'─'*56}")
-    print(f"  1:1 matched providers : {n_matched_providers:>6}  ({len(matched)} rows)  → {out_matched}")
-    print(f"  Multi-specialty (MN)  : {n_multi_providers:>6}  ({len(multi)} rows)  → {out_multi}")
-    print(f"  MN list only          : {len(mn_only):>6}  (no NPI match)     → {out_mn_only}")
-    print(f"  NPI only              : {len(npi_only):>6}  (no MN match)      → {out_npi_only}")
+    print(f"  1:1 matched (name+zip): {n_matched_providers:>6}  ({len(matched)} rows)    → {out_matched}")
+    print(f"  Possible (name only)  : {n_possible_providers:>6}  ({len(possible)} rows)    → {out_possible}")
+    print(f"  Multi-specialty (MN)  : {n_multi_providers:>6}  ({len(multi)} rows)    → {out_multi}")
+    print(f"  MN list only          : {len(mn_only):>6}  (no name match)    → {out_mn_only}")
+    print(f"  NPI only              : {len(npi_only):>6}  (no name match)    → {out_npi_only}")
     print(f"  {'─'*56}")
     print(f"  In each file, rows with the same provider are adjacent.")
-    print(f"  Use 'source_file' to see which row came from which dataset.")
+    print(f"  Use 'source_file' and 'zip5' to compare addresses in possible_matches.")
 
 
 def cmd_add_county(args):
