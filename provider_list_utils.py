@@ -789,37 +789,33 @@ def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     Returns (consolidated_df, n_rows_removed).
     """
     df = df.copy()
-    grp_key = _make_match_key_addr(df)   # external Series — never added to df
+    grp_key = _make_match_key_addr(df)
     before = len(df)
 
-    def _agg(group):
-        if len(group) == 1:
-            row = group.iloc[0].copy()
-            row["_mn_specialty_count"] = 1
-            return row
+    # Pure loop — avoids groupby().apply() behaviour differences across
+    # pandas versions that caused _grp KeyError on pandas 3.x
+    rows = []
+    for _, group in df.groupby(grp_key, sort=False):
         row = group.iloc[0].copy()
-        for field in _MN_CONCAT_FIELDS:
-            if field in group.columns:
-                vals = group[field].fillna("").astype(str)
-                seen, deduped = set(), []
-                for v in (v.strip() for v in vals if v.strip()):
-                    if v.lower() not in seen:
-                        seen.add(v.lower())
-                        deduped.append(v)
-                row[field] = " | ".join(deduped)
-        if "discipined" in group.columns:
-            row["discipined"] = (
-                "Y" if (group["discipined"].str.upper() == "Y").any()
-                else group.iloc[0]["discipined"]
-            )
+        if len(group) > 1:
+            for field in _MN_CONCAT_FIELDS:
+                if field in group.columns:
+                    vals = group[field].fillna("").astype(str)
+                    seen, deduped = set(), []
+                    for v in (v.strip() for v in vals if v.strip()):
+                        if v.lower() not in seen:
+                            seen.add(v.lower())
+                            deduped.append(v)
+                    row[field] = " | ".join(deduped)
+            if "discipined" in group.columns:
+                row["discipined"] = (
+                    "Y" if (group["discipined"].str.upper() == "Y").any()
+                    else group.iloc[0]["discipined"]
+                )
         row["_mn_specialty_count"] = len(group)
-        return row
+        rows.append(row)
 
-    consolidated = (
-        df.groupby(grp_key, sort=False, group_keys=False)
-        .apply(_agg)
-        .reset_index(drop=True)
-    )
+    consolidated = pd.DataFrame(rows).reset_index(drop=True)
     return consolidated, before - len(consolidated)
 
 
