@@ -789,7 +789,7 @@ def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     Returns (consolidated_df, n_rows_removed).
     """
     df = df.copy()
-    df["_grp"] = _make_match_key_addr(df)
+    grp_key = _make_match_key_addr(df)   # external Series — never added to df
     before = len(df)
 
     def _agg(group):
@@ -816,10 +816,9 @@ def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
         return row
 
     consolidated = (
-        df.groupby("_grp", sort=False, group_keys=False)
+        df.groupby(grp_key, sort=False, group_keys=False)
         .apply(_agg)
         .reset_index(drop=True)
-        .drop(columns=["_grp"])
     )
     return consolidated, before - len(consolidated)
 
