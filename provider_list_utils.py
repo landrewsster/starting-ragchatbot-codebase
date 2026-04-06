@@ -1118,6 +1118,13 @@ def cmd_compare(args):
     matched_wide  = pivot_wide(matched)
     possible_wide = pivot_wide(possible)
 
+    # Sort by work address so co-located providers appear together
+    _addr_sort = ["work_zip", "work_city", "work_address_1", "last_name", "first_name"]
+    for df in (matched_wide, possible_wide):
+        keys = [k for k in _addr_sort if k in df.columns]
+        if keys:
+            df.sort_values(keys, inplace=True, ignore_index=True)
+
     ts   = datetime.now().strftime("%Y%m%d_%H%M")
     stem = f"{args.output_prefix or 'compare'}_{ts}"
     out_matched      = f"{stem}_matched_1to1.csv"
