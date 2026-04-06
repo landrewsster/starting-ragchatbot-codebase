@@ -798,15 +798,57 @@ def pivot_wide(stacked_df: pd.DataFrame) -> pd.DataFrame:
     if stacked_df.empty or "_source_type" not in stacked_df.columns:
         return stacked_df
 
-    group_col = "_name_key" if "_name_key" in stacked_df.columns else None
-    if group_col is None:
+    group_col = "_name_key"
+    if group_col not in stacked_df.columns:
         return stacked_df
 
-    # Identity columns taken only from NPI row (skip duplicates from MN)
-    _identity = {"last_name", "first_name", "middle_name"}
+    npi_df = stacked_df[stacked_df["_source_type"] == "NPI"].copy()
+    mn_df  = stacked_df[stacked_df["_source_type"] == "MN"].copy()
 
-    def _join(series: pd.Series) -> str:
-        """Deduplicate and pipe-join non-empty string values."""
+    if npi_df.empty:
+        return stacked_df
+
+    # ── Detect MN-specific columns dynamically:
+    #    columns that have real values in MN rows but are blank in NPI rows.
+    #    (After pd.concat both datasets share all columns, but MN-only fields
+    #     like license_type_desc are empty strings on every NPI row.)
+    def _col_has_values(df, col):
+        return col in df.columns and (
+            df[col].fillna("").astype(str).str.strip() != ""
+        ).any()
+
+    mn_specific_cols = [
+        col for col in stacked_df.columns
+        if not _col_has_values(npi_df, col)
+        and _col_has_values(mn_df, col)
+        and col not in _WIDE_DROP_COLS
+        and col not in {"last_name", "first_name", "middle_name", "_source_type"}
+    ]
+
+    # ── NPI side: rename address/phone cols to work_*, drop internal cols
+    npi_side = npi_df.drop(
+        columns=[c for c in _WIDE_DROP_COLS if c in npi_df.columns and c != group_col],
+        errors="ignore",
+    )
+    # Drop MN-specific columns from NPI side (blank there; come from MN side)
+    npi_side = npi_side.drop(columns=mn_specific_cols, errors="ignore")
+    npi_side = npi_side.rename(columns=_NPI_ADDR_RENAME)
+    # One row per provider — drop duplicates (same name, different NPI zip edge case)
+    npi_side = npi_side.drop_duplicates(subset=[group_col], keep="first")
+
+    # ── MN side: keep address cols (→ home_*) + MN-specific fields only
+    mn_keep = list(dict.fromkeys(
+        [group_col]
+        + [c for c in _MN_ADDR_RENAME if c in mn_df.columns]
+        + [c for c in mn_specific_cols if c in mn_df.columns]
+        + (["_match_type"] if "_match_type" in mn_df.columns else [])
+        + (["source_file"]  if "source_file"  in mn_df.columns else [])
+    ))
+    mn_side = mn_df[[c for c in mn_keep if c in mn_df.columns]].copy()
+    mn_side = mn_side.rename(columns={**_MN_ADDR_RENAME, "source_file": "mn_source_file"})
+
+    # Aggregate: pipe-join multiple MN rows for the same provider
+    def _agg_join(series):
         seen: set = set()
         out: list = []
         for v in series.fillna("").astype(str):
@@ -816,42 +858,14 @@ def pivot_wide(stacked_df: pd.DataFrame) -> pd.DataFrame:
                 out.append(v)
         return " | ".join(out)
 
-    rows = []
-    for _, group in stacked_df.groupby(group_col, sort=False):
-        npi_rows = group[group["_source_type"] == "NPI"]
-        mn_rows  = group[group["_source_type"] == "MN"]
+    mn_agg = mn_side.groupby(group_col, sort=False).agg(_agg_join).reset_index()
 
-        if npi_rows.empty:
-            continue
+    # ── Merge NPI + MN on _name_key (left join keeps all NPI rows)
+    wide = pd.merge(npi_side, mn_agg, on=group_col, how="left", suffixes=("", "_mn_dup"))
+    wide = wide.drop(columns=[c for c in wide.columns if c.endswith("_mn_dup")], errors="ignore")
+    wide = wide.drop(columns=[group_col], errors="ignore")
 
-        npi_row = npi_rows.iloc[0]
-        row: dict = {}
-
-        # NPI columns first (address cols renamed to work_*)
-        for col, val in npi_row.items():
-            if col in _WIDE_DROP_COLS:
-                continue
-            if col in _identity and not str(val).strip():
-                continue  # prefer non-blank; will fill from MN if blank
-            row[_NPI_ADDR_RENAME.get(col, col)] = val
-
-        # MN address → home_*, MN license/specialty columns appended
-        if not mn_rows.empty:
-            for col in mn_rows.columns:
-                if col in _WIDE_DROP_COLS or col in _identity:
-                    continue
-                if col in _MN_ADDR_RENAME:
-                    row[_MN_ADDR_RENAME[col]] = _join(mn_rows[col])
-                elif col not in row or not str(row.get(col, "")).strip():
-                    # MN-specific field absent or blank in NPI row — use MN value
-                    row[col] = _join(mn_rows[col])
-                # If col already has a non-blank NPI value, NPI takes precedence
-
-        rows.append(row)
-
-    wide = pd.DataFrame(rows)
-
-    # Reorder columns: preferred order first, then any remaining columns
+    # ── Reorder: preferred columns first, then remainder
     ordered = [c for c in _WIDE_COL_ORDER if c in wide.columns]
     rest    = [c for c in wide.columns if c not in set(ordered)]
     wide    = wide[ordered + rest].reset_index(drop=True)
