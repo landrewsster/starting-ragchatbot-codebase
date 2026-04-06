@@ -749,6 +749,114 @@ _MN_CONCAT_FIELDS = [
     "expire_date_char", "grant_date_char", "specialty boards", "certification",
 ]
 
+# Wide-format column mappings: NPI address → work_*, MN address → home_*
+_NPI_ADDR_RENAME = {
+    "primary_address_1":          "work_address_1",
+    "primary_address_2":          "work_address_2",
+    "primary_city":               "work_city",
+    "primary_state":              "work_state",
+    "zip5":                       "work_zip",
+    "primary_telephone_number":   "work_phone",
+    "primary_fax_number":         "work_fax",
+    "source_file":                "npi_source_file",
+}
+_MN_ADDR_RENAME = {
+    "primary_address_1": "home_address_1",
+    "primary_address_2": "home_address_2",
+    "primary_city":      "home_city",
+    "primary_state":     "home_state",
+    "zip5":              "home_zip",
+    "source_file":       "mn_source_file",
+}
+# Internal helper columns to drop from wide output
+_WIDE_DROP_COLS = frozenset([
+    "_match_key", "_name_key", "_npi_count", "_mn_count", "_source_type",
+])
+# Preferred column order for the wide output (others appended in natural order)
+_WIDE_COL_ORDER = [
+    "last_name", "first_name", "middle_name", "npi",
+    "work_address_1", "work_address_2", "work_city", "work_state", "work_zip",
+    "work_phone", "work_fax",
+    "home_address_1", "home_address_2", "home_city", "home_state", "home_zip",
+    "license_type_desc", "license_nbr", "license_status_desc",
+    "expire_date_char", "grant_date_char", "specialty boards", "certification",
+    "_mn_specialty_count", "_match_type",
+    "npi_source_file", "mn_source_file",
+]
+
+
+def pivot_wide(stacked_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert a stacked NPI+MN DataFrame (two rows per provider) into wide
+    format with one row per provider.
+
+    Requires a '_source_type' column with values 'NPI' or 'MN'.
+    NPI address columns are renamed work_*, MN address columns are renamed
+    home_*.  If a provider has multiple MN candidates (lastname+initial
+    matches), their address/license fields are pipe-joined into one cell.
+    """
+    if stacked_df.empty or "_source_type" not in stacked_df.columns:
+        return stacked_df
+
+    group_col = "_name_key" if "_name_key" in stacked_df.columns else None
+    if group_col is None:
+        return stacked_df
+
+    # Identity columns taken only from NPI row (skip duplicates from MN)
+    _identity = {"last_name", "first_name", "middle_name"}
+
+    def _join(series: pd.Series) -> str:
+        """Deduplicate and pipe-join non-empty string values."""
+        seen: set = set()
+        out: list = []
+        for v in series.fillna("").astype(str):
+            v = v.strip()
+            if v and v.lower() not in seen:
+                seen.add(v.lower())
+                out.append(v)
+        return " | ".join(out)
+
+    rows = []
+    for _, group in stacked_df.groupby(group_col, sort=False):
+        npi_rows = group[group["_source_type"] == "NPI"]
+        mn_rows  = group[group["_source_type"] == "MN"]
+
+        if npi_rows.empty:
+            continue
+
+        npi_row = npi_rows.iloc[0]
+        row: dict = {}
+
+        # NPI columns first (address cols renamed to work_*)
+        for col, val in npi_row.items():
+            if col in _WIDE_DROP_COLS:
+                continue
+            if col in _identity and not str(val).strip():
+                continue  # prefer non-blank; will fill from MN if blank
+            row[_NPI_ADDR_RENAME.get(col, col)] = val
+
+        # MN address → home_*, MN license/specialty columns appended
+        if not mn_rows.empty:
+            for col in mn_rows.columns:
+                if col in _WIDE_DROP_COLS or col in _identity:
+                    continue
+                if col in _MN_ADDR_RENAME:
+                    row[_MN_ADDR_RENAME[col]] = _join(mn_rows[col])
+                elif col not in row:
+                    # MN-specific field not already present from NPI row
+                    row[col] = _join(mn_rows[col])
+                # If col already set by NPI row, NPI value takes precedence
+
+        rows.append(row)
+
+    wide = pd.DataFrame(rows)
+
+    # Reorder columns: preferred order first, then any remaining columns
+    ordered = [c for c in _WIDE_COL_ORDER if c in wide.columns]
+    rest    = [c for c in wide.columns if c not in set(ordered)]
+    wide    = wide[ordered + rest].reset_index(drop=True)
+    return wide
+
 
 def _norm_addr(value) -> str:
     """Normalise a street address for exact comparison.
@@ -847,6 +955,10 @@ def compare_datasets(
     """
     npi = npi_df.copy()
     mn  = mn_df.copy()
+
+    # Tag source type early so stacked outputs can be pivoted to wide format
+    npi["_source_type"] = "NPI"
+    mn["_source_type"]  = "MN"
 
     # ── Consolidate same-name+address MN rows before matching
     mn, n_collapsed = consolidate_mn_specialties(mn)
@@ -1002,6 +1114,10 @@ def cmd_compare(args):
     print(f"\n  Comparing {len(npi_df)} NPI rows vs {len(mn_df)} MN list rows …")
     matched, multi, mn_only, npi_only, npi_only_oos, possible = compare_datasets(npi_df, mn_df)
 
+    # Pivot matched and possible to wide format (one row per provider)
+    matched_wide  = pivot_wide(matched)
+    possible_wide = pivot_wide(possible)
+
     ts   = datetime.now().strftime("%Y%m%d_%H%M")
     stem = f"{args.output_prefix or 'compare'}_{ts}"
     out_matched      = f"{stem}_matched_1to1.csv"
@@ -1011,31 +1127,33 @@ def cmd_compare(args):
     out_npi_only_oos = f"{stem}_npi_only_out_of_state.csv"
     out_possible     = f"{stem}_possible_matches.csv"
 
-    matched.to_csv(out_matched,          index=False)
+    matched_wide.to_csv(out_matched,     index=False)
+    possible_wide.to_csv(out_possible,   index=False)
     multi.to_csv(out_multi,              index=False)
     mn_only.to_csv(out_mn_only,          index=False)
     npi_only.to_csv(out_npi_only,        index=False)
     npi_only_oos.to_csv(out_npi_only_oos, index=False)
-    possible.to_csv(out_possible,        index=False)
 
-    n_matched_providers  = matched["_name_key"].nunique()  if not matched.empty  else 0
-    n_multi_providers    = multi["_name_key"].nunique()    if not multi.empty    else 0
-    n_possible_providers = possible["_name_key"].nunique() if not possible.empty else 0
-    n_name_only     = possible[possible["_match_type"] == "name_only"]["_name_key"].nunique()    if not possible.empty else 0
-    n_last_initial  = possible[possible["_match_type"] == "lastname+initial"]["_name_key"].nunique() if not possible.empty else 0
+    n_matched_providers  = len(matched_wide)
+    n_possible_providers = len(possible_wide)
+    n_multi_providers    = multi["_name_key"].nunique() if not multi.empty else 0
+    n_name_only    = (possible_wide["_match_type"] == "name_only").sum()    if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
+    n_last_initial = (possible_wide["_match_type"] == "lastname+initial").sum() if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
 
     print(f"\n  {'─'*60}")
-    print(f"  1:1 matched (name+zip)         : {n_matched_providers:>5}  ({len(matched)} rows)  → {out_matched}")
-    print(f"  Possible matches               : {n_possible_providers:>5}  ({len(possible)} rows)  → {out_possible}")
+    print(f"  1:1 matched (name+zip)         : {n_matched_providers:>5}  (one row/provider) → {out_matched}")
+    print(f"  Possible matches               : {n_possible_providers:>5}  (one row/provider) → {out_possible}")
     print(f"    • name_only (zip differs)    : {n_name_only:>5}  (home vs work address)")
-    print(f"    • lastname+initial (weak)    : {n_last_initial:>5}  (MN-address NPI-only)")
-    print(f"  Multi-specialty (MN)           : {n_multi_providers:>5}  ({len(multi)} rows)  → {out_multi}")
-    print(f"  MN list only                   : {len(mn_only):>5}  (no name match)  → {out_mn_only}")
-    print(f"  NPI only (MN address, no match): {len(npi_only):>5}  rows             → {out_npi_only}")
-    print(f"  NPI only (out of state)        : {len(npi_only_oos):>5}  rows             → {out_npi_only_oos}")
+    print(f"    • lastname+initial (weak)    : {n_last_initial:>5}  (first name differs)")
+    print(f"  Multi-specialty (MN)           : {n_multi_providers:>5}  ({len(multi)} rows)       → {out_multi}")
+    print(f"  MN list only                   : {len(mn_only):>5}  (no name match)    → {out_mn_only}")
+    print(f"  NPI only (MN address, no match): {len(npi_only):>5}  rows               → {out_npi_only}")
+    print(f"  NPI only (out of state)        : {len(npi_only_oos):>5}  rows               → {out_npi_only_oos}")
     print(f"  {'─'*60}")
-    print(f"  '_match_type' in possible_matches: 'name_only' or 'lastname+initial'")
-    print(f"  Use 'source_file' and 'zip5' to compare addresses.")
+    print(f"  matched and possible files: one row per provider,")
+    print(f"    work_address/city/state/zip = NPI practice address")
+    print(f"    home_address/city/state/zip = MN licensing board address")
+    print(f"  '_match_type' distinguishes 'name_only' vs 'lastname+initial' in possible")
 
 
 def cmd_add_county(args):
