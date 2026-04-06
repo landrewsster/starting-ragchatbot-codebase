@@ -842,10 +842,10 @@ def pivot_wide(stacked_df: pd.DataFrame) -> pd.DataFrame:
                     continue
                 if col in _MN_ADDR_RENAME:
                     row[_MN_ADDR_RENAME[col]] = _join(mn_rows[col])
-                elif col not in row:
-                    # MN-specific field not already present from NPI row
+                elif col not in row or not str(row.get(col, "")).strip():
+                    # MN-specific field absent or blank in NPI row — use MN value
                     row[col] = _join(mn_rows[col])
-                # If col already set by NPI row, NPI value takes precedence
+                # If col already has a non-blank NPI value, NPI takes precedence
 
         rows.append(row)
 
