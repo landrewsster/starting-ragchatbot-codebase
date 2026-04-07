@@ -756,8 +756,10 @@ _NPI_ADDR_RENAME = {
     "primary_city":               "work_city",
     "primary_state":              "work_state",
     "zip5":                       "work_zip",
-    "primary_telephone_number":   "work_phone",
-    "primary_fax_number":         "work_fax",
+    "primary_telephone_number":   "work_phone",   # physicians/PAs file
+    "primary_telephone":          "work_phone",   # nurses file
+    "primary_fax_number":         "work_fax",     # physicians/PAs file
+    "primary_fax":                "work_fax",     # nurses file
     "source_file":                "npi_source_file",
 }
 _MN_ADDR_RENAME = {
