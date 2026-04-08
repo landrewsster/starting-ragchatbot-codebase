@@ -900,7 +900,73 @@ def _make_match_key_addr(df: pd.DataFrame) -> pd.Series:
     return name + "||" + addr
 
 
-def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+# Column names holding credential/license type in each dataset
+NPI_CRED_COL = "credential"
+MN_CRED_COL  = "license_type_desc"
+
+# Keyword → normalised credential category mapping
+# Checked in order; first match wins.  Returns "" if no pattern matches.
+_CRED_PATTERNS = [
+    (re.compile(r'\bm\.?d\.?\b',               re.I), "physician"),
+    (re.compile(r'\bd\.?o\.?\b',               re.I), "physician"),
+    (re.compile(r'medical\s+doctor',           re.I), "physician"),
+    (re.compile(r'doctor\s+of\s+(medicine|osteo)', re.I), "physician"),
+    (re.compile(r'\bpa[-\s]?c?\b',             re.I), "pa"),
+    (re.compile(r'physician\s+assistant',      re.I), "pa"),
+    (re.compile(r'\bcnm\b',                    re.I), "cnm"),
+    (re.compile(r'\bnm\b',                     re.I), "cnm"),   # MN licensing code
+    (re.compile(r'nurse\s+midwife',            re.I), "cnm"),
+    (re.compile(r'\bcns\b',                    re.I), "cns"),
+    (re.compile(r'clinical\s+nurse\s+specialist', re.I), "cns"),
+    (re.compile(r'\bcnp\b',                    re.I), "np"),
+    (re.compile(r'\bfnp\b|\banp\b|\bpnp\b|\bgnp\b|\bacnp\b', re.I), "np"),
+    (re.compile(r'\baprn\b',                   re.I), "np"),
+    (re.compile(r'\bnp[-\s]?c?\b',             re.I), "np"),
+    (re.compile(r'\bcrna\b',                   re.I), "crna"),
+    (re.compile(r'nurse\s+anesthetist',        re.I), "crna"),
+    (re.compile(r'\brn\b',                     re.I), "rn"),
+    (re.compile(r'registered\s+nurse',         re.I), "rn"),
+]
+
+
+def _norm_credential(value) -> str:
+    """Map a credential or license-type string to a broad normalised category.
+
+    Examples:
+        'MD'                  → 'physician'
+        'Medical Doctor'      → 'physician'
+        'PA-C'                → 'pa'
+        'Physician Assistant' → 'pa'
+        'CNM' / 'NM'         → 'cnm'
+        'CNP' / 'FNP-BC'     → 'np'
+        'APRN'                → 'np'
+        'CNS'                 → 'cns'
+        'CRNA'                → 'crna'
+        'RN'                  → 'rn'
+        anything else         → ''  (unknown; still matchable if both sides are '')
+    """
+    if pd.isna(value) or not str(value).strip():
+        return ""
+    s = str(value).strip()
+    for pattern, category in _CRED_PATTERNS:
+        if pattern.search(s):
+            return category
+    return ""
+
+
+def _make_key_last_initial(df: pd.DataFrame) -> pd.Series:
+    """Normalised last name + first initial match key (no zip, no credential)."""
+    last  = df[NPI_LAST].apply(_norm_str)
+    init  = df[NPI_FIRST].apply(lambda v: _norm_str(v)[:1] if _norm_str(v) else "")
+    return last + "|" + init
+
+
+def _make_key_last_initial_cred(df: pd.DataFrame, cred_col: str) -> pd.Series:
+    """Normalised last name + first initial + credential category match key."""
+    last  = df[NPI_LAST].apply(_norm_str)
+    init  = df[NPI_FIRST].apply(lambda v: _norm_str(v)[:1] if _norm_str(v) else "")
+    cred  = df.get(cred_col, pd.Series("", index=df.index)).apply(_norm_credential)
+    return last + "|" + init + "||" + cred
     """
     Within a MN list DataFrame, collapse rows that share the same normalised
     name + address_1 + zip5 into a single row.
@@ -957,22 +1023,19 @@ def compare_datasets(
         matched_1to1    Exactly 1 NPI match AND 1 MN match on name+zip.
         multi_specialty MN provider appears >1 time AND has ≥1 NPI match.
         mn_only         No name match in NPI at all.
-        npi_only_mn     In NPI with MN address, but no name match in MN list
-                        (after last+initial matching).
+        npi_only_mn     In NPI with MN address, no name+initial match in MN list.
         npi_only_oos    In NPI with a non-MN primary_state address.
-        possible        Name matches but zip differs (home vs work address),
-                        PLUS last-name+first-initial weak matches for MN-address
-                        NPI-only providers.  '_match_type' column distinguishes:
-                            'name_only'       — full name match, zip differs
-                            'lastname+initial' — last name + first initial match
+        possible        Last name + first initial matches both datasets but
+                        credential category differs.
+                        '_match_type' = 'name+initial_only'
 
-    '_mn_specialty_count' > 1 on a MN row means specialties were concatenated
-    during consolidation.  '_match_key' shows the full key used for matching.
+    '_mn_specialty_count' > 1 means MN specialty rows were concatenated.
+    '_match_key' shows the full key used for primary matching.
     """
     npi = npi_df.copy()
     mn  = mn_df.copy()
 
-    # Tag source type early so stacked outputs can be pivoted to wide format
+    # Tag source type so stacked outputs can be pivoted to wide format
     npi["_source_type"] = "NPI"
     mn["_source_type"]  = "MN"
 
@@ -982,82 +1045,70 @@ def compare_datasets(
         print(f"  MN consolidation: {n_collapsed} specialty rows merged "
               f"(same name+address → one row with concatenated specialties).")
 
-    # ── Build match keys: name+zip for cross-dataset matching
-    #    (full address is too strict — NPI and MN licensing board often record
-    #     different addresses for the same provider; zip is more consistent)
-    def _make_key_name_zip(df):
-        name = df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
-        zip_ = df.get(NPI_ZIP, pd.Series("", index=df.index)).apply(_norm_zip)
-        return name + "||" + zip_
+    # ── Primary match key: last name + first initial + normalised credential
+    #    Zip is intentionally excluded — NPI records work address while MN
+    #    licensing board records home/mailing address, so zips routinely differ.
+    npi["_match_key"] = _make_key_last_initial_cred(npi, NPI_CRED_COL)
+    mn["_match_key"]  = _make_key_last_initial_cred(mn,  MN_CRED_COL)
 
-    npi["_match_key"] = _make_key_name_zip(npi)
-    mn["_match_key"]  = _make_key_name_zip(mn)
-    npi["_name_key"]  = npi[NPI_LAST].apply(_norm_str) + "|" + npi[NPI_FIRST].apply(_norm_str)
-    mn["_name_key"]   = mn[NPI_LAST].apply(_norm_str)  + "|" + mn[NPI_FIRST].apply(_norm_str)
+    # ── Fallback name key (no credential) used to detect possible matches
+    npi["_name_key"] = _make_key_last_initial(npi)
+    mn["_name_key"]  = _make_key_last_initial(mn)
 
     npi_counts = npi["_match_key"].value_counts().to_dict()
     mn_counts  = mn["_match_key"].value_counts().to_dict()
 
-    mn["_npi_count"]  = mn["_match_key"].map(npi_counts).fillna(0).astype(int)
-    mn["_mn_count"]   = mn["_match_key"].map(mn_counts).fillna(0).astype(int)
-    npi["_npi_count"] = npi["_match_key"].map(npi_counts).fillna(0).astype(int)
-    npi["_mn_count"]  = npi["_match_key"].map(mn_counts).fillna(0).astype(int)
-
-    # ── Name-only keys (used for possible-match detection)
-    npi_name_keys = set(npi["_name_key"].unique())
-    mn_name_keys  = set(mn["_name_key"].unique())
+    npi_name_keys    = set(npi["_name_key"].unique())
+    mn_name_keys     = set(mn["_name_key"].unique())
     shared_name_keys = npi_name_keys & mn_name_keys
 
-    # ── Category keys (name+zip)
+    # 1:1 and multi matches on primary key (last+initial+cred)
     matched_keys    = {k for k in mn_counts if mn_counts[k] == 1 and npi_counts.get(k, 0) == 1}
     multi_spec_keys = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
-    mn_only_keys    = {k for k in mn_counts if npi_counts.get(k, 0) == 0}
-    npi_only_keys   = {k for k in npi_counts if mn_counts.get(k, 0) == 0}
 
-    # Name keys that already have a clean name+zip match (exclude from possible)
-    already_matched_name_keys = {k.split("||")[0] for k in matched_keys}
-    already_matched_name_keys |= {k.split("||")[0] for k in multi_spec_keys}
+    # Name keys already confirmed via primary match (exclude from possible)
+    already_matched_name_keys = {k.split("||")[0] for k in matched_keys | multi_spec_keys}
 
-    # ── Possible matches: name found in both datasets but zip differs
-    #    (likely same provider with home zip in MN list vs work zip in NPI)
+    # Possible: name+initial in both datasets but credential category differs
     possible_name_keys = shared_name_keys - already_matched_name_keys
 
-    # ── File 1: 1:1 matched (name + zip)
+    # ── File 1: 1:1 matched (last+initial+credential)
     matched_1to1 = (
         pd.concat([
             npi[npi["_match_key"].isin(matched_keys)],
             mn[mn["_match_key"].isin(matched_keys)],
         ], ignore_index=True)
-        .sort_values(["_name_key", "source_file"])
+        .sort_values(["_name_key", "_source_type"])
         .reset_index(drop=True)
     )
+    matched_1to1["_match_type"] = "name+initial+cred"
 
-    # ── File 2: multi-location in MN + at least one NPI match
+    # ── File 2: ambiguous — multiple MN rows for same key + at least one NPI match
     multi_specialty = (
         pd.concat([
             npi[npi["_match_key"].isin(multi_spec_keys)],
             mn[mn["_match_key"].isin(multi_spec_keys)],
         ], ignore_index=True)
-        .sort_values(["_name_key", "source_file"])
+        .sort_values(["_name_key", "_source_type"])
         .reset_index(drop=True)
     )
 
-    # ── File 3: MN list only, no name match in NPI at all
-    mn_only  = mn[mn["_name_key"].isin(mn_name_keys - shared_name_keys)].copy().reset_index(drop=True)
+    # ── File 3: MN list only — no name+initial match in NPI
+    mn_only = mn[~mn["_name_key"].isin(shared_name_keys)].copy().reset_index(drop=True)
 
-    # ── File 4: NPI only, no name match in MN at all (will be split further below)
-    npi_only = npi[npi["_name_key"].isin(npi_name_keys - shared_name_keys)].copy().reset_index(drop=True)
+    # ── File 4: NPI only — no name+initial match in MN
+    npi_only = npi[~npi["_name_key"].isin(shared_name_keys)].copy().reset_index(drop=True)
 
-    # ── File 5: possible matches — name agrees, zip differs (review for home vs work address)
+    # ── File 5: possible — name+initial matches but credential category differs
     possible = (
         pd.concat([
             npi[npi["_name_key"].isin(possible_name_keys)],
             mn[mn["_name_key"].isin(possible_name_keys)],
         ], ignore_index=True)
-        .sort_values(["_name_key", "source_file"])
+        .sort_values(["_name_key", "_source_type"])
         .reset_index(drop=True)
     )
-    possible["_match_type"] = "name_only"
+    possible["_match_type"] = "name+initial_only"
 
     # ── Split NPI-only into MN-address vs out-of-state
     if "primary_state" in npi_only.columns:
@@ -1067,43 +1118,6 @@ def compare_datasets(
     else:
         npi_only_oos = pd.DataFrame(columns=npi_only.columns)
         npi_only_mn  = npi_only.copy()
-
-    # ── Last name + first initial matching for MN-address NPI-only providers
-    #    Catches cases where first name is recorded differently between datasets
-    def _make_key_last_initial(df):
-        last       = df[NPI_LAST].apply(_norm_str)
-        first_init = df[NPI_FIRST].apply(lambda v: _norm_str(v)[:1] if _norm_str(v) else "")
-        return last + "|" + first_init
-
-    if not npi_only_mn.empty:
-        npi_only_mn["_li_key"] = _make_key_last_initial(npi_only_mn)
-        mn["_li_key"]          = _make_key_last_initial(mn)
-
-        li_npi_keys   = set(npi_only_mn["_li_key"].unique()) - {"", "|"}
-        li_mn_keys    = set(mn["_li_key"].unique())          - {"", "|"}
-        li_match_keys = li_npi_keys & li_mn_keys
-
-        if li_match_keys:
-            li_npi_rows = npi_only_mn[npi_only_mn["_li_key"].isin(li_match_keys)].copy()
-            li_mn_rows  = mn[mn["_li_key"].isin(li_match_keys)].copy()
-            li_npi_rows["_match_type"] = "lastname+initial"
-            li_mn_rows["_match_type"]  = "lastname+initial"
-            li_npi_rows = li_npi_rows.drop(columns=["_li_key"], errors="ignore")
-            li_mn_rows  = li_mn_rows.drop(columns=["_li_key"],  errors="ignore")
-            li_possible = (
-                pd.concat([li_npi_rows, li_mn_rows], ignore_index=True)
-                .sort_values(["_name_key", "source_file"])
-                .reset_index(drop=True)
-            )
-            possible    = pd.concat([possible, li_possible], ignore_index=True)
-            # Remove from npi_only_mn — they now appear in possible
-            npi_only_mn = npi_only_mn[~npi_only_mn["_li_key"].isin(li_match_keys)].copy()
-            n_li = li_npi_rows["_name_key"].nunique()
-            print(f"  Last+initial matches: {n_li} NPI-only MN-address provider(s) "
-                  f"moved to possible_matches.")
-
-        npi_only_mn = npi_only_mn.drop(columns=["_li_key"], errors="ignore").reset_index(drop=True)
-        mn          = mn.drop(columns=["_li_key"], errors="ignore")
 
     return matched_1to1, multi_specialty, mn_only, npi_only_mn, npi_only_oos, possible
 
@@ -1168,15 +1182,15 @@ def cmd_compare(args):
     print(f"  Possible matches               : {n_possible_providers:>5}  (one row/provider) → {out_possible}")
     print(f"    • name_only (zip differs)    : {n_name_only:>5}  (home vs work address)")
     print(f"    • lastname+initial (weak)    : {n_last_initial:>5}  (first name differs)")
-    print(f"  Multi-specialty (MN)           : {n_multi_providers:>5}  ({len(multi)} rows)       → {out_multi}")
-    print(f"  MN list only                   : {len(mn_only):>5}  (no name match)    → {out_mn_only}")
-    print(f"  NPI only (MN address, no match): {len(npi_only):>5}  rows               → {out_npi_only}")
-    print(f"  NPI only (out of state)        : {len(npi_only_oos):>5}  rows               → {out_npi_only_oos}")
+    print(f"  Multi-match (same last+initial+cred): {n_multi_providers:>5}  ({len(multi)} rows)  → {out_multi}")
+    print(f"  MN list only (no name+initial match): {len(mn_only):>5}                   → {out_mn_only}")
+    print(f"  NPI only (MN address, no match)     : {len(npi_only):>5}  rows             → {out_npi_only}")
+    print(f"  NPI only (out of state)             : {len(npi_only_oos):>5}  rows             → {out_npi_only_oos}")
     print(f"  {'─'*60}")
-    print(f"  matched and possible files: one row per provider,")
+    print(f"  matched and possible: one row per provider")
     print(f"    work_address/city/state/zip = NPI practice address")
     print(f"    home_address/city/state/zip = MN licensing board address")
-    print(f"  '_match_type' distinguishes 'name_only' vs 'lastname+initial' in possible")
+    print(f"  '_match_type': 'name+initial+cred' (matched) | 'name+initial_only' (possible)")
 
 
 def cmd_add_county(args):
