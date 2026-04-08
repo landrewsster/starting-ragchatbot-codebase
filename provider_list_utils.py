@@ -967,6 +967,9 @@ def _make_key_last_initial_cred(df: pd.DataFrame, cred_col: str) -> pd.Series:
     init  = df[NPI_FIRST].apply(lambda v: _norm_str(v)[:1] if _norm_str(v) else "")
     cred  = df.get(cred_col, pd.Series("", index=df.index)).apply(_norm_credential)
     return last + "|" + init + "||" + cred
+
+
+def consolidate_mn_specialties(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """
     Within a MN list DataFrame, collapse rows that share the same normalised
     name + address_1 + zip5 into a single row.
