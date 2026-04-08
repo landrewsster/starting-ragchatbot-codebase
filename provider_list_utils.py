@@ -751,23 +751,30 @@ _MN_CONCAT_FIELDS = [
 
 # Wide-format column mappings: NPI address → work_*, MN address → home_*
 _NPI_ADDR_RENAME = {
-    "primary_address_1":          "work_address_1",
-    "primary_address_2":          "work_address_2",
-    "primary_city":               "work_city",
-    "primary_state":              "work_state",
-    "zip5":                       "work_zip",
-    "primary_telephone_number":   "work_phone",   # physicians/PAs file
-    "primary_telephone":          "work_phone",   # nurses file
-    "primary_fax_number":         "work_fax",     # physicians/PAs file
-    "primary_fax":                "work_fax",     # nurses file
+    "primary_address_1":          "npi_primary_address_1",
+    "primary_address_2":          "npi_primary_address_2",
+    "primary_city":               "npi_primary_city",
+    "primary_state":              "npi_primary_state",
+    "zip5":                       "npi_primary_zip",
+    "primary_telephone_number":   "npi_primary_phone",   # physicians/PAs file
+    "primary_telephone":          "npi_primary_phone",   # nurses file
+    "primary_fax_number":         "npi_primary_fax",     # physicians/PAs file
+    "primary_fax":                "npi_primary_fax",     # nurses file
+    "mailing_address_1":          "npi_mailing_address_1",
+    "mailing_address_2":          "npi_mailing_address_2",
+    "mailing_city":               "npi_mailing_city",
+    "mailing_state":              "npi_mailing_state",
+    "mailing_postal_code":        "npi_mailing_zip",
+    "mailing_telephone":          "npi_mailing_phone",
+    "mailing_fax":                "npi_mailing_fax",
     "source_file":                "npi_source_file",
 }
 _MN_ADDR_RENAME = {
-    "primary_address_1": "home_address_1",
-    "primary_address_2": "home_address_2",
-    "primary_city":      "home_city",
-    "primary_state":     "home_state",
-    "zip5":              "home_zip",
+    "primary_address_1": "mn_address_1",
+    "primary_address_2": "mn_address_2",
+    "primary_city":      "mn_city",
+    "primary_state":     "mn_state",
+    "zip5":              "mn_zip",
     "source_file":       "mn_source_file",
 }
 # Internal helper columns to drop from wide output
@@ -777,10 +784,12 @@ _WIDE_DROP_COLS = frozenset([
 # Preferred column order for the wide output (others appended in natural order)
 _WIDE_COL_ORDER = [
     "last_name", "first_name", "middle_name", "npi",
-    "work_address_1", "work_address_2", "work_city", "work_state", "work_zip",
-    "work_phone", "work_fax",
-    "home_address_1", "home_address_2", "home_city", "home_state", "home_zip",
-    "license_type_desc", "license_nbr", "license_status_desc",
+    "npi_primary_address_1", "npi_primary_address_2", "npi_primary_city", "npi_primary_state", "npi_primary_zip",
+    "npi_primary_phone", "npi_primary_fax",
+    "npi_mailing_address_1", "npi_mailing_address_2", "npi_mailing_city", "npi_mailing_state", "npi_mailing_zip",
+    "npi_mailing_phone", "npi_mailing_fax",
+    "mn_address_1", "mn_address_2", "mn_city", "mn_state", "mn_zip",
+    "license_type_desc", "degree", "license_nbr", "license_status_desc",
     "expire_date_char", "grant_date_char", "specialty boards", "certification",
     "_mn_specialty_count", "_match_type",
     "npi_source_file", "mn_source_file",
@@ -1176,7 +1185,7 @@ def cmd_compare(args):
     possible_wide = pivot_wide(possible)
 
     # Sort by work address so co-located providers appear together
-    _addr_sort = ["work_zip", "work_city", "work_address_1", "last_name", "first_name"]
+    _addr_sort = ["npi_primary_zip", "npi_primary_city", "npi_primary_address_1", "last_name", "first_name"]
     for df in (matched_wide, possible_wide):
         keys = [k for k in _addr_sort if k in df.columns]
         if keys:
