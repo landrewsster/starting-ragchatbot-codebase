@@ -1131,6 +1131,13 @@ def compare_datasets(
 
     # ── File 3: MN list only — no name+initial match in NPI
     mn_only = mn[~mn["_name_key"].isin(shared_name_keys)].copy().reset_index(drop=True)
+    # Remove non-MN addresses — only one address per MN-only provider and we can't mail outside MN
+    if "primary_state" in mn_only.columns:
+        before = len(mn_only)
+        mn_only = mn_only[mn_only["primary_state"].str.strip().str.upper() == "MN"].copy().reset_index(drop=True)
+        removed = before - len(mn_only)
+        if removed:
+            print(f"  MN-only: removed {removed} row(s) with non-MN address.")
 
     # ── File 4: NPI only — no name+initial match in MN
     npi_only = npi[~npi["_name_key"].isin(shared_name_keys)].copy().reset_index(drop=True)
