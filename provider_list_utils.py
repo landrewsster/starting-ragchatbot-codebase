@@ -1158,6 +1158,52 @@ def compare_datasets(
     return matched_1to1, multi_specialty, mn_only, npi_only_mn, npi_only_oos, possible
 
 
+def _flag_mn_npi_address_match(multi_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For each provider in the stacked multi_specialty DataFrame, add a
+    '_npi_address_match' column to MN rows indicating whether their zip
+    matches the NPI primary or mailing zip for the same provider.
+
+    Values:
+        'matches_npi_primary_zip'  — MN zip == NPI primary zip
+        'matches_npi_mailing_zip'  — MN zip == NPI mailing zip
+        ''                         — no zip match found
+    """
+    if multi_df.empty or "_source_type" not in multi_df.columns:
+        return multi_df
+
+    group_col = "_name_key" if "_name_key" in multi_df.columns else None
+    if group_col is None:
+        return multi_df
+
+    df = multi_df.copy()
+    df["_npi_address_match"] = ""
+
+    for _, group in df.groupby(group_col, sort=False):
+        npi_rows = group[group["_source_type"] == "NPI"]
+        mn_rows  = group[group["_source_type"] == "MN"]
+
+        if npi_rows.empty or mn_rows.empty:
+            continue
+
+        npi_primary_zips = set()
+        npi_mailing_zips = set()
+        if "zip5" in npi_rows.columns:
+            npi_primary_zips = {_norm_zip(z) for z in npi_rows["zip5"]} - {""}
+        if "mailing_postal_code" in npi_rows.columns:
+            npi_mailing_zips = {_norm_zip(z) for z in npi_rows["mailing_postal_code"]} - {""}
+
+        for idx in mn_rows.index:
+            mn_zip = _norm_zip(df.at[idx, "zip5"]) if "zip5" in df.columns else ""
+            if not mn_zip:
+                continue
+            if mn_zip in npi_primary_zips:
+                df.at[idx, "_npi_address_match"] = "matches_npi_primary_zip"
+            elif mn_zip in npi_mailing_zips:
+                df.at[idx, "_npi_address_match"] = "matches_npi_mailing_zip"
+
+    return df
+
 
 def cmd_compare(args):
     print(f"\n{'─'*60}")
@@ -1202,6 +1248,7 @@ def cmd_compare(args):
 
     matched_wide.to_csv(out_matched,     index=False)
     possible_wide.to_csv(out_possible,   index=False)
+    multi = _flag_mn_npi_address_match(multi)
     multi.to_csv(out_multi,              index=False)
     mn_only.to_csv(out_mn_only,          index=False)
     npi_only.to_csv(out_npi_only,        index=False)
