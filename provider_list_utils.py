@@ -1048,8 +1048,14 @@ def compare_datasets(
     # ── Primary match key: last name + first initial + normalised credential
     #    Zip is intentionally excluded — NPI records work address while MN
     #    licensing board records home/mailing address, so zips routinely differ.
+    #    Auto-detect MN credential column: prefer 'degree', fall back to 'license_type_desc'
+    mn_cred_col = next((c for c in ["degree", MN_CRED_COL] if c in mn.columns), "")
+    if mn_cred_col:
+        print(f"  Credential column (MN): '{mn_cred_col}'  |  NPI: '{NPI_CRED_COL}'")
+    else:
+        print(f"  WARNING: no credential column found in MN list — matching on name+initial only.")
     npi["_match_key"] = _make_key_last_initial_cred(npi, NPI_CRED_COL)
-    mn["_match_key"]  = _make_key_last_initial_cred(mn,  MN_CRED_COL)
+    mn["_match_key"]  = _make_key_last_initial_cred(mn,  mn_cred_col)
 
     # ── Fallback name key (no credential) used to detect possible matches
     npi["_name_key"] = _make_key_last_initial(npi)
