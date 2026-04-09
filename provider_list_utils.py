@@ -1373,29 +1373,43 @@ def cmd_add_title(args):
     if not in_path.exists():
         sys.exit(f"  ERROR: file not found: {in_path}")
 
+    # ── Load mailing list — preserve exact column structure, never merge into it
     sheet = getattr(args, "sheet", None)
     df = (pd.read_excel(str(in_path), sheet_name=sheet or 0, dtype=str)
           if in_path.suffix.lower() in (".xlsx", ".xls")
           else pd.read_csv(str(in_path), dtype=str))
     df = df.fillna("")
-    print(f"  Loaded {len(df)} rows from {in_path.name}")
-    orig_cols = list(df.columns)  # preserve original column order
+    orig_cols = list(df.columns)
+    print(f"  Loaded {len(df)} rows, {len(orig_cols)} columns from {in_path.name}")
 
-    # ── Detect which credential columns are already in the file
+    # ── Build a name-key → credential-category lookup dict from source files
+    #    Never merged into df — only used to derive the title value per row
+    cred_lookup: dict = {}  # "normlast|normfirst" → category string
+
+    # First check if credential columns already exist in the mailing list itself
     present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
+    if present_cred_cols:
+        print(f"  Credential columns found in file: {present_cred_cols}")
+        for _, row in df.iterrows():
+            key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
+            if key and key not in cred_lookup:
+                for col in present_cred_cols:
+                    cat = _norm_credential(row.get(col, ""))
+                    if cat:
+                        cred_lookup[key] = cat
+                        break
 
-    # ── If source lookup files are provided, cross-reference to pull credential columns
+    # Then load source files and fill in any gaps
     if getattr(args, "source", None):
         print(f"  Loading source file(s) for credential lookup …")
-        src_frames = []
         for src_path in args.source:
-            p = Path(src_path)
-            src = (pd.read_excel(str(p), sheet_name=0, dtype=str)
-                   if p.suffix.lower() in (".xlsx", ".xls")
-                   else pd.read_csv(str(p), dtype=str))
+            sp = Path(src_path)
+            src = (pd.read_excel(str(sp), sheet_name=0, dtype=str)
+                   if sp.suffix.lower() in (".xlsx", ".xls")
+                   else pd.read_csv(str(sp), dtype=str))
             src = src.fillna("")
 
-            # Normalise name column names — source files may use LastName/FirstName or last_name/first_name
+            # Normalise name column names (LastName/FirstName → last_name/first_name)
             col_map_lower = {c.lower().replace(" ", "_"): c for c in src.columns}
             for std, variants in [
                 (NPI_LAST,  ["last_name", "lastname", "last"]),
@@ -1408,54 +1422,44 @@ def cmd_add_title(args):
                             break
 
             if NPI_LAST not in src.columns or NPI_FIRST not in src.columns:
-                print(f"    WARNING: could not find name columns in {p.name} — skipping.")
+                print(f"    WARNING: name columns not found in {sp.name} — skipping.")
                 continue
 
-            # Keep only name columns + any credential columns
-            keep = [NPI_LAST, NPI_FIRST] + [c for c in _CRED_SOURCE_COLS if c in src.columns]
-            src = src[[c for c in keep if c in src.columns]].copy()
-            print(f"    {p.name}: {len(src)} rows, cred cols: {[c for c in _CRED_SOURCE_COLS if c in src.columns]}")
-            src_frames.append(src)
+            src_cred_cols = [c for c in _CRED_SOURCE_COLS if c in src.columns]
+            print(f"    {sp.name}: {len(src)} rows, cred cols: {src_cred_cols}")
 
-        if src_frames:
-            src_all = pd.concat(src_frames, ignore_index=True)
-            # Build name key for lookup
-            src_all["_lkp_key"] = src_all[NPI_LAST].apply(_norm_str) + "|" + src_all[NPI_FIRST].apply(_norm_str)
-            src_all = src_all.drop_duplicates(subset="_lkp_key", keep="first")
+            for _, row in src.iterrows():
+                key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
+                if key and key not in cred_lookup:
+                    for col in src_cred_cols:
+                        cat = _norm_credential(row.get(col, ""))
+                        if cat:
+                            cred_lookup[key] = cat
+                            break
 
-            df["_lkp_key"] = df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
-            new_cred_cols = [c for c in _CRED_SOURCE_COLS if c in src_all.columns and c not in df.columns]
-            if new_cred_cols:
-                df = df.merge(src_all[["_lkp_key"] + new_cred_cols], on="_lkp_key", how="left")
-                df = df.fillna("")
-                print(f"  Joined credential columns from source: {new_cred_cols}")
-                present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
-
-            if "_lkp_key" in df.columns:
-                df = df.drop(columns=["_lkp_key"])
-
-    if not present_cred_cols:
+    if not cred_lookup:
         sys.exit(
-            "  ERROR: no credential columns found in the file and no --source files provided.\n"
-            f"  Expected one of: {_CRED_SOURCE_COLS}\n"
-            "  Use --source to supply the comparison output files (e.g. matched_1to1.csv) "
-            "for credential lookup."
+            "  ERROR: no credential data found. Add credential columns to the mailing list\n"
+            "  or use --source to supply comparison output files."
         )
 
-    # Derive title, then drop any credential columns added from source (keep original cols only)
-    extra_cred_cols = [c for c in df.columns if c not in orig_cols]
+    print(f"  Built credential lookup: {len(cred_lookup)} unique providers.")
 
-    print(f"  Using credential columns: {present_cred_cols}")
+    # ── Derive title using lookup — df columns are never touched except adding 'title'
+    def _lookup_title(row):
+        key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
+        cat = cred_lookup.get(key, "")
+        return _TITLE_MAP.get(cat, "")
 
-    # ── Derive title, restore original column order, append title as last column
-    df["title"] = df.apply(lambda row: _derive_title(row, present_cred_cols), axis=1)
-    df = df[[c for c in orig_cols if c in df.columns] + ["title"]]
+    df["title"] = df.apply(_lookup_title, axis=1)
+
+    # Output = exact original columns + title as the last column (nothing else added)
+    df = df[orig_cols + ["title"]]
+
     n_titled = (df["title"] != "").sum()
     print(f"  Assigned title to {n_titled} of {len(df)} rows.")
-
-    # Print breakdown
     for lbl, cnt in df["title"].value_counts().items():
-        print(f"    {lbl or '(blank)':>6}: {cnt}")
+        print(f"    {str(lbl) or '(blank)':>6}: {cnt}")
 
     # ── Save
     if getattr(args, "output", None):
