@@ -1373,33 +1373,35 @@ def cmd_add_title(args):
     if not in_path.exists():
         sys.exit(f"  ERROR: file not found: {in_path}")
 
-    # ── Load mailing list — preserve exact column structure, never merge into it
-    sheet = getattr(args, "sheet", None)
-    df = (pd.read_excel(str(in_path), sheet_name=sheet or 0, dtype=str)
-          if in_path.suffix.lower() in (".xlsx", ".xls")
-          else pd.read_csv(str(in_path), dtype=str))
-    df = df.fillna("")
-    orig_cols = list(df.columns)
-    print(f"  Loaded {len(df)} rows, {len(orig_cols)} columns from {in_path.name}")
+    try:
+        import openpyxl
+    except ImportError:
+        sys.exit("Missing dependency — run:  pip3 install openpyxl")
 
-    # ── Build a name-key → credential-category lookup dict from source files
-    #    Never merged into df — only used to derive the title value per row
+    # ── Read mailing list with openpyxl so blank-header columns are never dropped
+    wb = openpyxl.load_workbook(str(in_path))
+    ws = wb.active
+    n_rows = ws.max_row - 1  # exclude header row
+    n_cols = ws.max_column
+    print(f"  Loaded {n_rows} rows, {n_cols} columns from {in_path.name}")
+
+    # Map header names → 0-based column index
+    headers = [ws.cell(row=1, column=c).value for c in range(1, n_cols + 1)]
+    header_idx = {}
+    for i, h in enumerate(headers):
+        name = str(h or "").strip().lower().replace(" ", "_")
+        if name:
+            header_idx[name] = i  # 0-based
+
+    # Locate last_name / first_name columns
+    last_idx = next((header_idx[k] for k in ("last_name", "lastname") if k in header_idx), None)
+    first_idx = next((header_idx[k] for k in ("first_name", "firstname") if k in header_idx), None)
+    if last_idx is None or first_idx is None:
+        sys.exit("  ERROR: could not find last_name / first_name columns in the mailing list.")
+
+    # ── Build credential lookup from source files (pandas is fine here — our own CSVs)
     cred_lookup: dict = {}  # "normlast|normfirst" → category string
 
-    # First check if credential columns already exist in the mailing list itself
-    present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
-    if present_cred_cols:
-        print(f"  Credential columns found in file: {present_cred_cols}")
-        for _, row in df.iterrows():
-            key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
-            if key and key not in cred_lookup:
-                for col in present_cred_cols:
-                    cat = _norm_credential(row.get(col, ""))
-                    if cat:
-                        cred_lookup[key] = cat
-                        break
-
-    # Then load source files and fill in any gaps
     if getattr(args, "source", None):
         print(f"  Loading source file(s) for credential lookup …")
         for src_path in args.source:
@@ -1409,7 +1411,6 @@ def cmd_add_title(args):
                    else pd.read_csv(str(sp), dtype=str))
             src = src.fillna("")
 
-            # Normalise name column names (LastName/FirstName → last_name/first_name)
             col_map_lower = {c.lower().replace(" ", "_"): c for c in src.columns}
             for std, variants in [
                 (NPI_LAST,  ["last_name", "lastname", "last"]),
@@ -1439,27 +1440,30 @@ def cmd_add_title(args):
 
     if not cred_lookup:
         sys.exit(
-            "  ERROR: no credential data found. Add credential columns to the mailing list\n"
-            "  or use --source to supply comparison output files."
+            "  ERROR: no credential data found.\n"
+            "  Use --source to supply the comparison output files."
         )
-
     print(f"  Built credential lookup: {len(cred_lookup)} unique providers.")
 
-    # ── Derive title using lookup — df columns are never touched except adding 'title'
-    def _lookup_title(row):
-        key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
-        cat = cred_lookup.get(key, "")
-        return _TITLE_MAP.get(cat, "")
+    # ── Write 'title' header into the next column after existing data
+    title_col = n_cols + 1  # openpyxl is 1-based
+    ws.cell(row=1, column=title_col, value="title")
 
-    df["title"] = df.apply(_lookup_title, axis=1)
+    # ── Fill title for each data row — existing cells are never touched
+    counts: dict = {}
+    for row_num in range(2, ws.max_row + 1):
+        last  = _norm_str(ws.cell(row=row_num, column=last_idx + 1).value or "")
+        first = _norm_str(ws.cell(row=row_num, column=first_idx + 1).value or "")
+        key   = last + "|" + first
+        cat   = cred_lookup.get(key, "")
+        title = _TITLE_MAP.get(cat, "")
+        ws.cell(row=row_num, column=title_col, value=title)
+        counts[title] = counts.get(title, 0) + 1
 
-    # Output = exact original columns + title as the last column (nothing else added)
-    df = df[orig_cols + ["title"]]
-
-    n_titled = (df["title"] != "").sum()
-    print(f"  Assigned title to {n_titled} of {len(df)} rows.")
-    for lbl, cnt in df["title"].value_counts().items():
-        print(f"    {str(lbl) or '(blank)':>6}: {cnt}")
+    n_titled = sum(v for k, v in counts.items() if k)
+    print(f"  Assigned title to {n_titled} of {n_rows} rows.")
+    for lbl in sorted(counts, key=lambda x: -counts[x]):
+        print(f"    {lbl or '(blank)':>6}: {counts[lbl]}")
 
     # ── Save
     if getattr(args, "output", None):
@@ -1467,11 +1471,7 @@ def cmd_add_title(args):
     else:
         out_path = str(in_path.parent / (in_path.stem + "_titled.xlsx"))
 
-    out = Path(out_path)
-    if out.suffix.lower() in (".xlsx", ".xls"):
-        df.to_excel(out_path, index=False)
-    else:
-        df.to_csv(out_path, index=False)
+    wb.save(out_path)
     print(f"  Saved → {out_path}")
 
 
