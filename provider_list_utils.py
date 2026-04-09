@@ -1442,14 +1442,14 @@ def cmd_add_title(args):
             "for credential lookup."
         )
 
-    # Restore original column order; any new credential cols from source go after originals
+    # Derive title, then drop any credential columns added from source (keep original cols only)
     extra_cred_cols = [c for c in df.columns if c not in orig_cols]
-    df = df[[c for c in orig_cols if c in df.columns] + extra_cred_cols]
 
     print(f"  Using credential columns: {present_cred_cols}")
 
-    # ── Derive title and append as the last column
+    # ── Derive title, restore original column order, append title as last column
     df["title"] = df.apply(lambda row: _derive_title(row, present_cred_cols), axis=1)
+    df = df[[c for c in orig_cols if c in df.columns] + ["title"]]
     n_titled = (df["title"] != "").sum()
     print(f"  Assigned title to {n_titled} of {len(df)} rows.")
 
