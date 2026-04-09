@@ -1392,9 +1392,27 @@ def cmd_add_title(args):
                    if p.suffix.lower() in (".xlsx", ".xls")
                    else pd.read_csv(str(p), dtype=str))
             src = src.fillna("")
-            # Keep only columns needed for matching + any credential columns
+
+            # Normalise name column names — source files may use LastName/FirstName or last_name/first_name
+            col_map_lower = {c.lower().replace(" ", "_"): c for c in src.columns}
+            for std, variants in [
+                (NPI_LAST,  ["last_name", "lastname", "last"]),
+                (NPI_FIRST, ["first_name", "firstname", "first"]),
+            ]:
+                if std not in src.columns:
+                    for v in variants:
+                        if v in col_map_lower:
+                            src = src.rename(columns={col_map_lower[v]: std})
+                            break
+
+            if NPI_LAST not in src.columns or NPI_FIRST not in src.columns:
+                print(f"    WARNING: could not find name columns in {p.name} — skipping.")
+                continue
+
+            # Keep only name columns + any credential columns
             keep = [NPI_LAST, NPI_FIRST] + [c for c in _CRED_SOURCE_COLS if c in src.columns]
             src = src[[c for c in keep if c in src.columns]].copy()
+            print(f"    {p.name}: {len(src)} rows, cred cols: {[c for c in _CRED_SOURCE_COLS if c in src.columns]}")
             src_frames.append(src)
 
         if src_frames:
