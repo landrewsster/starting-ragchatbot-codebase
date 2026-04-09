@@ -919,6 +919,7 @@ _CRED_PATTERNS = [
     (re.compile(r'\bm\.?d\.?\b',               re.I), "physician"),
     (re.compile(r'\bd\.?o\.?\b',               re.I), "physician"),
     (re.compile(r'medical\s+doctor',           re.I), "physician"),
+    (re.compile(r'physician\s+and\s+surgeon',  re.I), "physician"),
     (re.compile(r'doctor\s+of\s+(medicine|osteo)', re.I), "physician"),
     (re.compile(r'\bpa[-\s]?c?\b',             re.I), "pa"),
     (re.compile(r'physician\s+assistant',      re.I), "pa"),
@@ -1339,6 +1340,113 @@ def cmd_crossref(args):
     print(f"  External only  : {len(ext_only):>5} rows → {out_ext_only}")
 
 
+# ── Add-title: credential → title column ──────────────────────────────────────
+
+# Maps normalised credential category → display title for mailing list
+_TITLE_MAP = {
+    "physician": "Dr",
+    "pa":        "PA",
+    "np":        "NP",
+    "cnm":       "CNM",
+    "cns":       "CNS",
+    "crna":      "CRNA",
+    "rn":        "RN",
+}
+
+# Credential columns to check, in priority order
+_CRED_SOURCE_COLS = ["credential", "degree", "license_type_desc", "license_type"]
+
+
+def _derive_title(row, cred_cols: list) -> str:
+    """Return the display title for a row by checking available credential columns."""
+    for col in cred_cols:
+        val = row.get(col, "")
+        cat = _norm_credential(val)
+        if cat:
+            return _TITLE_MAP.get(cat, "")
+    return ""
+
+
+def cmd_add_title(args):
+    print(f"\n{'─'*60}")
+    in_path = Path(args.file)
+    if not in_path.exists():
+        sys.exit(f"  ERROR: file not found: {in_path}")
+
+    df = (_read_excel(str(in_path), sheet=getattr(args, "sheet", None))
+          if in_path.suffix.lower() in (".xlsx", ".xls")
+          else pd.read_csv(str(in_path), dtype=str))
+    df = df.fillna("")
+    print(f"  Loaded {len(df)} rows from {in_path.name}")
+
+    # ── Detect which credential columns are already in the file
+    present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
+
+    # ── If source lookup files are provided, cross-reference to pull credential columns
+    if getattr(args, "source", None):
+        print(f"  Loading source file(s) for credential lookup …")
+        src_frames = []
+        for src_path in args.source:
+            p = Path(src_path)
+            src = (_read_excel(str(p), sheet=None)
+                   if p.suffix.lower() in (".xlsx", ".xls")
+                   else pd.read_csv(str(p), dtype=str))
+            src = src.fillna("")
+            # Keep only columns needed for matching + any credential columns
+            keep = [NPI_LAST, NPI_FIRST] + [c for c in _CRED_SOURCE_COLS if c in src.columns]
+            src = src[[c for c in keep if c in src.columns]].copy()
+            src_frames.append(src)
+
+        if src_frames:
+            src_all = pd.concat(src_frames, ignore_index=True)
+            # Build name key for lookup
+            src_all["_lkp_key"] = src_all[NPI_LAST].apply(_norm_str) + "|" + src_all[NPI_FIRST].apply(_norm_str)
+            src_all = src_all.drop_duplicates(subset="_lkp_key", keep="first")
+
+            df["_lkp_key"] = df[NPI_LAST].apply(_norm_str) + "|" + df[NPI_FIRST].apply(_norm_str)
+            new_cred_cols = [c for c in _CRED_SOURCE_COLS if c in src_all.columns and c not in df.columns]
+            if new_cred_cols:
+                df = df.merge(src_all[["_lkp_key"] + new_cred_cols], on="_lkp_key", how="left")
+                df = df.fillna("")
+                print(f"  Joined credential columns from source: {new_cred_cols}")
+                present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
+
+            if "_lkp_key" in df.columns:
+                df = df.drop(columns=["_lkp_key"])
+
+    if not present_cred_cols:
+        sys.exit(
+            "  ERROR: no credential columns found in the file and no --source files provided.\n"
+            f"  Expected one of: {_CRED_SOURCE_COLS}\n"
+            "  Use --source to supply the comparison output files (e.g. matched_1to1.csv) "
+            "for credential lookup."
+        )
+
+    print(f"  Using credential columns: {present_cred_cols}")
+
+    # ── Derive title
+    df["title"] = df.apply(lambda row: _derive_title(row, present_cred_cols), axis=1)
+    n_titled = (df["title"] != "").sum()
+    print(f"  Assigned title to {n_titled} of {len(df)} rows.")
+
+    # Print breakdown
+    for lbl, cnt in df["title"].value_counts().items():
+        print(f"    {lbl or '(blank)':>6}: {cnt}")
+
+    # ── Save
+    if getattr(args, "output", None):
+        out_path = args.output
+    else:
+        out_path = str(in_path.parent / (in_path.stem + "_titled.xlsx"))
+
+    out = Path(out_path)
+    if out.suffix.lower() in (".xlsx", ".xls"):
+        df.to_excel(out_path, index=False)
+    else:
+        df.to_csv(out_path, index=False)
+    print(f"  Saved → {out_path}")
+
+
 # ── Argument parser ────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1404,6 +1512,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("--output-prefix", default="compare", dest="output_prefix",
                        help="Prefix for output filenames (default: 'compare').")
 
+    # ── add-title ──────────────────────────────────────────────────────────────
+    p_at = sub.add_parser(
+        "add-title",
+        help="Add a 'title' column (Dr / PA / NP / CNM / etc.) to a compiled mailing list."
+    )
+    p_at.add_argument("file", help="Compiled mailing list (.xlsx or .csv).")
+    p_at.add_argument("--source", nargs="+", metavar="FILE",
+                      help="One or more comparison output files (matched_1to1.csv, possible_matches.csv, etc.) "
+                           "to look up credentials when the mailing list doesn't already contain a credential column.")
+    p_at.add_argument("--sheet", default=None, help="Excel sheet name (default: first sheet).")
+    p_at.add_argument("-o", "--output", default=None,
+                      help="Output file path (default: <input>_titled.xlsx).")
+
     # ── add-county ─────────────────────────────────────────────────────────────
     p_ac = sub.add_parser("add-county",
                           help="Join county name and FIPS from an HRSA ZIP-to-county crosswalk.")
@@ -1438,6 +1559,8 @@ def main():
         cmd_merge(args)
     elif args.command == "compare":
         cmd_compare(args)
+    elif args.command == "add-title":
+        cmd_add_title(args)
     elif args.command == "add-county":
         cmd_add_county(args)
     elif args.command == "crossref":
