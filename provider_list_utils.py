@@ -1379,6 +1379,7 @@ def cmd_add_title(args):
           else pd.read_csv(str(in_path), dtype=str))
     df = df.fillna("")
     print(f"  Loaded {len(df)} rows from {in_path.name}")
+    orig_cols = list(df.columns)  # preserve original column order
 
     # ── Detect which credential columns are already in the file
     present_cred_cols = [c for c in _CRED_SOURCE_COLS if c in df.columns]
@@ -1441,9 +1442,13 @@ def cmd_add_title(args):
             "for credential lookup."
         )
 
+    # Restore original column order; any new credential cols from source go after originals
+    extra_cred_cols = [c for c in df.columns if c not in orig_cols]
+    df = df[[c for c in orig_cols if c in df.columns] + extra_cred_cols]
+
     print(f"  Using credential columns: {present_cred_cols}")
 
-    # ── Derive title
+    # ── Derive title and append as the last column
     df["title"] = df.apply(lambda row: _derive_title(row, present_cred_cols), axis=1)
     n_titled = (df["title"] != "").sum()
     print(f"  Assigned title to {n_titled} of {len(df)} rows.")
