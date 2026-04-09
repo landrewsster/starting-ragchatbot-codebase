@@ -1373,7 +1373,8 @@ def cmd_add_title(args):
     if not in_path.exists():
         sys.exit(f"  ERROR: file not found: {in_path}")
 
-    df = (_read_excel(str(in_path), sheet=getattr(args, "sheet", None))
+    sheet = getattr(args, "sheet", None)
+    df = (pd.read_excel(str(in_path), sheet_name=sheet or 0, dtype=str)
           if in_path.suffix.lower() in (".xlsx", ".xls")
           else pd.read_csv(str(in_path), dtype=str))
     df = df.fillna("")
@@ -1388,7 +1389,7 @@ def cmd_add_title(args):
         src_frames = []
         for src_path in args.source:
             p = Path(src_path)
-            src = (_read_excel(str(p), sheet=None)
+            src = (pd.read_excel(str(p), sheet_name=0, dtype=str)
                    if p.suffix.lower() in (".xlsx", ".xls")
                    else pd.read_csv(str(p), dtype=str))
             src = src.fillna("")
