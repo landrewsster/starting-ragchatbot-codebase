@@ -1475,6 +1475,184 @@ def cmd_add_title(args):
     print(f"  Saved → {out_path}")
 
 
+def _parse_taxonomy_specialty(taxonomy_desc_str: str):
+    """Parse taxonomy_descriptions into (specialty, subspecialty).
+
+    Takes the first unique semicolon-separated entry; splits on the first
+    comma to separate specialty from subspecialty.
+
+    Examples:
+        "Family Medicine; Family Medicine"
+            → ("Family Medicine", "")
+        "Internal Medicine, Cardiovascular Disease; Internal Medicine"
+            → ("Internal Medicine", "Cardiovascular Disease")
+        "Obstetrics & Gynecology, Gynecologic Oncology; ..."
+            → ("Obstetrics & Gynecology", "Gynecologic Oncology")
+    """
+    s = str(taxonomy_desc_str or "").strip()
+    if not s or s == "(empty)":
+        return "", ""
+    seen: set = set()
+    unique = []
+    for entry in s.split(";"):
+        e = entry.strip()
+        if e and e not in seen:
+            seen.add(e)
+            unique.append(e)
+    if not unique:
+        return "", ""
+    first = unique[0]
+    if "," in first:
+        spec, sub = first.split(",", 1)
+        return spec.strip(), sub.strip()
+    return first, ""
+
+
+def _build_provider_lookup(source_paths: list) -> dict:
+    """Build name-key → {title, specialty, subspecialty} from comparison output files."""
+    lookup: dict = {}
+
+    for src_path in source_paths:
+        sp = Path(src_path)
+        src = (pd.read_excel(str(sp), sheet_name=0, dtype=str)
+               if sp.suffix.lower() in (".xlsx", ".xls")
+               else pd.read_csv(str(sp), dtype=str))
+        src = src.fillna("")
+
+        # Normalise name columns (LastName/FirstName → last_name/first_name)
+        col_map_lower = {c.lower().replace(" ", "_"): c for c in src.columns}
+        for std, variants in [
+            (NPI_LAST,  ["last_name", "lastname", "last"]),
+            (NPI_FIRST, ["first_name", "firstname", "first"]),
+        ]:
+            if std not in src.columns:
+                for v in variants:
+                    if v in col_map_lower:
+                        src = src.rename(columns={col_map_lower[v]: std})
+                        break
+
+        if NPI_LAST not in src.columns or NPI_FIRST not in src.columns:
+            print(f"    WARNING: name columns not found in {sp.name} — skipping.")
+            continue
+
+        src_cred_cols = [c for c in _CRED_SOURCE_COLS if c in src.columns]
+        print(f"    {sp.name}: {len(src)} rows")
+
+        for _, row in src.iterrows():
+            key = _norm_str(row.get(NPI_LAST, "")) + "|" + _norm_str(row.get(NPI_FIRST, ""))
+            if not key or key in lookup:
+                continue
+
+            entry: dict = {"title": "", "specialty": "", "subspecialty": ""}
+
+            # ── Title
+            for col in src_cred_cols:
+                cat = _norm_credential(row.get(col, ""))
+                if cat:
+                    entry["title"] = _TITLE_MAP.get(cat, "")
+                    break
+
+            # ── Specialty: MN specialty boards first, then NPI taxonomy
+            spec_boards = str(row.get("specialty boards", "") or "").strip()
+            if spec_boards and spec_boards != "(empty)":
+                entry["specialty"] = spec_boards
+                cert = str(row.get("certification", "") or "").strip()
+                entry["subspecialty"] = cert if cert and cert != "(empty)" else ""
+            else:
+                tax = str(row.get("taxonomy_descriptions", "") or "").strip()
+                spec, sub = _parse_taxonomy_specialty(tax)
+                entry["specialty"] = spec
+                entry["subspecialty"] = sub
+
+            lookup[key] = entry
+
+    return lookup
+
+
+def cmd_add_columns(args):
+    """Add title, specialty, and subspecialty columns to a compiled mailing list."""
+    print(f"\n{'─'*60}")
+    in_path = Path(args.file)
+    if not in_path.exists():
+        sys.exit(f"  ERROR: file not found: {in_path}")
+
+    try:
+        import openpyxl
+    except ImportError:
+        sys.exit("Missing dependency — run:  pip3 install openpyxl")
+
+    # Use openpyxl so blank-header columns are never dropped
+    wb = openpyxl.load_workbook(str(in_path))
+    ws = wb.active
+    n_rows = ws.max_row - 1
+    n_cols = ws.max_column
+    print(f"  Loaded {n_rows} rows, {n_cols} columns from {in_path.name}")
+
+    # Map header names → 0-based column index
+    headers = [ws.cell(row=1, column=c).value for c in range(1, n_cols + 1)]
+    header_idx: dict = {}
+    for i, h in enumerate(headers):
+        name = str(h or "").strip().lower().replace(" ", "_")
+        if name:
+            header_idx[name] = i
+
+    last_idx  = next((header_idx[k] for k in ("last_name",  "lastname")  if k in header_idx), None)
+    first_idx = next((header_idx[k] for k in ("first_name", "firstname") if k in header_idx), None)
+    if last_idx is None or first_idx is None:
+        sys.exit("  ERROR: could not find last_name / first_name columns.")
+
+    # ── Build lookup from source files
+    if not getattr(args, "source", None):
+        sys.exit("  ERROR: --source files required.")
+
+    print(f"  Loading source file(s) …")
+    lookup = _build_provider_lookup(args.source)
+    if not lookup:
+        sys.exit("  ERROR: no data found in source files.")
+    print(f"  Built lookup: {len(lookup)} unique providers.")
+
+    # ── Append new column headers
+    new_cols = ["title", "specialty", "subspecialty"]
+    for i, col_name in enumerate(new_cols):
+        ws.cell(row=1, column=n_cols + 1 + i, value=col_name)
+
+    # ── Fill values row by row — existing cells never touched
+    title_counts: dict = {}
+    spec_counts: dict  = {}
+    for row_num in range(2, ws.max_row + 1):
+        last  = _norm_str(ws.cell(row=row_num, column=last_idx  + 1).value or "")
+        first = _norm_str(ws.cell(row=row_num, column=first_idx + 1).value or "")
+        key   = last + "|" + first
+        entry = lookup.get(key, {})
+
+        title  = entry.get("title",       "")
+        spec   = entry.get("specialty",   "")
+        subsp  = entry.get("subspecialty","")
+
+        ws.cell(row=row_num, column=n_cols + 1, value=title)
+        ws.cell(row=row_num, column=n_cols + 2, value=spec)
+        ws.cell(row=row_num, column=n_cols + 3, value=subsp)
+
+        title_counts[title] = title_counts.get(title, 0) + 1
+        spec_counts[spec]   = spec_counts.get(spec,   0) + 1
+
+    n_titled = sum(v for k, v in title_counts.items() if k)
+    n_spec   = sum(v for k, v in spec_counts.items()  if k)
+    print(f"  title assigned     : {n_titled} of {n_rows}")
+    print(f"  specialty assigned : {n_spec} of {n_rows}")
+    print(f"\n  Title breakdown:")
+    for lbl in sorted(title_counts, key=lambda x: -title_counts[x]):
+        print(f"    {str(lbl) or '(blank)':>6}: {title_counts[lbl]}")
+    print(f"\n  Top specialties:")
+    for lbl in sorted(spec_counts, key=lambda x: -spec_counts[x])[:20]:
+        if lbl:
+            print(f"    {lbl}: {spec_counts[lbl]}")
+
+    out_path = getattr(args, "output", None) or str(in_path.parent / (in_path.stem + "_columns.xlsx"))
+    wb.save(out_path)
+    print(f"\n  Saved → {out_path}")
+
+
 # ── Argument parser ────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1553,6 +1731,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_at.add_argument("-o", "--output", default=None,
                       help="Output file path (default: <input>_titled.xlsx).")
 
+    # ── add-columns ────────────────────────────────────────────────────────────
+    p_ac2 = sub.add_parser(
+        "add-columns",
+        help="Add title, specialty, and subspecialty columns to a compiled mailing list."
+    )
+    p_ac2.add_argument("file", help="Compiled mailing list (.xlsx or .csv).")
+    p_ac2.add_argument("--source", nargs="+", metavar="FILE", required=True,
+                       help="Comparison output files to look up credentials and specialty.")
+    p_ac2.add_argument("-o", "--output", default=None,
+                       help="Output file path (default: <input>_columns.xlsx).")
+
     # ── add-county ─────────────────────────────────────────────────────────────
     p_ac = sub.add_parser("add-county",
                           help="Join county name and FIPS from an HRSA ZIP-to-county crosswalk.")
@@ -1589,6 +1778,8 @@ def main():
         cmd_compare(args)
     elif args.command == "add-title":
         cmd_add_title(args)
+    elif args.command == "add-columns":
+        cmd_add_columns(args)
     elif args.command == "add-county":
         cmd_add_county(args)
     elif args.command == "crossref":
