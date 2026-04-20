@@ -247,10 +247,14 @@ def flatten_provider(record, query_taxonomy_code):
 
 # ── NPI API fetch ──────────────────────────────────────────────────────────────
 
+MAX_REQUESTS   = 6      # NPPES hard limit: 6 requests per search
+MAX_SKIP       = 1000  # NPPES hard limit: skip up to 1000 records
+MAX_RECORDS    = MAX_REQUESTS * PAGE_SIZE  # 1,200 total
+
 def fetch_all_for_taxonomy(taxonomy_code):
     search_term = TAXONOMY_SEARCH_TERMS.get(taxonomy_code, taxonomy_code)
-    matched, skip = [], 0
-    while True:
+    matched, skip, request_num = [], 0, 0
+    while request_num < MAX_REQUESTS:
         params = {
             "version": "2.1", "enumeration_type": ENUM_TYPE,
             "taxonomy_description": search_term,
@@ -262,14 +266,17 @@ def fetch_all_for_taxonomy(taxonomy_code):
         data = resp.json()
         results      = data.get("results", [])
         result_count = data.get("result_count", 0)
+        request_num += 1
+        if request_num == 1 and result_count > MAX_RECORDS:
+            print(f"  WARNING: {result_count} candidates reported — NPPES caps retrieval at {MAX_RECORDS}. Some providers may be missed.")
         page_matched = [
             r for r in results
             if any(t.get("code") == taxonomy_code for t in r.get("taxonomies", []))
         ]
         matched.extend(page_matched)
         skip += len(results)
-        print(f"    fetched {skip}/{result_count} candidates — {len(matched)} match {taxonomy_code} so far")
-        if not results or skip >= result_count:
+        print(f"    request {request_num}/{MAX_REQUESTS} — fetched {skip}/{result_count} candidates — {len(matched)} match {taxonomy_code} so far")
+        if not results or skip >= result_count or skip > MAX_SKIP:
             break
         time.sleep(PAUSE_SEC)
     return matched
