@@ -1318,54 +1318,43 @@ def cmd_compare(args):
 
     ts   = datetime.now().strftime("%Y%m%d_%H%M")
     stem = f"{args.output_prefix or 'compare'}_{ts}"
-    out_matched      = f"{stem}_matched_1to1.csv"
-    out_multi        = f"{stem}_multi_specialty.csv"
-    out_mn_only      = f"{stem}_mn_only.csv"
-    out_npi_only     = f"{stem}_npi_only.csv"
-    out_npi_only_oos = f"{stem}_npi_only_out_of_state.csv"
-    out_possible     = f"{stem}_possible_matches.csv"
+    out_combined = f"{stem}_combined.csv"
+    out_multi    = f"{stem}_multi_specialty.csv"
+    out_mn_only  = f"{stem}_mn_only.csv"
+    out_npi_only = f"{stem}_npi_only.csv"
 
-    # Add match_confidence column and save individual files
+    # Add match_confidence column and combine into one file
     matched_wide["match_confidence"] = "matched_1to1"
     possible_wide["match_confidence"] = "possible"
-    matched_wide.to_csv(out_matched,   index=False)
-    possible_wide.to_csv(out_possible, index=False)
-
-    # Combined matched + possible (one row per provider, sorted by address)
     combined = pd.concat([matched_wide, possible_wide], ignore_index=True)
     comb_sort_keys = [k for k in _addr_sort if k in combined.columns]
     if comb_sort_keys:
         combined.sort_values(comb_sort_keys, inplace=True, ignore_index=True)
-    out_combined = f"{stem}_combined.csv"
     combined.to_csv(out_combined, index=False)
 
     # Multi: flag address match then disambiguate by credential
     multi = _flag_mn_npi_address_match(multi)
     multi = _disambiguate_multi(multi)
-    multi.to_csv(out_multi,              index=False)
-    mn_only.to_csv(out_mn_only,          index=False)
-    npi_only.to_csv(out_npi_only,        index=False)
-    npi_only_oos.to_csv(out_npi_only_oos, index=False)
+    multi.to_csv(out_multi,   index=False)
+    mn_only.to_csv(out_mn_only,  index=False)
+    npi_only.to_csv(out_npi_only, index=False)
 
     n_matched_providers  = len(matched_wide)
     n_possible_providers = len(possible_wide)
     n_combined           = len(combined)
     n_multi_providers    = multi["_name_key"].nunique() if not multi.empty else 0
-    n_name_only    = (possible_wide["_match_type"] == "name_only").sum()    if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
-    n_last_initial = (possible_wide["_match_type"] == "lastname+initial").sum() if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
 
     print(f"\n  {'─'*60}")
-    print(f"  1:1 matched (full name+mid initial)  : {n_matched_providers:>5}  (one row/provider) → {out_matched}")
-    print(f"  Possible (name matches, mid differs) : {n_possible_providers:>5}  (one row/provider) → {out_possible}")
+    print(f"  1:1 matched (full name+mid initial)  : {n_matched_providers:>5}")
+    print(f"  Possible (name matches, mid differs) : {n_possible_providers:>5}")
     print(f"  Combined matched + possible          : {n_combined:>5}  (one row/provider) → {out_combined}")
     print(f"  Multi-match (same full name+mid)     : {n_multi_providers:>5}  ({len(multi)} rows)       → {out_multi}")
     print(f"  MN list only (no full-name match)    : {len(mn_only):>5}                       → {out_mn_only}")
     print(f"  NPI only (MN address, no match)      : {len(npi_only):>5}  rows               → {out_npi_only}")
-    print(f"  NPI only (out of state)              : {len(npi_only_oos):>5}  rows               → {out_npi_only_oos}")
     print(f"  {'─'*60}")
-    print(f"  matched and possible: one row per provider")
-    print(f"    work_address/city/state/zip = NPI practice address")
-    print(f"    home_address/city/state/zip = MN licensing board address")
+    print(f"  combined: one row per provider, match_confidence = matched_1to1 | possible")
+    print(f"    npi_primary_* = NPI practice address")
+    print(f"    mn_address_*  = MN licensing board address")
     print(f"  '_match_type': 'full_name+mid_initial' (matched) | 'name_no_middle' (possible)")
 
 
