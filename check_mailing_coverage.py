@@ -23,7 +23,7 @@ import pandas as pd
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE          = Path.home() / "Downloads" / "CRC MDH Project"
 PROVIDER_FILE = BASE / "Current Mailing Files" / "physician_pa_nurse_20260422_combined.xlsx"
-MAILING_FILE  = BASE / "Current Mailing Files" / "241498 0976 041326 updated.xlsx"
+MAILING_FILE  = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 OUTPUT_FILE   = BASE / "Current Mailing Files" / "mailing_coverage_check.xlsx"
 
 TABS = ["matched", "npionly", "mnonly"]
