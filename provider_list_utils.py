@@ -234,7 +234,14 @@ def _load_one(path: Path, sheet: str | None = None) -> pd.DataFrame:
     if suffix in (".xlsx", ".xls"):
         df = pd.read_excel(path, sheet_name=sheet or 0, dtype=str)
     elif suffix == ".csv":
-        df = pd.read_csv(path, dtype=str)
+        for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+            try:
+                df = pd.read_csv(path, dtype=str, encoding=enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            sys.exit(f"Could not decode {path} — try saving the file as UTF-8 CSV.")
     else:
         sys.exit(f"Unsupported file type '{suffix}' for {path}. Use .csv, .xlsx, or .xls.")
     df.columns = df.columns.astype(str).str.strip()
