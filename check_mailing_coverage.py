@@ -32,7 +32,7 @@ PROVIDER_FILE = BASE / "Current Mailing Files" / "physician_pa_nurse_20260422_co
 MAILING_FILE  = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 OUTPUT_FILE   = BASE / "Current Mailing Files" / "mailing_coverage_check_physicians.xlsx"
 
-TABS = ["matched", "npionly", "mnonly"]
+TABS = None  # auto-detected from the provider file
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def norm(s) -> str:
@@ -133,6 +133,11 @@ for i, row in mail_df.iterrows():
 print(f"\n  Name lookup      : {len(mail_fullname_set)} entries")
 print(f"  Name+city lookup : {len(mail_name_city_set)} entries")
 print(f"  Address lookup   : {len(mail_addr_idx)} entries")
+
+# ── Auto-detect tabs from provider file ──────────────────────────────────────
+xl = pd.ExcelFile(PROVIDER_FILE)
+TABS = xl.sheet_names
+print(f"\nProvider file tabs: {TABS}")
 
 # ── Provider column detection ─────────────────────────────────────────────────
 def detect_provider_cols(df: pd.DataFrame, tab: str) -> dict:
