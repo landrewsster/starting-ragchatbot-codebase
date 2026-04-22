@@ -6,9 +6,9 @@ Compare a combined provider file (matched / npionly / mnonly tabs) against
 a mailing list to identify which providers are already on the list.
 
 Match priority per provider row:
-  1. NPI  (if NPI present in both files)
-  2. Exact normalized last + first name
-  3. Normalized address (addr1 + city + zip5)
+  1. Full name match  — tries "first last", "last first", "last, first"
+                        against mailing list FULL NAME column
+  2. Address match    — addr1 + city + zip5 against Delivery Address + City + ZIP+4
 
 Usage:
     python3 check_mailing_coverage.py
@@ -34,6 +34,11 @@ def norm(s) -> str:
         return ""
     return re.sub(r"\s+", " ", str(s).lower().strip())
 
+def zip5(s) -> str:
+    v = norm(s)
+    digits = re.sub(r"\D", "", v)
+    return digits[:5]
+
 def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     low = {c.lower(): c for c in df.columns}
     for c in candidates:
@@ -43,27 +48,6 @@ def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
             return low[c.lower()]
     return None
 
-def detect_cols(df: pd.DataFrame, label: str) -> dict:
-    cols = {
-        "npi":   find_col(df, ["npi", "NPI"]),
-        "last":  find_col(df, ["last_name", "LastName", "LAST_NAME"]),
-        "first": find_col(df, ["first_name", "FirstName", "FIRST_NAME"]),
-        # address candidates — try NPI-prefixed first (wide pivot output), then plain
-        "addr":  find_col(df, ["npi_primary_address_1", "primary_address_1",
-                                "address_line1", "AddressLine1"]),
-        "city":  find_col(df, ["npi_primary_city", "primary_city", "city", "City"]),
-        "zip":   find_col(df, ["npi_primary_zip", "zip5", "zip", "Zip", "ZIP"]),
-        # fallback MN-list address columns (present in matched / mnonly wide output)
-        "mn_addr": find_col(df, ["address_line1", "AddressLine1"]),
-        "mn_city": find_col(df, ["city", "City"]),
-        "mn_zip":  find_col(df, ["zip", "Zip", "ZIP"]),
-    }
-    print(f"  [{label}] detected columns:")
-    for k, v in cols.items():
-        if v:
-            print(f"    {k}: {v}")
-    return cols
-
 # ── Load mailing list ────────────────────────────────────────────────────────
 print(f"\nLoading mailing list: {MAILING_FILE}")
 try:
@@ -71,66 +55,104 @@ try:
 except FileNotFoundError:
     sys.exit(f"ERROR: mailing list not found at {MAILING_FILE}")
 
-print(f"  {len(mail_df)} rows | columns: {list(mail_df.columns)}")
-mc = detect_cols(mail_df, "mailing list")
+print(f"  {len(mail_df)} rows")
 
-# Build lookup indices from mailing list
-npi_idx  = {}   # norm_npi  → mailing row index
-name_idx = {}   # "last|first" → mailing row index
-addr_idx = {}   # "addr1|city|zip" → mailing row index
+# Detect mailing list columns
+mail_fullname_col = find_col(mail_df, ["FULL NAME", "Full Name", "full_name"])
+mail_first_col    = find_col(mail_df, ["First Name", "first_name", "FirstName"])
+mail_addr_col     = find_col(mail_df, ["Delivery Address", "primary_address_1", "Alternate 1 Address"])
+mail_city_col     = find_col(mail_df, ["City", "primary_city", "city"])
+mail_zip_col      = find_col(mail_df, ["ZIP+4", "zip5", "zip", "Zip", "ZIP"])
+
+print(f"  Full name col : {mail_fullname_col}")
+print(f"  First name col: {mail_first_col}")
+print(f"  Address col   : {mail_addr_col}")
+print(f"  City col      : {mail_city_col}")
+print(f"  Zip col       : {mail_zip_col}")
+
+# Build lookup sets from mailing list
+fullname_set = set()   # normalized full names from mailing list
+addr_idx     = {}      # "addr|city|zip" → row index
 
 for i, row in mail_df.iterrows():
-    # NPI
-    if mc["npi"]:
-        v = norm(row[mc["npi"]])
-        if v and v not in ("nan", ""):
-            npi_idx.setdefault(v, i)
-
-    # Name
-    if mc["last"] and mc["first"]:
-        key = norm(row[mc["last"]]) + "|" + norm(row[mc["first"]])
-        if key != "|":
-            name_idx.setdefault(key, i)
+    # Full name
+    if mail_fullname_col:
+        fn = norm(row[mail_fullname_col])
+        if fn:
+            fullname_set.add(fn)
 
     # Address
-    if mc["addr"]:
-        addr = norm(row[mc["addr"]])
-        city = norm(row[mc["city"]]) if mc["city"] else ""
-        zip_ = norm(row[mc["zip"]])[:5] if mc["zip"] else ""
-        key  = f"{addr}|{city}|{zip_}"
+    if mail_addr_col:
+        addr = norm(row[mail_addr_col])
+        city = norm(row[mail_city_col]) if mail_city_col else ""
+        z    = zip5(row[mail_zip_col])  if mail_zip_col  else ""
+        key  = f"{addr}|{city}|{z}"
         if addr:
             addr_idx.setdefault(key, i)
 
-print(f"\n  NPI lookup: {len(npi_idx)} entries")
-print(f"  Name lookup: {len(name_idx)} entries")
-print(f"  Address lookup: {len(addr_idx)} entries")
+print(f"\n  Full name lookup: {len(fullname_set)} entries")
+print(f"  Address lookup  : {len(addr_idx)} entries")
+
+# ── Provider column detection ─────────────────────────────────────────────────
+def detect_provider_cols(df: pd.DataFrame, tab: str) -> dict:
+    cols = {
+        "last":     find_col(df, ["last_name", "LastName"]),
+        "first":    find_col(df, ["first_name", "FirstName"]),
+        "middle":   find_col(df, ["middle_name", "MiddleName"]),
+        # NPI-side address (matched / npionly tabs)
+        "addr":     find_col(df, ["npi_primary_address_1", "primary_address_1"]),
+        "city":     find_col(df, ["npi_primary_city", "primary_city"]),
+        "zip":      find_col(df, ["npi_primary_zip", "zip5"]),
+        # MN-list address (matched / mnonly tabs)
+        "mn_addr":  find_col(df, ["mn_address_1", "address_line1", "primary_address_1"]),
+        "mn_city":  find_col(df, ["mn_city", "primary_city"]),
+        "mn_zip":   find_col(df, ["mn_zip", "zip5"]),
+    }
+    # Avoid duplicating the same column across NPI/MN slots
+    if cols["mn_addr"] == cols["addr"]:
+        cols["mn_addr"] = None
+    print(f"  [{tab}] last={cols['last']} first={cols['first']} "
+          f"addr={cols['addr']} mn_addr={cols['mn_addr']}")
+    return cols
 
 # ── Match function ───────────────────────────────────────────────────────────
 def match_row(row, pc: dict) -> tuple[bool, str]:
     """Return (found_in_mailing, match_method)."""
 
-    # 1. NPI
-    if pc["npi"] and npi_idx:
-        v = norm(row.get(pc["npi"], ""))
-        if v and v in npi_idx:
-            return True, "npi"
+    last  = norm(row.get(pc["last"],   "")) if pc["last"]   else ""
+    first = norm(row.get(pc["first"],  "")) if pc["first"]  else ""
 
-    # 2. Exact name
-    if pc["last"] and pc["first"] and name_idx:
-        key = norm(row.get(pc["last"], "")) + "|" + norm(row.get(pc["first"], ""))
-        if key != "|" and key in name_idx:
-            return True, "name_exact"
+    # 1. Name match — try all plausible orderings against mailing FULL NAME
+    if last or first:
+        candidates = set()
+        if first and last:
+            candidates.add(f"{first} {last}")    # "john smith"
+            candidates.add(f"{last} {first}")    # "smith john"
+            candidates.add(f"{last}, {first}")   # "smith, john"
+        elif last:
+            candidates.add(last)
+        elif first:
+            candidates.add(first)
+        # Also try without middle name noise by matching just first word of first
+        first1 = first.split()[0] if first else ""
+        if first1 and first1 != first and last:
+            candidates.add(f"{first1} {last}")
+            candidates.add(f"{last} {first1}")
+            candidates.add(f"{last}, {first1}")
 
-    # 3. Address (try NPI-side address, then MN-list address)
+        if candidates & fullname_set:
+            return True, "name"
+
+    # 2. Address match — try NPI-side address, then MN-list address
     for addr_col, city_col, zip_col in [
         (pc["addr"],    pc["city"],    pc["zip"]),
         (pc["mn_addr"], pc["mn_city"], pc["mn_zip"]),
     ]:
-        if addr_col and addr_idx:
+        if addr_col:
             addr = norm(row.get(addr_col, ""))
             city = norm(row.get(city_col, "")) if city_col else ""
-            zip_ = norm(row.get(zip_col,  ""))[:5] if zip_col else ""
-            key  = f"{addr}|{city}|{zip_}"
+            z    = zip5(row.get(zip_col,  "")) if zip_col  else ""
+            key  = f"{addr}|{city}|{z}"
             if addr and key in addr_idx:
                 return True, "address"
 
@@ -148,8 +170,8 @@ for tab in TABS:
         print(f"  ERROR loading tab '{tab}': {e}")
         continue
 
-    print(f"  {len(df)} rows | columns: {list(df.columns)}")
-    pc = detect_cols(df, tab)
+    print(f"  {len(df)} rows")
+    pc = detect_provider_cols(df, tab)
 
     found_flags   = []
     match_methods = []
@@ -179,14 +201,12 @@ print(f"Writing: {OUTPUT_FILE}")
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     for tab, df in results.items():
-        # Full tab with in_mailing_list and match_method columns added
         df.to_excel(writer, sheet_name=tab, index=False)
 
-        # Filtered tab: only those NOT in the mailing list
         not_in = df[df["in_mailing_list"] == False].copy()
         not_in.drop(columns=["in_mailing_list", "match_method"], inplace=True)
         sheet = f"{tab}_missing"
         not_in.to_excel(writer, sheet_name=sheet, index=False)
-        print(f"  {tab}: {len(df)} total | {len(not_in)} missing from mailing list → '{sheet}' tab")
+        print(f"  {tab}: {len(df)} total | {len(not_in)} missing → '{sheet}' tab")
 
 print("\nDone.")
