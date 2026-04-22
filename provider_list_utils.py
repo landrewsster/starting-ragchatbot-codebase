@@ -1111,7 +1111,7 @@ def compare_datasets(
     multi_spec_keys = {k for k in mn_counts if mn_counts[k] > 1 and npi_counts.get(k, 0) >= 1}
 
     # Name keys already confirmed via primary match (exclude from possible)
-    already_matched_name_keys = {k.split("||")[0] for k in matched_keys | multi_spec_keys}
+    already_matched_name_keys = {"|".join(k.split("|")[:2]) for k in matched_keys | multi_spec_keys}
 
     # Possible: name+initial in both datasets but credential category differs
     possible_name_keys = shared_name_keys - already_matched_name_keys
