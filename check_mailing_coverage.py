@@ -27,10 +27,27 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-BASE          = Path.home() / "Downloads" / "CRC MDH Project"
-PROVIDER_FILE = BASE / "Current Mailing Files" / "physician_pa_nurse_20260422_combined.xlsx"
-MAILING_FILE  = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
-OUTPUT_FILE   = BASE / "Current Mailing Files" / "mailing_coverage_check_physicians.xlsx"
+BASE         = Path.home() / "Downloads" / "CRC MDH Project"
+MAILING_FILE = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
+
+PROVIDER_CONFIGS = {
+    "physician": {
+        "provider_file": "physician_pa_nurse_20260422_combined.xlsx",
+        "output_file":   "mailing_coverage_check_physicians.xlsx",
+    },
+    "nurse": {
+        "provider_file": "nurse_20260422_combined.xlsx",
+        "output_file":   "mailing_coverage_check_nurses.xlsx",
+    },
+}
+
+if len(sys.argv) != 2 or sys.argv[1] not in PROVIDER_CONFIGS:
+    sys.exit("Usage: python3 check_mailing_coverage.py physician|nurse")
+
+cfg           = PROVIDER_CONFIGS[sys.argv[1]]
+PROVIDER_FILE = BASE / "Current Mailing Files" / cfg["provider_file"]
+OUTPUT_FILE   = BASE / "Current Mailing Files" / cfg["output_file"]
+print(f"\nMode          : {sys.argv[1]}")
 
 TABS = None  # auto-detected from the provider file
 
