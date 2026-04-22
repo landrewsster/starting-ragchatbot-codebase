@@ -101,27 +101,32 @@ def fullname_variants(fn: str) -> list[str]:
     return list(variants)
 
 # Build lookup sets from mailing list
-fullname_set = set()   # normalized full names from mailing list
-addr_idx     = {}      # "addr|city|zip" → row index
+fullname_set  = set()   # normalized full name variants
+name_city_set = set()   # "fullname_variant|city" for name+city fallback
+addr_idx      = {}      # "addr|city|zip" → row index
 
 for i, row in mail_df.iterrows():
-    # Full name — index all variants
+    city = norm(row[mail_city_col]) if mail_city_col else ""
+
+    # Full name — index all variants, and all variants paired with city
     if mail_fullname_col:
         fn = norm(row[mail_fullname_col])
         for v in fullname_variants(fn):
             fullname_set.add(v)
+            if city:
+                name_city_set.add(f"{v}|{city}")
 
-    # Address
+    # Address (addr + city + zip)
     if mail_addr_col:
         addr = norm(row[mail_addr_col])
-        city = norm(row[mail_city_col]) if mail_city_col else ""
-        z    = zip5(row[mail_zip_col])  if mail_zip_col  else ""
+        z    = zip5(row[mail_zip_col]) if mail_zip_col else ""
         key  = f"{addr}|{city}|{z}"
         if addr:
             addr_idx.setdefault(key, i)
 
-print(f"\n  Full name lookup: {len(fullname_set)} entries")
-print(f"  Address lookup  : {len(addr_idx)} entries")
+print(f"\n  Full name lookup  : {len(fullname_set)} entries")
+print(f"  Name+city lookup  : {len(name_city_set)} entries")
+print(f"  Address lookup    : {len(addr_idx)} entries")
 
 # ── Provider column detection ─────────────────────────────────────────────────
 def detect_provider_cols(df: pd.DataFrame, tab: str) -> dict:
@@ -170,6 +175,7 @@ def match_row(row, pc: dict) -> tuple[bool, str]:
             return True, "name"
 
     # 2. Address match — try NPI-side address, then MN-list address
+    prov_cities = set()
     for addr_col, city_col, zip_col in [
         (pc["addr"],    pc["city"],    pc["zip"]),
         (pc["mn_addr"], pc["mn_city"], pc["mn_zip"]),
@@ -178,9 +184,18 @@ def match_row(row, pc: dict) -> tuple[bool, str]:
             addr = norm(row.get(addr_col, ""))
             city = norm(row.get(city_col, "")) if city_col else ""
             z    = zip5(row.get(zip_col,  "")) if zip_col  else ""
-            key  = f"{addr}|{city}|{z}"
+            if city:
+                prov_cities.add(city)
+            key = f"{addr}|{city}|{z}"
             if addr and key in addr_idx:
                 return True, "address"
+
+    # 3. Name + city fallback — catches address format differences
+    if (last or first) and prov_cities:
+        for city in prov_cities:
+            for c in candidates:
+                if f"{c}|{city}" in name_city_set:
+                    return True, "name_city"
 
     return False, "not_found"
 
