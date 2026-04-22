@@ -77,16 +77,39 @@ if mail_addr_col:
     samples = mail_df[mail_addr_col].dropna().head(3).tolist()
     print(f"  Sample address values  : {samples}")
 
+STRIP_SUFFIXES = re.compile(
+    r"\b(jr|sr|ii|iii|iv|md|do|dpm|dds|phd|np|pa|rn|aprn|cnp|cnm|cns|esq)\.?\s*$"
+)
+
+def fullname_variants(fn: str) -> list[str]:
+    """Return all normalized forms of a full name to index."""
+    fn = fn.strip()
+    if not fn:
+        return []
+    variants = {fn}
+    # Strip trailing suffix (Jr, MD, etc.)
+    stripped = STRIP_SUFFIXES.sub("", fn).strip()
+    if stripped and stripped != fn:
+        variants.add(stripped)
+    # If 3+ words, also add first-word + last-word (drops middle name/initial)
+    words = stripped.split() if stripped else fn.split()
+    if len(words) >= 3:
+        fl = f"{words[0]} {words[-1]}"
+        variants.add(fl)
+        variants.add(f"{words[-1]} {words[0]}")   # last first order too
+        variants.add(f"{words[-1]}, {words[0]}")
+    return list(variants)
+
 # Build lookup sets from mailing list
 fullname_set = set()   # normalized full names from mailing list
 addr_idx     = {}      # "addr|city|zip" → row index
 
 for i, row in mail_df.iterrows():
-    # Full name
+    # Full name — index all variants
     if mail_fullname_col:
         fn = norm(row[mail_fullname_col])
-        if fn:
-            fullname_set.add(fn)
+        for v in fullname_variants(fn):
+            fullname_set.add(v)
 
     # Address
     if mail_addr_col:
@@ -126,26 +149,22 @@ def detect_provider_cols(df: pd.DataFrame, tab: str) -> dict:
 def match_row(row, pc: dict) -> tuple[bool, str]:
     """Return (found_in_mailing, match_method)."""
 
-    last  = norm(row.get(pc["last"],   "")) if pc["last"]   else ""
-    first = norm(row.get(pc["first"],  "")) if pc["first"]  else ""
+    last  = STRIP_SUFFIXES.sub("", norm(row.get(pc["last"],  ""))).strip() if pc["last"]  else ""
+    first = STRIP_SUFFIXES.sub("", norm(row.get(pc["first"], ""))).strip() if pc["first"] else ""
+    first1 = first.split()[0] if first else ""   # just first token of first name
 
     # 1. Name match — try all plausible orderings against mailing FULL NAME
     if last or first:
         candidates = set()
-        if first and last:
-            candidates.add(f"{first} {last}")    # "john smith"
-            candidates.add(f"{last} {first}")    # "smith john"
-            candidates.add(f"{last}, {first}")   # "smith, john"
-        elif last:
+        for f in {first, first1} - {""}:
+            if last:
+                candidates.add(f"{f} {last}")
+                candidates.add(f"{last} {f}")
+                candidates.add(f"{last}, {f}")
+            else:
+                candidates.add(f)
+        if not candidates and last:
             candidates.add(last)
-        elif first:
-            candidates.add(first)
-        # Also try without middle name noise by matching just first word of first
-        first1 = first.split()[0] if first else ""
-        if first1 and first1 != first and last:
-            candidates.add(f"{first1} {last}")
-            candidates.add(f"{last} {first1}")
-            candidates.add(f"{last}, {first1}")
 
         if candidates & fullname_set:
             return True, "name"
