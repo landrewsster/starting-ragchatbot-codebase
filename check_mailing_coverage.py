@@ -64,11 +64,18 @@ mail_addr_col     = find_col(mail_df, ["Delivery Address", "primary_address_1", 
 mail_city_col     = find_col(mail_df, ["City", "primary_city", "city"])
 mail_zip_col      = find_col(mail_df, ["ZIP+4", "zip5", "zip", "Zip", "ZIP"])
 
+print(f"  All columns   : {list(mail_df.columns)}")
 print(f"  Full name col : {mail_fullname_col}")
 print(f"  First name col: {mail_first_col}")
 print(f"  Address col   : {mail_addr_col}")
 print(f"  City col      : {mail_city_col}")
 print(f"  Zip col       : {mail_zip_col}")
+if mail_fullname_col:
+    samples = mail_df[mail_fullname_col].dropna().head(5).tolist()
+    print(f"  Sample FULL NAME values: {samples}")
+if mail_addr_col:
+    samples = mail_df[mail_addr_col].dropna().head(3).tolist()
+    print(f"  Sample address values  : {samples}")
 
 # Build lookup sets from mailing list
 fullname_set = set()   # normalized full names from mailing list
