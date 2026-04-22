@@ -1213,6 +1213,70 @@ def _flag_mn_npi_address_match(multi_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _disambiguate_multi(multi_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add a '_person_status' column to the stacked multi_specialty DataFrame.
+
+    For each MN row in a name group, checks whether it likely represents the
+    same person as the NPI record (credential category match or zip already
+    flagged by _flag_mn_npi_address_match) or a different person.
+
+    Values:
+        'same_person_zip_match'         — MN zip matches NPI zip
+        'same_person_credential_match'  — credential category matches
+        'likely_different_person'       — no zip or credential match found
+        'unclear'                       — could not determine
+    """
+    if multi_df.empty or "_source_type" not in multi_df.columns:
+        return multi_df
+
+    result = multi_df.copy()
+    result["_person_status"] = "unclear"
+
+    group_col = "_name_key" if "_name_key" in multi_df.columns else None
+    if not group_col:
+        return result
+
+    cred_cols_mn  = ["license_type_desc", "degree", "credential", "LicenseType"]
+    cred_cols_npi = ["credential"]
+
+    for name_key, group in result.groupby(group_col, sort=False):
+        npi_rows = group[group["_source_type"] == "NPI"]
+        mn_rows  = group[group["_source_type"] == "MN"]
+        if npi_rows.empty or mn_rows.empty:
+            continue
+
+        # Collect normalised credential categories from NPI rows
+        npi_cred_cats: set[str] = set()
+        for col in cred_cols_npi:
+            if col in npi_rows.columns:
+                for val in npi_rows[col].fillna(""):
+                    cat = _norm_credential(val)
+                    if cat:
+                        npi_cred_cats.add(cat)
+
+        for idx in mn_rows.index:
+            addr_flag = str(result.at[idx, "_npi_address_match"]
+                           if "_npi_address_match" in result.columns else "").strip()
+            if addr_flag:
+                result.at[idx, "_person_status"] = "same_person_zip_match"
+                continue
+
+            mn_cred_cat = ""
+            for col in cred_cols_mn:
+                if col in result.columns:
+                    mn_cred_cat = _norm_credential(str(result.at[idx, col] or ""))
+                    if mn_cred_cat:
+                        break
+
+            if mn_cred_cat and npi_cred_cats and mn_cred_cat in npi_cred_cats:
+                result.at[idx, "_person_status"] = "same_person_credential_match"
+            elif npi_cred_cats:
+                result.at[idx, "_person_status"] = "likely_different_person"
+
+    return result
+
+
 def cmd_compare(args):
     print(f"\n{'─'*60}")
     col_map = _parse_map(getattr(args, "map", None) or [])
@@ -1254,9 +1318,23 @@ def cmd_compare(args):
     out_npi_only_oos = f"{stem}_npi_only_out_of_state.csv"
     out_possible     = f"{stem}_possible_matches.csv"
 
-    matched_wide.to_csv(out_matched,     index=False)
-    possible_wide.to_csv(out_possible,   index=False)
+    # Add match_confidence column and save individual files
+    matched_wide["match_confidence"] = "matched_1to1"
+    possible_wide["match_confidence"] = "possible"
+    matched_wide.to_csv(out_matched,   index=False)
+    possible_wide.to_csv(out_possible, index=False)
+
+    # Combined matched + possible (one row per provider, sorted by address)
+    combined = pd.concat([matched_wide, possible_wide], ignore_index=True)
+    comb_sort_keys = [k for k in _addr_sort if k in combined.columns]
+    if comb_sort_keys:
+        combined.sort_values(comb_sort_keys, inplace=True, ignore_index=True)
+    out_combined = f"{stem}_combined.csv"
+    combined.to_csv(out_combined, index=False)
+
+    # Multi: flag address match then disambiguate by credential
     multi = _flag_mn_npi_address_match(multi)
+    multi = _disambiguate_multi(multi)
     multi.to_csv(out_multi,              index=False)
     mn_only.to_csv(out_mn_only,          index=False)
     npi_only.to_csv(out_npi_only,        index=False)
@@ -1264,6 +1342,7 @@ def cmd_compare(args):
 
     n_matched_providers  = len(matched_wide)
     n_possible_providers = len(possible_wide)
+    n_combined           = len(combined)
     n_multi_providers    = multi["_name_key"].nunique() if not multi.empty else 0
     n_name_only    = (possible_wide["_match_type"] == "name_only").sum()    if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
     n_last_initial = (possible_wide["_match_type"] == "lastname+initial").sum() if not possible_wide.empty and "_match_type" in possible_wide.columns else 0
@@ -1271,6 +1350,7 @@ def cmd_compare(args):
     print(f"\n  {'─'*60}")
     print(f"  1:1 matched (full name+mid initial)  : {n_matched_providers:>5}  (one row/provider) → {out_matched}")
     print(f"  Possible (name matches, mid differs) : {n_possible_providers:>5}  (one row/provider) → {out_possible}")
+    print(f"  Combined matched + possible          : {n_combined:>5}  (one row/provider) → {out_combined}")
     print(f"  Multi-match (same full name+mid)     : {n_multi_providers:>5}  ({len(multi)} rows)       → {out_multi}")
     print(f"  MN list only (no full-name match)    : {len(mn_only):>5}                       → {out_mn_only}")
     print(f"  NPI only (MN address, no match)      : {len(npi_only):>5}  rows               → {out_npi_only}")
