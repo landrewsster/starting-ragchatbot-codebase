@@ -32,24 +32,32 @@ MAILING_FILE = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 
 PROVIDER_CONFIGS = {
     "physician": {
-        "provider_file": "physician_pa_nurse_20260422_combined.xlsx",
-        "output_file":   "mailing_coverage_check_physicians.xlsx",
+        "provider_files": ["physician_pa_nurse_20260422_combined.xlsx"],
+        "output_file":    "mailing_coverage_check_physicians.xlsx",
     },
     "nurse": {
-        "provider_file": "nurse_20260422_combined.xlsx",
-        "output_file":   "mailing_coverage_check_nurses.xlsx",
+        "provider_files": ["nurse_20260422_combined.xlsx"],
+        "output_file":    "mailing_coverage_check_nurses.xlsx",
+    },
+    "all": {
+        "provider_files": [
+            "physician_pa_nurse_20260422_combined.xlsx",
+            "nurse_20260422_combined.xlsx",
+        ],
+        "output_file":    "mailing_coverage_check_all.xlsx",
     },
 }
 
 if len(sys.argv) != 2 or sys.argv[1] not in PROVIDER_CONFIGS:
-    sys.exit("Usage: python3 check_mailing_coverage.py physician|nurse")
+    sys.exit("Usage: python3 check_mailing_coverage.py physician|nurse|all")
 
-cfg           = PROVIDER_CONFIGS[sys.argv[1]]
-PROVIDER_FILE = BASE / "Current Mailing Files" / cfg["provider_file"]
+MODE          = sys.argv[1]
+cfg           = PROVIDER_CONFIGS[MODE]
+PROVIDER_FILES = [BASE / "Current Mailing Files" / f for f in cfg["provider_files"]]
 OUTPUT_FILE   = BASE / "Current Mailing Files" / cfg["output_file"]
-print(f"\nMode          : {sys.argv[1]}")
-
-TABS = None  # auto-detected from the provider file
+print(f"\nMode: {MODE}")
+for pf in PROVIDER_FILES:
+    print(f"  Provider file : {pf.name}")
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def norm(s) -> str:
@@ -152,9 +160,13 @@ print(f"  Name+city lookup : {len(mail_name_city_set)} entries")
 print(f"  Address lookup   : {len(mail_addr_idx)} entries")
 
 # ── Auto-detect tabs from provider file ──────────────────────────────────────
-xl = pd.ExcelFile(PROVIDER_FILE)
-TABS = xl.sheet_names
-print(f"\nProvider file tabs: {TABS}")
+# Build list of (provider_file, tab) pairs to process
+FILE_TABS: list[tuple[Path, str]] = []
+for pf in PROVIDER_FILES:
+    tabs = pd.ExcelFile(pf).sheet_names
+    print(f"\n  {pf.name} tabs: {tabs}")
+    for t in tabs:
+        FILE_TABS.append((pf, t))
 
 # ── Provider column detection ─────────────────────────────────────────────────
 def detect_provider_cols(df: pd.DataFrame, tab: str) -> dict:
@@ -211,13 +223,14 @@ prov_fullname_set  = set()
 prov_name_city_set = set()
 prov_addr_idx      = {}
 
-for tab in TABS:
+for provider_file, tab in FILE_TABS:
+    label = f"{provider_file.stem} / {tab}" if MODE == "all" else tab
     print(f"\n{'─'*55}")
-    print(f"Tab: {tab}")
+    print(f"Tab: {label}")
     try:
-        df = pd.read_excel(PROVIDER_FILE, sheet_name=tab, dtype=str)
+        df = pd.read_excel(provider_file, sheet_name=tab, dtype=str)
     except Exception as e:
-        print(f"  ERROR loading tab '{tab}': {e}")
+        print(f"  ERROR loading tab '{label}': {e}")
         continue
 
     print(f"  {len(df)} rows")
@@ -260,7 +273,7 @@ for tab in TABS:
     for method, cnt in pd.Series(match_methods).value_counts().items():
         print(f"    {method}: {cnt}")
 
-    results[tab] = df
+    results[label] = df
 
 # ── Reverse check: mailing list → provider file ───────────────────────────────
 print(f"\n{'─'*55}")
@@ -301,15 +314,18 @@ for method, cnt in pd.Series(mail_methods).value_counts().items():
 print(f"\n{'─'*55}")
 print(f"Writing: {OUTPUT_FILE}")
 
+def safe_sheet(name: str, max_len: int = 31) -> str:
+    return name[:max_len]
+
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    for tab, df in results.items():
-        df.to_excel(writer, sheet_name=tab, index=False)
+    for label, df in results.items():
+        df.to_excel(writer, sheet_name=safe_sheet(label), index=False)
         not_mailed = df[df["in_mailing_list"] == False].drop(
             columns=["in_mailing_list", "match_method"]
         )
-        sheet = f"{tab}_not_mailed"
+        sheet = safe_sheet(f"{label}_not_mailed")
         not_mailed.to_excel(writer, sheet_name=sheet, index=False)
-        print(f"  {tab}: {len(df)} total | {len(not_mailed)} not on mailing list → '{sheet}'")
+        print(f"  {label}: {len(df)} total | {len(not_mailed)} not on mailing list → '{sheet}'")
 
     # Mailing list rows not found in any provider tab
     not_in_providers = mail_df[mail_df["in_provider_file"] == False].drop(
