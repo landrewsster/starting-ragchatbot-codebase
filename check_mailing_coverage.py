@@ -318,14 +318,16 @@ def safe_sheet(name: str, max_len: int = 31) -> str:
     return name[:max_len]
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    for label, df in results.items():
-        df.to_excel(writer, sheet_name=safe_sheet(label), index=False)
-        not_mailed = df[df["in_mailing_list"] == False].drop(
-            columns=["in_mailing_list", "match_method"]
-        )
-        sheet = safe_sheet(f"{label}_not_mailed")
-        not_mailed.to_excel(writer, sheet_name=sheet, index=False)
-        print(f"  {label}: {len(df)} total | {len(not_mailed)} not on mailing list → '{sheet}'")
+    # In 'all' mode only write the combined reverse check — skip per-tab detail
+    if MODE != "all":
+        for label, df in results.items():
+            df.to_excel(writer, sheet_name=safe_sheet(label), index=False)
+            not_mailed = df[df["in_mailing_list"] == False].drop(
+                columns=["in_mailing_list", "match_method"]
+            )
+            sheet = safe_sheet(f"{label}_not_mailed")
+            not_mailed.to_excel(writer, sheet_name=sheet, index=False)
+            print(f"  {label}: {len(df)} total | {len(not_mailed)} not on mailing list → '{sheet}'")
 
     # Mailing list rows not found in any provider tab
     not_in_providers = mail_df[mail_df["in_provider_file"] == False].drop(
