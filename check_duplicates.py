@@ -123,7 +123,9 @@ def build_lookups(df, cols, label):
     return name_set, name_city_set, addr_idx
 
 def row_matches(row, cols, name_set, name_city_set, addr_idx) -> str | None:
-    """Return match method string if row matches the lookup, else None."""
+    """Return match method string if row matches the lookup, else None.
+    Address-only match is excluded — two providers at the same clinic
+    address are not duplicates of each other."""
     city = norm(row[cols["city"]]) if cols["city"] else ""
 
     if cols["fullname"]:
@@ -138,12 +140,6 @@ def row_matches(row, cols, name_set, name_city_set, addr_idx) -> str | None:
 
     if any(v in name_set for v in variants):
         return "name"
-
-    if cols["addr"]:
-        addr = norm(row[cols["addr"]])
-        z    = zip5(row[cols["zip"]]) if cols["zip"] else ""
-        if addr and f"{addr}|{city}|{z}" in addr_idx:
-            return "address"
 
     if city and any(f"{v}|{city}" in name_city_set for v in variants):
         return "name_city"
