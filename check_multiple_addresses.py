@@ -24,9 +24,8 @@ import pandas as pd
 BASE        = Path.home() / "Downloads" / "CRC MDH Project"
 MAIL_FILE   = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 ORIG_FILES  = [
-    BASE / "Current Mailing Files" / "Mailing List 2 for Printing Services_titled.xlsx",
-    BASE / "Current Mailing Files" / "Mailing List for Printing Services copy_titled.xlsx",
-    BASE / "Current Mailing Files" / "MailingListAddition20260423.xlsx",
+    BASE / "Current Mailing Files" / "physician_pa_nurse_20260422_combined.xlsx",
+    BASE / "Current Mailing Files" / "nurse_20260422_combined.xlsx",
 ]
 OUTPUT_FILE = BASE / "Current Mailing Files" / "multiple_address_check.xlsx"
 
@@ -159,21 +158,22 @@ name_to_addresses: dict[str, list[tuple]] = {}
 for orig_path in ORIG_FILES:
     print(f"  {orig_path.name}")
     try:
-        df = pd.read_excel(orig_path, dtype=str)
+        sheets = pd.read_excel(orig_path, sheet_name=None, dtype=str)
     except FileNotFoundError:
         print(f"    WARNING: not found, skipping")
         continue
-    print(f"    {len(df)} rows | columns: {list(df.columns)}")
-    cols = detect_cols(df, orig_path.stem[:20])
+    for sheet_name, df in sheets.items():
+        print(f"    Sheet '{sheet_name}': {len(df)} rows")
+        cols = detect_cols(df, f"{orig_path.stem[:15]}/{sheet_name}")
 
-    for _, row in df.iterrows():
-        keys = get_name_keys(row, cols)
-        raw_addr  = get_addr_key(row, cols)
-        norm_addr_key = get_norm_addr_key(row, cols)
-        for key in keys:
-            if key not in name_to_addresses:
-                name_to_addresses[key] = []
-            name_to_addresses[key].append((raw_addr, norm_addr_key, orig_path.name))
+        for _, row in df.iterrows():
+            keys = get_name_keys(row, cols)
+            raw_addr      = get_addr_key(row, cols)
+            norm_addr_key = get_norm_addr_key(row, cols)
+            for key in keys:
+                if key not in name_to_addresses:
+                    name_to_addresses[key] = []
+                name_to_addresses[key].append((raw_addr, norm_addr_key, orig_path.name))
 
 print(f"\n  Combined name lookup: {len(name_to_addresses)} unique name keys")
 
