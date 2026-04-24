@@ -26,6 +26,7 @@ MAIL_FILE   = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 ORIG_FILES  = [
     BASE / "Current Mailing Files" / "Mailing List 2 for Printing Services_titled.xlsx",
     BASE / "Current Mailing Files" / "Mailing List for Printing Services copy_titled.xlsx",
+    BASE / "Current Mailing Files" / "MailingListAddition20260423.xlsx",
 ]
 OUTPUT_FILE = BASE / "Current Mailing Files" / "multiple_address_check.xlsx"
 
