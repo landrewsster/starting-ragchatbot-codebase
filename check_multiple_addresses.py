@@ -115,27 +115,36 @@ def detect_cols(df, label):
         # All address column sets — each is (addr, city, zip)
         "addr_sets": []
     }
-    # Primary address
-    addr = find_col(df, ["npi_primary_address_1", "primary_address_1",
-                          "Delivery Address", "address_line1", "Alternate 1 Address"])
-    city = find_col(df, ["npi_primary_city", "primary_city", "City", "city"])
-    z    = find_col(df, ["npi_primary_zip", "zip5", "ZIP+4", "zip", "Zip"])
-    if addr:
-        cols["addr_sets"].append((addr, city, z))
+    # Gold reference uses normalized _addr* columns; fall back to raw cols
+    if find_col(df, ["_addr1"]):
+        cols["addr_sets"].append((find_col(df, ["_addr1"]),
+                                  find_col(df, ["_city"]),
+                                  find_col(df, ["_zip"])))
+        mail = find_col(df, ["_mail_addr"])
+        if mail:
+            cols["addr_sets"].append((mail,
+                                      find_col(df, ["_mail_city"]),
+                                      find_col(df, ["_mail_zip"])))
+    else:
+        # Primary address (raw provider or mailing list file)
+        addr = find_col(df, ["npi_primary_address_1", "primary_address_1",
+                              "Delivery Address", "address_line1", "Alternate 1 Address"])
+        city = find_col(df, ["npi_primary_city", "primary_city", "City", "city"])
+        z    = find_col(df, ["npi_primary_zip", "zip5", "ZIP+4", "zip", "Zip"])
+        if addr:
+            cols["addr_sets"].append((addr, city, z))
 
-    # Mailing address (separate from primary)
-    m_addr = find_col(df, ["npi_mailing_address_1", "mailing_address_1"])
-    m_city = find_col(df, ["npi_mailing_city", "mailing_city"])
-    m_zip  = find_col(df, ["npi_mailing_zip", "mailing_zip", "mailing_postal_code"])
-    if m_addr and m_addr != addr:
-        cols["addr_sets"].append((m_addr, m_city, m_zip))
+        m_addr = find_col(df, ["npi_mailing_address_1", "mailing_address_1"])
+        m_city = find_col(df, ["npi_mailing_city", "mailing_city"])
+        m_zip  = find_col(df, ["npi_mailing_zip", "mailing_zip", "mailing_postal_code"])
+        if m_addr and m_addr != addr:
+            cols["addr_sets"].append((m_addr, m_city, m_zip))
 
-    # MN-list address (matched tab wide output)
-    mn_addr = find_col(df, ["mn_address_1"])
-    mn_city = find_col(df, ["mn_city"])
-    mn_zip  = find_col(df, ["mn_zip"])
-    if mn_addr and mn_addr != addr:
-        cols["addr_sets"].append((mn_addr, mn_city, mn_zip))
+        mn_addr = find_col(df, ["mn_address_1"])
+        mn_city = find_col(df, ["mn_city"])
+        mn_zip  = find_col(df, ["mn_zip"])
+        if mn_addr and mn_addr != addr:
+            cols["addr_sets"].append((mn_addr, mn_city, mn_zip))
 
     # Use first address set as default for backward compat
     cols["addr"] = cols["addr_sets"][0][0] if cols["addr_sets"] else None

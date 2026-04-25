@@ -131,9 +131,30 @@ gold = pd.DataFrame(deduped_rows, columns=combined.columns)
 # Drop internal sort columns
 gold.drop(columns=["_tab_priority", "_file_priority"], inplace=True)
 
+# ── Normalize address columns ─────────────────────────────────────────────────
+# Coalesce NPI-prefixed and plain address columns so every row has data
+# in consistent column names regardless of which source tab it came from.
+def coalesce(row, *cols):
+    for c in cols:
+        v = str(row.get(c, "")).strip()
+        if v and v.lower() not in ("nan", ""):
+            return v
+    return ""
+
+gold["_addr1"]     = gold.apply(lambda r: coalesce(r, "npi_primary_address_1", "primary_address_1", "mn_address_1"), axis=1)
+gold["_addr2"]     = gold.apply(lambda r: coalesce(r, "npi_primary_address_2", "primary_address_2", "mn_address_2"), axis=1)
+gold["_city"]      = gold.apply(lambda r: coalesce(r, "npi_primary_city",      "primary_city",      "mn_city"),      axis=1)
+gold["_zip"]       = gold.apply(lambda r: coalesce(r, "npi_primary_zip",       "zip5",              "mn_zip"),       axis=1)
+gold["_mail_addr"] = gold.apply(lambda r: coalesce(r, "npi_mailing_address_1", "mailing_address_1"),                 axis=1)
+gold["_mail_city"] = gold.apply(lambda r: coalesce(r, "npi_mailing_city",      "mailing_city"),                     axis=1)
+gold["_mail_zip"]  = gold.apply(lambda r: coalesce(r, "npi_mailing_zip",       "mailing_postal_code"),               axis=1)
+
 print(f"  Rows after dedup: {len(gold)}")
 print(f"\nSource breakdown:")
 print(gold.groupby(["_source_file", "_source_tab"]).size().to_string())
+
+addr_filled = (gold["_addr1"] != "").sum()
+print(f"\n  Rows with primary address: {addr_filled} of {len(gold)}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_XLSX}")
