@@ -307,4 +307,78 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  main_mailing_not_in_gold : {len(main_missing_df)}")
     print(f"  addition_not_in_gold     : {len(add_missing_df)}")
 
+# ── Supplement: append main_mailing_not_in_gold rows to gold reference ────────
+if not main_missing_df.empty:
+    print(f"\nAppending {len(main_missing_df)} providers to gold reference ...")
+
+    def parse_full_name(full_name: str, first_hint: str = "") -> tuple[str, str, str]:
+        """Parse 'Last, First Middle' or 'First Middle Last' → (last, first, middle)."""
+        full_name = STRIP_SUFFIXES.sub("", full_name.strip()).strip()
+        if not full_name:
+            return "", "", ""
+        if "," in full_name:
+            parts  = full_name.split(",", 1)
+            last   = parts[0].strip()
+            rest   = parts[1].strip().split()
+            first  = rest[0] if rest else ""
+            middle = " ".join(rest[1:]) if len(rest) > 1 else ""
+            return last, first, middle
+        words = full_name.split()
+        if len(words) == 1:
+            return words[0], "", ""
+        if len(words) == 2:
+            return words[1], words[0], ""
+        fh = norm(first_hint).split()[0] if first_hint else ""
+        if fh and words[0].lower() == fh:
+            return words[-1], words[0], " ".join(words[1:-1])
+        return words[-1], words[0], " ".join(words[1:-1])
+
+    addr_col_m  = find_col(main_df, ["Delivery Address", "primary_address_1", "Alternate 1 Address"])
+    city_col_m  = find_col(main_df, ["City", "primary_city", "city"])
+    zip_col_m   = find_col(main_df, ["ZIP+4", "zip5", "zip", "Zip"])
+
+    # Read current gold reference to get column structure
+    gold_full = pd.read_excel(GOLD_FILE, sheet_name="gold_reference", dtype=str).fillna("")
+
+    supplement_rows = []
+    for _, row in main_missing_df.iterrows():
+        fn    = norm(row.get(fn_col,    "")) if fn_col    else ""
+        fname = norm(row.get(fname_col, "")) if fname_col else ""
+        last, first, middle = parse_full_name(fn, fname)
+        if not last:
+            continue
+        addr  = str(row.get(addr_col_m, "")).strip() if addr_col_m else ""
+        city  = str(row.get(city_col_m, "")).strip() if city_col_m else ""
+        z     = re.sub(r"\D", "", norm(row.get(zip_col_m, "")))[:5] if zip_col_m else ""
+        new_row = {col: "" for col in gold_full.columns}
+        new_row["last_name"]    = last
+        new_row["first_name"]   = first
+        new_row["middle_name"]  = middle
+        new_row["_addr1"]       = addr
+        new_row["_city"]        = city
+        new_row["_zip"]         = z
+        new_row["_source_file"] = "241498_mailing"
+        new_row["_source_tab"]  = "1stmailing_notingold"
+        supplement_rows.append(new_row)
+
+    supp_df   = pd.DataFrame(supplement_rows, columns=gold_full.columns)
+    gold_full = pd.concat([gold_full, supp_df], ignore_index=True)
+
+    # Rewrite gold reference preserving removed_duplicates sheet
+    removed_sheet = None
+    try:
+        removed_sheet = pd.read_excel(GOLD_FILE, sheet_name="removed_duplicates", dtype=str)
+    except Exception:
+        pass
+
+    with pd.ExcelWriter(GOLD_FILE, engine="openpyxl") as writer:
+        gold_full.to_excel(writer, sheet_name="gold_reference", index=False)
+        if removed_sheet is not None:
+            removed_sheet.to_excel(writer, sheet_name="removed_duplicates", index=False)
+
+    print(f"  Added {len(supplement_rows)} rows with _source_tab='1stmailing_notingold'")
+    print(f"  Gold reference updated: {len(gold_full)} total rows")
+else:
+    print(f"\nNo supplement needed — all main mailing providers already in gold reference")
+
 print("\nDone.")

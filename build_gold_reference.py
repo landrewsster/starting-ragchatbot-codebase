@@ -242,68 +242,7 @@ print(gold.groupby(["_source_file", "_source_tab"]).size().to_string())
 
 addr_filled = (gold["_addr1"] != "").sum()
 print(f"\n  Rows with primary address: {addr_filled} of {len(gold)}")
-
-# ── Supplement: add 241498 mailing providers not already in gold ──────────────
-MAIL_241498 = MAILING_BASE / "241498 0976 042026 v3.xlsx"
-print(f"\nSupplement: checking {MAIL_241498.name} for providers not in gold ...")
-try:
-    mail_df = pd.read_excel(MAIL_241498, dtype=str).fillna("")
-    print(f"  {len(mail_df)} rows in mailing file")
-except FileNotFoundError:
-    print(f"  WARNING: not found, skipping supplement")
-    mail_df = None
-
-if mail_df is not None:
-    fn_col_m    = find_col(mail_df, ["FULL NAME", "Full Name"])
-    fname_col_m = find_col(mail_df, ["First Name", "first_name", "FirstName"])
-    addr_col_m  = find_col(mail_df, ["Delivery Address", "primary_address_1", "Alternate 1 Address"])
-    city_col_m  = find_col(mail_df, ["City", "primary_city", "city"])
-    zip_col_m   = find_col(mail_df, ["ZIP+4", "zip5", "zip", "Zip"])
-    state_col_m = find_col(mail_df, ["State", "state", "St"])
-
-    # Build name set from current gold reference — same logic as check_gold_vs_mailing.py
-    gold_name_set: set[str] = set()
-    for _, row in gold.iterrows():
-        l = norm(str(row.get(last_col,  ""))) if last_col  else ""
-        f = norm(str(row.get(first_col, ""))) if first_col else ""
-        for v in name_variants(l, f):
-            gold_name_set.add(clean_name(v))
-
-    supplement_rows = []
-    for _, row in mail_df.iterrows():
-        fn    = norm(row.get(fn_col_m,    "")) if fn_col_m    else ""
-        fname = norm(row.get(fname_col_m, "")) if fname_col_m else ""
-
-        # Use fullname_variants + clean_name for matching — identical to check_gold_vs_mailing.py
-        if any(clean_name(v) in gold_name_set for v in fullname_variants(fn)):
-            continue
-
-        last, first, middle = parse_full_name(fn, fname)
-        if not last:
-            continue
-
-        addr  = str(row.get(addr_col_m,  "")).strip() if addr_col_m  else ""
-        city  = str(row.get(city_col_m,  "")).strip() if city_col_m  else ""
-        state = str(row.get(state_col_m, "")).strip() if state_col_m else ""
-        z     = zip5(row.get(zip_col_m,  ""))          if zip_col_m  else ""
-
-        new_row = {col: "" for col in gold.columns}
-        new_row["last_name"]    = last
-        new_row["first_name"]   = first
-        new_row["middle_name"]  = middle
-        new_row["_addr1"]       = addr
-        new_row["_city"]        = city
-        new_row["_zip"]         = z
-        new_row["_source_file"] = "241498_mailing"
-        new_row["_source_tab"]  = "1stmailing_notingold"
-        supplement_rows.append(new_row)
-
-    if supplement_rows:
-        supp_df = pd.DataFrame(supplement_rows, columns=gold.columns)
-        gold = pd.concat([gold, supp_df], ignore_index=True)
-        print(f"  Added {len(supplement_rows)} providers from 241498 mailing")
-    else:
-        print(f"  All 241498 providers already in gold — nothing to add")
+print(f"\nNote: run check_gold_vs_mailing.py next to append any mailing-only providers.")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_XLSX}")
