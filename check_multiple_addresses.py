@@ -182,6 +182,20 @@ def get_norm_addr_key(row, cols) -> str:
     z    = zip5(row[cols["zip"]])  if cols["zip"]  else ""
     return f"{addr}|{city}|{z}"
 
+def parse_addresses_found(s: str) -> list[tuple[str, str, str]]:
+    """Parse 'addr|city|zip | addr2|city2|zip2 | ...' into list of (addr, city, zip)."""
+    if not s:
+        return []
+    results = []
+    for entry in s.split(" | "):
+        parts = entry.split("|")
+        addr = parts[0].strip() if len(parts) > 0 else ""
+        city = parts[1].strip() if len(parts) > 1 else ""
+        z    = parts[2].strip() if len(parts) > 2 else ""
+        if addr:
+            results.append((addr, city, z))
+    return results
+
 # ── Load files ────────────────────────────────────────────────────────────────
 print(f"\nLoading main mailing file: {MAIL_FILE.name}")
 try:
@@ -298,14 +312,46 @@ variant = mail_df[mail_df["address_status"] == "same_address_variant"]
 not_in     = mail_df[mail_df["address_status"] == "not_in_originals"]
 collisions = mail_df[mail_df["address_status"] == "name_collision_different_people"]
 
+# ── Build side-by-side comparison for multiple_addresses rows ─────────────────
+mail_addr_col = mail_cols["addr"]
+mail_city_col = mail_cols["city"]
+mail_zip_col  = mail_cols["zip"]
+
+max_gold = 0
+for _, row in multi.iterrows():
+    max_gold = max(max_gold, len(parse_addresses_found(str(row.get("addresses_found", "")))))
+
+compare_rows = []
+for _, row in multi.iterrows():
+    r = {}
+    if mail_cols["fullname"]:
+        r["full_name"]  = row.get(mail_cols["fullname"], "")
+    if mail_cols["last"]:
+        r["last_name"]  = row.get(mail_cols["last"], "")
+    if mail_cols["first"]:
+        r["first_name"] = row.get(mail_cols["first"], "")
+    r["mail_address"] = row.get(mail_addr_col, "") if mail_addr_col else ""
+    r["mail_city"]    = row.get(mail_city_col, "") if mail_city_col else ""
+    r["mail_zip"]     = row.get(mail_zip_col,  "") if mail_zip_col  else ""
+    parsed = parse_addresses_found(str(row.get("addresses_found", "")))
+    for n, (addr, city, z) in enumerate(parsed, start=1):
+        r[f"gold_addr_{n}"] = addr
+        r[f"gold_city_{n}"] = city
+        r[f"gold_zip_{n}"]  = z
+    compare_rows.append(r)
+
+compare_df = pd.DataFrame(compare_rows)
+
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     mail_df.to_excel(writer, sheet_name="all_flagged", index=False)
     multi.to_excel(writer, sheet_name="multiple_addresses", index=False)
+    compare_df.to_excel(writer, sheet_name="multiple_addresses_compare", index=False)
     variant.to_excel(writer, sheet_name="same_address_variant", index=False)
     collisions.to_excel(writer, sheet_name="name_collision", index=False)
     not_in.to_excel(writer, sheet_name="not_in_originals", index=False)
     print(f"  all_flagged                    : {len(mail_df)}")
     print(f"  multiple_addresses             : {len(multi)}")
+    print(f"  multiple_addresses_compare     : {len(compare_df)} rows, {len(compare_df.columns)} cols")
     print(f"  same_address_variant           : {len(variant)}")
     print(f"  name_collision_diff_people     : {len(collisions)}")
     print(f"  not_in_originals               : {len(not_in)}")
