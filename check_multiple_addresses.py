@@ -113,14 +113,38 @@ def detect_cols(df, label):
         "fullname": find_col(df, ["FULL NAME", "Full Name", "full_name"]),
         "last":     find_col(df, ["last_name", "LastName"]),
         "first":    find_col(df, ["first_name", "FirstName", "First Name"]),
-        "addr":     find_col(df, ["Delivery Address", "primary_address_1",
-                                   "npi_primary_address_1", "address_line1",
-                                   "Alternate 1 Address"]),
-        "city":     find_col(df, ["City", "primary_city", "npi_primary_city", "city"]),
-        "zip":      find_col(df, ["ZIP+4", "zip5", "npi_primary_zip", "zip", "Zip"]),
+        # All address column sets — each is (addr, city, zip)
+        "addr_sets": []
     }
-    print(f"  [{label}] fullname={cols['fullname']} last={cols['last']} "
-          f"first={cols['first']} addr={cols['addr']}")
+    # Primary address
+    addr = find_col(df, ["npi_primary_address_1", "primary_address_1",
+                          "Delivery Address", "address_line1", "Alternate 1 Address"])
+    city = find_col(df, ["npi_primary_city", "primary_city", "City", "city"])
+    z    = find_col(df, ["npi_primary_zip", "zip5", "ZIP+4", "zip", "Zip"])
+    if addr:
+        cols["addr_sets"].append((addr, city, z))
+
+    # Mailing address (separate from primary)
+    m_addr = find_col(df, ["npi_mailing_address_1", "mailing_address_1"])
+    m_city = find_col(df, ["npi_mailing_city", "mailing_city"])
+    m_zip  = find_col(df, ["npi_mailing_zip", "mailing_zip", "mailing_postal_code"])
+    if m_addr and m_addr != addr:
+        cols["addr_sets"].append((m_addr, m_city, m_zip))
+
+    # MN-list address (matched tab wide output)
+    mn_addr = find_col(df, ["mn_address_1"])
+    mn_city = find_col(df, ["mn_city"])
+    mn_zip  = find_col(df, ["mn_zip"])
+    if mn_addr and mn_addr != addr:
+        cols["addr_sets"].append((mn_addr, mn_city, mn_zip))
+
+    # Use first address set as default for backward compat
+    cols["addr"] = cols["addr_sets"][0][0] if cols["addr_sets"] else None
+    cols["city"] = cols["addr_sets"][0][1] if cols["addr_sets"] else None
+    cols["zip"]  = cols["addr_sets"][0][2] if cols["addr_sets"] else None
+
+    print(f"  [{label}] last={cols['last']} first={cols['first']} "
+          f"addr_sets={len(cols['addr_sets'])}: {[a[0] for a in cols['addr_sets']]}")
     return cols
 
 def get_name_keys(row, cols) -> set[str]:
@@ -130,11 +154,19 @@ def get_name_keys(row, cols) -> set[str]:
     first = row.get(cols["first"], "") if cols["first"] else ""
     return name_variants(last, first)
 
-def get_addr_key(row, cols) -> str:
-    addr = norm(row[cols["addr"]]) if cols["addr"] else ""
-    city = norm(row[cols["city"]]) if cols["city"] else ""
-    z    = zip5(row[cols["zip"]])  if cols["zip"]  else ""
-    return f"{addr}|{city}|{z}"
+def get_all_addr_keys(row, cols) -> list[tuple[str, str]]:
+    """Return list of (raw_key, norm_key) for every address column set in the row."""
+    results = []
+    for addr_col, city_col, zip_col in cols["addr_sets"]:
+        addr = norm(row[addr_col]) if addr_col and addr_col in row.index else ""
+        city = norm(row[city_col]) if city_col and city_col in row.index else ""
+        z    = zip5(row[zip_col])  if zip_col  and zip_col  in row.index else ""
+        if addr:
+            raw  = f"{addr}|{city}|{z}"
+            na   = norm_addr(row[addr_col] if addr_col else "")
+            norm_key = f"{na}|{city}|{z}"
+            results.append((raw, norm_key))
+    return results
 
 def get_norm_addr_key(row, cols) -> str:
     addr = norm_addr(row[cols["addr"]] if cols["addr"] else "")
@@ -167,13 +199,13 @@ for orig_path in ORIG_FILES:
         cols = detect_cols(df, f"{orig_path.stem[:15]}/{sheet_name}")
 
         for _, row in df.iterrows():
-            keys = get_name_keys(row, cols)
-            raw_addr      = get_addr_key(row, cols)
-            norm_addr_key = get_norm_addr_key(row, cols)
-            for key in keys:
-                if key not in name_to_addresses:
-                    name_to_addresses[key] = []
-                name_to_addresses[key].append((raw_addr, norm_addr_key, orig_path.name))
+            name_keys  = get_name_keys(row, cols)
+            addr_pairs = get_all_addr_keys(row, cols)  # all address columns per row
+            for name_key in name_keys:
+                if name_key not in name_to_addresses:
+                    name_to_addresses[name_key] = []
+                for raw_addr, norm_addr_key in addr_pairs:
+                    name_to_addresses[name_key].append((raw_addr, norm_addr_key, orig_path.name))
 
 print(f"\n  Combined name lookup: {len(name_to_addresses)} unique name keys")
 
