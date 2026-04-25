@@ -198,14 +198,23 @@ for orig_path in ORIG_FILES:
         print(f"    Sheet '{sheet_name}': {len(df)} rows")
         cols = detect_cols(df, f"{orig_path.stem[:15]}/{sheet_name}")
 
+        npi_col    = find_col(df, ["npi", "NPI"])
+        middle_col = find_col(df, ["middle_name", "MiddleName"])
+
         for _, row in df.iterrows():
             name_keys  = get_name_keys(row, cols)
-            addr_pairs = get_all_addr_keys(row, cols)  # all address columns per row
+            addr_pairs = get_all_addr_keys(row, cols)
+            npi    = norm(row[npi_col])    if npi_col    else ""
+            middle = norm(row[middle_col]) if middle_col else ""
+            middle1 = middle[0] if middle else ""   # first initial only
             for name_key in name_keys:
                 if name_key not in name_to_addresses:
                     name_to_addresses[name_key] = []
                 for raw_addr, norm_addr_key in addr_pairs:
-                    name_to_addresses[name_key].append((raw_addr, norm_addr_key, orig_path.name))
+                    # Store npi + middle initial alongside address for disambiguation
+                    name_to_addresses[name_key].append(
+                        (raw_addr, norm_addr_key, orig_path.name, npi, middle1)
+                    )
 
 print(f"\n  Combined name lookup: {len(name_to_addresses)} unique name keys")
 
@@ -231,24 +240,37 @@ for _, row in mail_df.iterrows():
         addresses_found.append("")
         continue
 
+    # Check if multiple distinct NPIs exist — means different people, not multiple addresses
+    npis    = {e[3] for e in all_entries if e[3]}
+    middles = {e[4] for e in all_entries if e[4]}
+    different_people = (
+        len(npis) > 1 or                          # different NPI numbers
+        (len(middles) > 1 and "" not in middles)  # different non-blank middle initials
+    )
+
+    if different_people:
+        statuses.append("name_collision_different_people")
+        addr_counts.append(len(npis) or len(middles))
+        npis_str = " | ".join(sorted(npis)) if npis else "no NPI"
+        addresses_found.append(f"NPIs: {npis_str}")
+        continue
+
     # Deduplicate entries by raw address
-    seen_raw  = {}
-    for raw, norm_a, src in all_entries:
-        seen_raw.setdefault(raw, (norm_a, src))
+    seen_raw = {}
+    for raw, norm_a, src, npi, mid in all_entries:
+        seen_raw.setdefault(raw, norm_a)
 
     unique_raw   = list(seen_raw.keys())
-    unique_norms = [seen_raw[r][0] for r in unique_raw]
+    unique_norms = list(seen_raw.values())
     addr_counts.append(len(unique_raw))
     addresses_found.append(" | ".join(unique_raw))
 
     if len(unique_raw) == 1:
         statuses.append("unique")
+    elif len(set(unique_norms)) == 1:
+        statuses.append("same_address_variant")
     else:
-        # Check if all normalized addresses are the same
-        if len(set(unique_norms)) == 1:
-            statuses.append("same_address_variant")
-        else:
-            statuses.append("multiple_addresses")
+        statuses.append("multiple_addresses")
 
 mail_df["address_status"] = statuses
 mail_df["address_count"]  = addr_counts
@@ -265,16 +287,19 @@ print(f"\nWriting: {OUTPUT_FILE}")
 
 multi   = mail_df[mail_df["address_status"] == "multiple_addresses"]
 variant = mail_df[mail_df["address_status"] == "same_address_variant"]
-not_in  = mail_df[mail_df["address_status"] == "not_in_originals"]
+not_in     = mail_df[mail_df["address_status"] == "not_in_originals"]
+collisions = mail_df[mail_df["address_status"] == "name_collision_different_people"]
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     mail_df.to_excel(writer, sheet_name="all_flagged", index=False)
     multi.to_excel(writer, sheet_name="multiple_addresses", index=False)
     variant.to_excel(writer, sheet_name="same_address_variant", index=False)
+    collisions.to_excel(writer, sheet_name="name_collision", index=False)
     not_in.to_excel(writer, sheet_name="not_in_originals", index=False)
-    print(f"  all_flagged          : {len(mail_df)}")
-    print(f"  multiple_addresses   : {len(multi)}")
-    print(f"  same_address_variant : {len(variant)}")
-    print(f"  not_in_originals     : {len(not_in)}")
+    print(f"  all_flagged                    : {len(mail_df)}")
+    print(f"  multiple_addresses             : {len(multi)}")
+    print(f"  same_address_variant           : {len(variant)}")
+    print(f"  name_collision_diff_people     : {len(collisions)}")
+    print(f"  not_in_originals               : {len(not_in)}")
 
 print("\nDone.")
