@@ -24,8 +24,7 @@ import pandas as pd
 BASE        = Path.home() / "Downloads" / "CRC MDH Project"
 MAIL_FILE   = BASE / "Current Mailing Files" / "241498 0976 042026 v3.xlsx"
 ORIG_FILES  = [
-    BASE / "Current Mailing Files" / "physician_pa_nurse_20260422_combined.xlsx",
-    BASE / "Current Mailing Files" / "nurse_20260422_combined.xlsx",
+    BASE / "Current Mailing Files" / "gold_reference_providers.xlsx",
 ]
 OUTPUT_FILE = BASE / "Current Mailing Files" / "multiple_address_check.xlsx"
 

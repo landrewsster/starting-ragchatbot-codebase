@@ -33,7 +33,6 @@ FILES = [
     BASE / "nurse_20260422_combined.xlsx",
 ]
 OUTPUT_XLSX = BASE / "gold_reference_providers.xlsx"
-OUTPUT_CSV  = BASE / "gold_reference_providers.csv"
 
 # Tab priority — lower number = higher priority (kept when deduplicating)
 TAB_PRIORITY = {"matched": 0, "npionly": 1, "mnonly": 2}
@@ -139,9 +138,6 @@ print(gold.groupby(["_source_file", "_source_tab"]).size().to_string())
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_XLSX}")
 gold.to_excel(OUTPUT_XLSX, index=False)
-
-print(f"Writing: {OUTPUT_CSV}")
-gold.to_csv(OUTPUT_CSV, index=False)
 
 print(f"\nGold reference: {len(gold)} unique providers")
 print("Done.")
