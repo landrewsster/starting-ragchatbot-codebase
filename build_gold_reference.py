@@ -77,6 +77,18 @@ def name_variants(last: str, first: str) -> set[str]:
         cands.add(last)
     return cands
 
+def fullname_variants(fn: str) -> set[str]:
+    fn = STRIP_SUFFIXES.sub("", fn.strip()).strip()
+    if not fn:
+        return set()
+    variants = {fn}
+    words = fn.split()
+    if len(words) >= 2:
+        variants.add(f"{words[0]} {words[-1]}")
+        variants.add(f"{words[-1]} {words[0]}")
+        variants.add(f"{words[-1]}, {words[0]}")
+    return variants
+
 def parse_full_name(full_name: str, first_hint: str = "") -> tuple[str, str, str]:
     """Parse 'Last, First Middle' or 'First Middle Last' → (last, first, middle)."""
     full_name = STRIP_SUFFIXES.sub("", full_name.strip()).strip()
@@ -255,12 +267,12 @@ if mail_df is not None:
         fn    = norm(row.get(fn_col_m,    "")) if fn_col_m    else ""
         fname = norm(row.get(fname_col_m, "")) if fname_col_m else ""
 
-        last, first, middle = parse_full_name(fn, fname)
-        if not last:
+        # Use fullname_variants for matching (handles compound first names)
+        if any(v in gold_name_set for v in fullname_variants(fn)):
             continue
 
-        # Skip if already in gold
-        if any(v in gold_name_set for v in name_variants(last, first)):
+        last, first, middle = parse_full_name(fn, fname)
+        if not last:
             continue
 
         addr  = str(row.get(addr_col_m,  "")).strip() if addr_col_m  else ""
