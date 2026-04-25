@@ -27,12 +27,13 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-BASE  = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+MAILING_BASE  = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+PROVIDER_BASE = Path.home() / "Downloads" / "CRC MDH Project" / "ProviderDataFiles"
 FILES = [
-    BASE / "physician_pa_nurse_20260422_combined.xlsx",
-    BASE / "nurse_20260422_combined.xlsx",
+    PROVIDER_BASE / "physician_pa_nurse_20260422_combined.xlsx",
+    PROVIDER_BASE / "nurse_20260422_combined.xlsx",
 ]
-OUTPUT_XLSX = BASE / "gold_reference_providers.xlsx"
+OUTPUT_XLSX = MAILING_BASE / "gold_reference_providers.xlsx"
 
 # Tab priority — lower number = higher priority (kept when deduplicating)
 TAB_PRIORITY = {"matched": 0, "npionly": 1, "mnonly": 2}
