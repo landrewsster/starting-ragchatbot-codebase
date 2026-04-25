@@ -286,8 +286,9 @@ summary_rows = [
     {"check": "In main mailing (241498)",       "count": len(main_df)},
     {"check": "In addition mailing",            "count": len(add_df)},
     {"check": "Combined mailed (main+addition)","count": len(main_df) + len(add_df)},
-    {"check": "Duplicate NPI in gold",          "count": len(dup_gold)},
+    {"check": "Gold providers mailed",          "count": len(in_mailed)},
     {"check": "Gold providers NOT mailed",      "count": len(not_mailed)},
+    {"check": "Duplicate NPI in gold",          "count": len(dup_gold)},
     {"check": "Main mailing NOT in gold",       "count": len(main_missing_df)},
     {"check": "Addition NOT in gold",           "count": len(add_missing_df)},
 ]
@@ -295,12 +296,14 @@ summary_df = pd.DataFrame(summary_rows)
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     summary_df.to_excel(writer,       sheet_name="summary",                index=False)
-    not_mailed.to_excel(writer,       sheet_name="not_in_any_mailing",     index=False)
+    in_mailed.to_excel(writer,        sheet_name="mailed_providers",        index=False)
+    not_mailed.to_excel(writer,       sheet_name="not_in_any_mailing",      index=False)
     gold.to_excel(writer,             sheet_name="gold_all_flagged",        index=False)
     dup_gold.to_excel(writer,         sheet_name="gold_duplicate_npi",      index=False)
     main_missing_df.to_excel(writer,  sheet_name="main_mailing_not_in_gold",index=False)
     add_missing_df.to_excel(writer,   sheet_name="addition_not_in_gold",    index=False)
     print(f"  summary                  : {len(summary_df)} rows")
+    print(f"  mailed_providers         : {len(in_mailed)}")
     print(f"  not_in_any_mailing       : {len(not_mailed)}")
     print(f"  gold_all_flagged         : {len(gold)}")
     print(f"  gold_duplicate_npi       : {len(dup_gold)}")
