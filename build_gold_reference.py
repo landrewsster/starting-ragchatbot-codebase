@@ -105,12 +105,15 @@ print(f"\nDeduplicating ...")
 deduped_rows = []
 seen_npi  = set()
 seen_name = set()
+removed_npi  = 0
+removed_name = 0
 
 for _, row in combined.iterrows():
     npi = norm(row[npi_col]) if npi_col else ""
 
     if npi and npi not in ("nan", ""):
         if npi in seen_npi:
+            removed_npi += 1
             continue
         seen_npi.add(npi)
     else:
@@ -121,6 +124,7 @@ for _, row in combined.iterrows():
         z      = zip5(row[zip_col])    if zip_col    else ""
         name_key = f"{last}|{first}|{middle}|{z}"
         if name_key in seen_name or name_key == "|||":
+            removed_name += 1
             continue
         seen_name.add(name_key)
 
@@ -149,7 +153,9 @@ gold["_mail_addr"] = gold.apply(lambda r: coalesce(r, "npi_mailing_address_1", "
 gold["_mail_city"] = gold.apply(lambda r: coalesce(r, "npi_mailing_city",      "mailing_city"),                     axis=1)
 gold["_mail_zip"]  = gold.apply(lambda r: coalesce(r, "npi_mailing_zip",       "mailing_postal_code"),               axis=1)
 
-print(f"  Rows after dedup: {len(gold)}")
+print(f"  Rows after dedup : {len(gold)}")
+print(f"  Rows removed     : {removed_npi + removed_name}  "
+      f"(by NPI: {removed_npi}, by name+zip: {removed_name})")
 print(f"\nSource breakdown:")
 print(gold.groupby(["_source_file", "_source_tab"]).size().to_string())
 
