@@ -124,7 +124,12 @@ for _, row in combined.iterrows():
         last   = norm(row[last_col])   if last_col   else ""
         first  = norm(row[first_col])  if first_col  else ""
         middle = norm(row[middle_col]) if middle_col else ""
-        z      = zip5(row[zip_col])    if zip_col    else ""
+        # Coalesce zip across all possible column names (varies by source tab)
+        z = ""
+        for zc in ["npi_primary_zip", "zip5", "mn_zip"]:
+            if zc in row.index and zip5(row[zc]):
+                z = zip5(row[zc])
+                break
         name_key = f"{last}|{first}|{middle}|{z}"
         if name_key in seen_name or name_key == "|||":
             removed_name += 1
