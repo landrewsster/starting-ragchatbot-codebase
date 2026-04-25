@@ -102,7 +102,8 @@ combined.sort_values(
 
 # ── Deduplicate by NPI ────────────────────────────────────────────────────────
 print(f"\nDeduplicating ...")
-deduped_rows = []
+deduped_rows  = []
+removed_rows  = []
 seen_npi  = set()
 seen_name = set()
 removed_npi  = 0
@@ -114,6 +115,7 @@ for _, row in combined.iterrows():
     if npi and npi not in ("nan", ""):
         if npi in seen_npi:
             removed_npi += 1
+            removed_rows.append({**row, "_removed_by": "duplicate_npi"})
             continue
         seen_npi.add(npi)
     else:
@@ -125,10 +127,13 @@ for _, row in combined.iterrows():
         name_key = f"{last}|{first}|{middle}|{z}"
         if name_key in seen_name or name_key == "|||":
             removed_name += 1
+            removed_rows.append({**row, "_removed_by": "duplicate_name_zip"})
             continue
         seen_name.add(name_key)
 
     deduped_rows.append(row)
+
+removed_df = pd.DataFrame(removed_rows)
 
 gold = pd.DataFrame(deduped_rows, columns=combined.columns)
 
@@ -164,7 +169,13 @@ print(f"\n  Rows with primary address: {addr_filled} of {len(gold)}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_XLSX}")
-gold.to_excel(OUTPUT_XLSX, index=False)
+with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
+    gold.to_excel(writer, sheet_name="gold_reference", index=False)
+    if not removed_df.empty:
+        removed_df.drop(columns=["_tab_priority", "_file_priority"],
+                        errors="ignore").to_excel(writer, sheet_name="removed_duplicates", index=False)
+    print(f"  gold_reference     : {len(gold)} rows")
+    print(f"  removed_duplicates : {len(removed_df)} rows")
 
 print(f"\nGold reference: {len(gold)} unique providers")
 print("Done.")
