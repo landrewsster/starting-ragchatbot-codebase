@@ -257,13 +257,52 @@ add_missing_df = pd.DataFrame(add_not_in_gold)
 print(f"  Addition mailing not in gold: {len(add_missing_df)}")
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+# ── Build mailed_providers directly from mailing files (deduped) ──────────────
+# NPI-deduplicate addition file, then name-deduplicate against main mailing.
+print(f"\nBuilding mailed_providers list ...")
+mailed_rows: list[dict] = []
+seen_mailed_npis:  set[str] = set()
+seen_mailed_names: set[str] = set()
+
+add_npi_col_m   = find_col(add_df, ["npi", "NPI"])
+add_last_col_m  = find_col(add_df, ["last_name", "LastName"])
+add_first_col_m = find_col(add_df, ["first_name", "FirstName", "First Name"])
+
+for _, row in add_df.iterrows():
+    npi   = norm(row[add_npi_col_m])   if add_npi_col_m   else ""
+    last  = norm(row[add_last_col_m])  if add_last_col_m  else ""
+    first = norm(row[add_first_col_m]) if add_first_col_m else ""
+    key   = clean_name(f"{last} {first}")
+    if npi and npi in seen_mailed_npis:
+        continue
+    if key in seen_mailed_names:
+        continue
+    if npi:
+        seen_mailed_npis.add(npi)
+    if key:
+        seen_mailed_names.add(key)
+    mailed_rows.append({**row, "_mailing_source": "addition"})
+
+for _, row in main_df.iterrows():
+    fn  = norm(row.get(fn_col,    "")) if fn_col    else ""
+    key = clean_name(fn)
+    variants = {clean_name(v) for v in fullname_variants(fn)}
+    if any(v in seen_mailed_names for v in variants):
+        continue
+    if key:
+        seen_mailed_names.add(key)
+    mailed_rows.append({**row, "_mailing_source": "main_241498"})
+
+mailed_combined_df = pd.DataFrame(mailed_rows)
+print(f"  Unique mailed providers: {len(mailed_combined_df)}")
+
 print(f"\n{'='*60}")
 print(f"SUMMARY")
 print(f"{'='*60}")
 print(f"  Gold reference total         : {len(gold)}")
 print(f"  In main mailing (241498)     : {len(main_df)}")
 print(f"  In addition mailing          : {len(add_df)}")
-print(f"  Combined unique mailed (est) : {len(main_df) + len(add_df)}")
+print(f"  Unique mailed (deduped)      : {len(mailed_combined_df)}")
 print(f"  Duplicate NPI in gold        : {len(dup_gold)}")
 print(f"  Gold providers NOT mailed    : {len(not_mailed)}")
 print(f"  Main mailing NOT in gold     : {len(main_missing_df)}")
@@ -296,14 +335,14 @@ summary_df = pd.DataFrame(summary_rows)
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     summary_df.to_excel(writer,       sheet_name="summary",                index=False)
-    in_mailed.to_excel(writer,        sheet_name="mailed_providers",        index=False)
+    mailed_combined_df.to_excel(writer, sheet_name="mailed_providers",       index=False)
     not_mailed.to_excel(writer,       sheet_name="not_in_any_mailing",      index=False)
     gold.to_excel(writer,             sheet_name="gold_all_flagged",        index=False)
     dup_gold.to_excel(writer,         sheet_name="gold_duplicate_npi",      index=False)
     main_missing_df.to_excel(writer,  sheet_name="main_mailing_not_in_gold",index=False)
     add_missing_df.to_excel(writer,   sheet_name="addition_not_in_gold",    index=False)
     print(f"  summary                  : {len(summary_df)} rows")
-    print(f"  mailed_providers         : {len(in_mailed)}")
+    print(f"  mailed_providers         : {len(mailed_combined_df)}")
     print(f"  not_in_any_mailing       : {len(not_mailed)}")
     print(f"  gold_all_flagged         : {len(gold)}")
     print(f"  gold_duplicate_npi       : {len(dup_gold)}")
