@@ -133,7 +133,8 @@ for _, row in combined.iterrows():
         name_key = f"{last}|{first}|{middle}|{z}"
         if name_key in seen_name or name_key == "|||":
             removed_name += 1
-            removed_rows.append({**row, "_removed_by": "duplicate_name_zip"})
+            removed_rows.append({**row, "_removed_by": "duplicate_name_zip",
+                                  "_dedup_key": name_key})
             continue
         seen_name.add(name_key)
 
