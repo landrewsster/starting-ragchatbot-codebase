@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""
+build_gold_reference.py
+
+Merge all sheets from physician_pa_nurse and nurse combined files into a
+single deduplicated gold reference list of providers.
+
+Deduplication priority:
+  1. NPI (primary key — keeps the matched tab version over npionly/mnonly)
+  2. last + first + middle + zip (for mnonly rows with no NPI)
+
+Source tab priority when same provider appears in multiple tabs:
+  matched > npionly > mnonly (most complete data first)
+
+Output:
+  gold_reference_providers.xlsx  — one sheet, one row per unique provider
+  gold_reference_providers.csv   — same data as CSV
+
+Usage:
+    python3 build_gold_reference.py
+"""
+
+import re
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+BASE  = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+FILES = [
+    BASE / "physician_pa_nurse_20260422_combined.xlsx",
+    BASE / "nurse_20260422_combined.xlsx",
+]
+OUTPUT_XLSX = BASE / "gold_reference_providers.xlsx"
+OUTPUT_CSV  = BASE / "gold_reference_providers.csv"
+
+# Tab priority — lower number = higher priority (kept when deduplicating)
+TAB_PRIORITY = {"matched": 0, "npionly": 1, "mnonly": 2}
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+def norm(s) -> str:
+    if pd.isna(s):
+        return ""
+    return re.sub(r"\s+", " ", str(s).lower().strip())
+
+def zip5(s) -> str:
+    return re.sub(r"\D", "", norm(s))[:5]
+
+def find_col(df, candidates):
+    low = {c.lower(): c for c in df.columns}
+    for c in candidates:
+        if c in df.columns:
+            return c
+        if c.lower() in low:
+            return low[c.lower()]
+    return None
+
+# ── Load all sheets from all files ───────────────────────────────────────────
+print("\nLoading provider files ...")
+all_frames: list[pd.DataFrame] = []
+
+for filepath in FILES:
+    print(f"\n  {filepath.name}")
+    if not filepath.exists():
+        print(f"    WARNING: not found, skipping")
+        continue
+
+    sheets = pd.read_excel(filepath, sheet_name=None, dtype=str)
+    for sheet_name, df in sheets.items():
+        df["_source_file"] = filepath.stem
+        df["_source_tab"]  = sheet_name
+        df["_tab_priority"] = TAB_PRIORITY.get(sheet_name, 99)
+        print(f"    Sheet '{sheet_name}': {len(df)} rows, {len(df.columns)} columns")
+        all_frames.append(df)
+
+# ── Concatenate all frames ────────────────────────────────────────────────────
+print(f"\nConcatenating all sheets ...")
+combined = pd.concat(all_frames, ignore_index=True, sort=False)
+combined = combined.fillna("")
+print(f"  Total rows before dedup: {len(combined)}")
+
+# ── Detect key columns ────────────────────────────────────────────────────────
+npi_col    = find_col(combined, ["npi", "NPI"])
+last_col   = find_col(combined, ["last_name", "LastName"])
+first_col  = find_col(combined, ["first_name", "FirstName"])
+middle_col = find_col(combined, ["middle_name", "MiddleName"])
+zip_col    = find_col(combined, ["npi_primary_zip", "zip5", "mn_zip"])
+
+print(f"  Key cols: npi={npi_col} last={last_col} first={first_col} "
+      f"middle={middle_col} zip={zip_col}")
+
+# ── Sort so higher-priority tabs come first ───────────────────────────────────
+# Within same priority, prefer physician_pa_nurse over nurse
+file_priority = {f.stem: i for i, f in enumerate(FILES)}
+combined["_file_priority"] = combined["_source_file"].map(
+    lambda x: file_priority.get(x, 99)
+)
+combined.sort_values(
+    ["_tab_priority", "_file_priority"],
+    inplace=True, ignore_index=True
+)
+
+# ── Deduplicate by NPI ────────────────────────────────────────────────────────
+print(f"\nDeduplicating ...")
+deduped_rows = []
+seen_npi  = set()
+seen_name = set()
+
+for _, row in combined.iterrows():
+    npi = norm(row[npi_col]) if npi_col else ""
+
+    if npi and npi not in ("nan", ""):
+        if npi in seen_npi:
+            continue
+        seen_npi.add(npi)
+    else:
+        # No NPI — deduplicate by last + first + middle + zip
+        last   = norm(row[last_col])   if last_col   else ""
+        first  = norm(row[first_col])  if first_col  else ""
+        middle = norm(row[middle_col]) if middle_col else ""
+        z      = zip5(row[zip_col])    if zip_col    else ""
+        name_key = f"{last}|{first}|{middle}|{z}"
+        if name_key in seen_name or name_key == "|||":
+            continue
+        seen_name.add(name_key)
+
+    deduped_rows.append(row)
+
+gold = pd.DataFrame(deduped_rows, columns=combined.columns)
+
+# Drop internal sort columns
+gold.drop(columns=["_tab_priority", "_file_priority"], inplace=True)
+
+print(f"  Rows after dedup: {len(gold)}")
+print(f"\nSource breakdown:")
+print(gold.groupby(["_source_file", "_source_tab"]).size().to_string())
+
+# ── Write output ──────────────────────────────────────────────────────────────
+print(f"\nWriting: {OUTPUT_XLSX}")
+gold.to_excel(OUTPUT_XLSX, index=False)
+
+print(f"Writing: {OUTPUT_CSV}")
+gold.to_csv(OUTPUT_CSV, index=False)
+
+print(f"\nGold reference: {len(gold)} unique providers")
+print("Done.")
