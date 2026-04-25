@@ -180,7 +180,9 @@ removed_npi  = 0
 removed_name = 0
 
 for _, row in combined.iterrows():
-    npi = norm(row[npi_col]) if npi_col else ""
+    npi_raw = norm(row[npi_col]) if npi_col else ""
+    # Validate NPI: must be exactly 10 digits
+    npi = npi_raw if re.fullmatch(r"\d{10}", npi_raw) else ""
 
     if npi and npi not in ("nan", ""):
         if npi in seen_npi:
