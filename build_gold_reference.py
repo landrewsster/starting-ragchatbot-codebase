@@ -77,12 +77,19 @@ def name_variants(last: str, first: str) -> set[str]:
         cands.add(last)
     return cands
 
+def clean_name(s: str) -> str:
+    s = STRIP_SUFFIXES.sub("", norm(s)).strip()
+    return re.sub(r"[,.]", "", s).strip()
+
 def fullname_variants(fn: str) -> set[str]:
-    fn = STRIP_SUFFIXES.sub("", fn.strip()).strip()
+    fn = fn.strip()
     if not fn:
         return set()
     variants = {fn}
-    words = fn.split()
+    stripped = STRIP_SUFFIXES.sub("", fn).strip()
+    if stripped and stripped != fn:
+        variants.add(stripped)
+    words = (stripped or fn).split()
     if len(words) >= 2:
         variants.add(f"{words[0]} {words[-1]}")
         variants.add(f"{words[-1]} {words[0]}")
@@ -254,21 +261,21 @@ if mail_df is not None:
     zip_col_m   = find_col(mail_df, ["ZIP+4", "zip5", "zip", "Zip"])
     state_col_m = find_col(mail_df, ["State", "state", "St"])
 
-    # Build name set from current gold reference for matching
+    # Build name set from current gold reference — same logic as check_gold_vs_mailing.py
     gold_name_set: set[str] = set()
     for _, row in gold.iterrows():
         l = norm(str(row.get(last_col,  ""))) if last_col  else ""
         f = norm(str(row.get(first_col, ""))) if first_col else ""
         for v in name_variants(l, f):
-            gold_name_set.add(v)
+            gold_name_set.add(clean_name(v))
 
     supplement_rows = []
     for _, row in mail_df.iterrows():
         fn    = norm(row.get(fn_col_m,    "")) if fn_col_m    else ""
         fname = norm(row.get(fname_col_m, "")) if fname_col_m else ""
 
-        # Use fullname_variants for matching (handles compound first names)
-        if any(v in gold_name_set for v in fullname_variants(fn)):
+        # Use fullname_variants + clean_name for matching — identical to check_gold_vs_mailing.py
+        if any(clean_name(v) in gold_name_set for v in fullname_variants(fn)):
             continue
 
         last, first, middle = parse_full_name(fn, fname)
