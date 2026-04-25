@@ -23,11 +23,15 @@ import pandas as pd
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE  = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-FILES = [
+# Files treated as the "gold" provider source
+PROVIDER_FILES = [
     BASE / "physician_pa_nurse_20260422_combined.xlsx",
     BASE / "nurse_20260422_combined.xlsx",
-    BASE / "MailingListAddition20260423.xlsx",
 ]
+# File to check against the gold source
+ADDITION_FILE  = BASE / "MailingListAddition20260423.xlsx"
+
+FILES  = PROVIDER_FILES + [ADDITION_FILE]
 OUTPUT = BASE / "cross_file_overlap.xlsx"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -170,14 +174,90 @@ for label in file_labels:
     counts_rows.append({"source": label, "row_count": n})
 counts_df = pd.DataFrame(counts_rows)
 
+# ── Directional check: MailingListAddition → provider files ──────────────────
+# Build a set of all identifiers from the provider files only
+provider_npi_set  = set()
+provider_name_set = set()
+provider_stems    = {f.stem for f in PROVIDER_FILES}
+
+for rec in all_records:
+    file_stem = rec["source"].split(" / ")[0]
+    if file_stem not in provider_stems:
+        continue
+    if rec["npi"] and rec["npi"] not in ("nan", ""):
+        provider_npi_set.add(rec["npi"])
+    if rec["name_key"] and rec["name_key"] != "||":
+        provider_name_set.add(rec["name_key"])
+
+print(f"\nProvider reference set: {len(provider_npi_set)} NPIs, "
+      f"{len(provider_name_set)} name keys")
+
+# Load MailingListAddition fresh to get all original columns
+print(f"\nChecking {ADDITION_FILE.name} against provider files ...")
+try:
+    add_sheets = pd.read_excel(ADDITION_FILE, sheet_name=None, dtype=str)
+except FileNotFoundError:
+    sys.exit(f"ERROR: {ADDITION_FILE} not found")
+
+addition_frames = []
+for sheet_name, df in add_sheets.items():
+    npi_col    = find_col(df, ["npi", "NPI"])
+    last_col   = find_col(df, ["last_name", "LastName"])
+    first_col  = find_col(df, ["first_name", "FirstName", "First Name"])
+    middle_col = find_col(df, ["middle_name", "MiddleName"])
+
+    found_flags   = []
+    match_methods = []
+    for _, row in df.iterrows():
+        npi    = norm(row[npi_col])    if npi_col    else ""
+        last   = norm(row[last_col])   if last_col   else ""
+        first  = norm(row[first_col])  if first_col  else ""
+        middle = norm(row[middle_col]) if middle_col else ""
+        mid1   = middle[0] if middle else ""
+        name_key = f"{last}|{first}|{mid1}"
+
+        if npi and npi in provider_npi_set:
+            found_flags.append(True)
+            match_methods.append("npi")
+        elif name_key != "||" and name_key in provider_name_set:
+            found_flags.append(True)
+            match_methods.append("name")
+        else:
+            found_flags.append(False)
+            match_methods.append("not_found")
+
+    df["in_provider_files"] = found_flags
+    df["match_method"]      = match_methods
+    addition_frames.append((sheet_name, df))
+
+    n_found = sum(found_flags)
+    n_miss  = len(found_flags) - n_found
+    print(f"  Sheet '{sheet_name}': {n_found} found in provider files, "
+          f"{n_miss} NOT found")
+    for m, cnt in pd.Series(match_methods).value_counts().items():
+        print(f"    {m}: {cnt}")
+
+# Combine all addition sheets and extract missing
+all_addition_df = pd.concat([df for _, df in addition_frames], ignore_index=True)
+missing_df = all_addition_df[all_addition_df["in_provider_files"] == False].drop(
+    columns=["in_provider_files", "match_method"]
+)
+print(f"\n  Total in addition file : {len(all_addition_df)}")
+print(f"  Found in provider files: {sum(all_addition_df['in_provider_files'])}")
+print(f"  NOT in provider files  : {len(missing_df)}")
+
 # ── Write output ─────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT}")
 with pd.ExcelWriter(OUTPUT, engine="openpyxl") as writer:
-    matrix_df.to_excel(writer,  sheet_name="overlap_matrix",  index=False)
-    counts_df.to_excel(writer,  sheet_name="file_counts",     index=False)
-    overlap_df.to_excel(writer, sheet_name="overlap_detail",  index=False)
-    print(f"  overlap_matrix : {len(matrix_df)} file pairs")
-    print(f"  file_counts    : {len(counts_df)} sheets")
-    print(f"  overlap_detail : {len(overlap_df)} overlapping providers")
+    matrix_df.to_excel(writer,        sheet_name="overlap_matrix",         index=False)
+    counts_df.to_excel(writer,        sheet_name="file_counts",            index=False)
+    overlap_df.to_excel(writer,       sheet_name="overlap_detail",         index=False)
+    all_addition_df.to_excel(writer,  sheet_name="addition_flagged",       index=False)
+    missing_df.to_excel(writer,       sheet_name="addition_not_in_providers", index=False)
+    print(f"  overlap_matrix            : {len(matrix_df)} file pairs")
+    print(f"  file_counts               : {len(counts_df)} sheets")
+    print(f"  overlap_detail            : {len(overlap_df)} overlapping providers")
+    print(f"  addition_flagged          : {len(all_addition_df)} rows")
+    print(f"  addition_not_in_providers : {len(missing_df)} rows")
 
 print("\nDone.")
