@@ -232,19 +232,53 @@ print(f"  Phase 1 classified: {phase1_hits}")
 unclassified_after_p1 = df[df[hs_col].apply(norm) == ""].shape[0]
 print(f"  Still unclassified: {unclassified_after_p1}")
 
-# ── Phase 1b: Provider name search (TODO — disambiguates same-address/diff-org) ──
-# For providers still unclassified, search by provider name + city to find
-# their specific practice when multiple orgs share an address.
-#
-# Implementation plan:
-#   for each unclassified row:
-#     query = f"{first_name} {last_name} {specialty} {city}"
-#     result = places_search(query)
-#     if result and MEDICAL_RE matches result name:
-#         classify using result
-#
-# This phase is intentionally left as TODO until API quota and
-# result quality can be assessed on a sample.
+# ── Phase 1b: Provider name search ───────────────────────────────────────────
+# Searches by provider name + city for providers still unclassified after Phase 1.
+# Catches cases where multiple orgs share one address (e.g., two different
+# clinics in the same building) — address-based lookup can't disambiguate these.
+if not API_KEY:
+    print(f"\nPhase 1b: Skipped (GOOGLE_PLACES_API_KEY not set)")
+else:
+    unclassified_mask_1b = df[hs_col].apply(norm) == ""
+    p1b_rows = df[unclassified_mask_1b]
+    print(f"\nPhase 1b: Name-based search for {len(p1b_rows)} unclassified providers ...")
+    phase1b_hits = 0
+
+    # Detect specialty/taxonomy column if present
+    taxonomy_col = find_col(df, ["taxonomy_descriptions", "primary_taxonomy_code",
+                                  "license_type_desc", "specialty boards"])
+
+    for i, row in p1b_rows.iterrows():
+        first = str(row.get(first_col, "")).strip() if first_col else ""
+        last  = str(row.get(last_col,  "")).strip() if last_col  else ""
+        city  = str(row.get(city_col,  "")).strip() if city_col  else ""
+
+        if not last:
+            continue
+
+        # Build query: name + optional specialty + city + "physician"
+        specialty = ""
+        if taxonomy_col:
+            tax_val = str(row.get(taxonomy_col, "")).strip()
+            if tax_val and tax_val.lower() not in ("nan", ""):
+                # Take first word of taxonomy to keep query short
+                specialty = tax_val.split()[0] if tax_val else ""
+
+        parts = [p for p in [first, last, specialty, city, "physician"] if p]
+        query = " ".join(parts)
+
+        place = places_search(query)
+        hs, hs_city = classify_place(place)
+
+        if hs and hs != "REAL_ESTATE":
+            df.at[i, hs_col]      = hs
+            df.at[i, hs_city_col] = hs_city or city
+            phase1b_hits += 1
+
+        time.sleep(API_DELAY)
+
+    print(f"  Phase 1b classified: {phase1b_hits}")
+    print(f"  Still unclassified : {df[df[hs_col].apply(norm) == ''].shape[0]}")
 
 # ── Phase 2: Google Places API for unique unclassified addresses ──────────────
 if not API_KEY:
