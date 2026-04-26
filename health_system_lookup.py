@@ -139,7 +139,17 @@ def places_search(query: str) -> dict | None:
 
 MEDICAL_TYPES = {
     "hospital", "doctor", "pharmacy", "health", "dentist",
-    "physiotherapist", "medical_lab", "drugstore",
+    "physiotherapist", "medical_lab", "drugstore", "university",
+}
+
+# Manual overrides for addresses the API consistently misclassifies or misses.
+# Key: normalized street address (lowercase, no extra spaces).
+# Add entries here as you discover gaps from the unclassified output.
+MANUAL_ADDR_OVERRIDES = {
+    "420 delaware street se":          ("University of Minnesota Health", "Minneapolis"),
+    "420 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
+    "920 e 28th street":               ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
+    "920 e 28th st":                   ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
 }
 
 def classify_place(place: dict) -> tuple[str, str]:
@@ -265,7 +275,16 @@ for i, row in df.iterrows():
     addr3 = safe_addr(row.get(addr3_col)) if addr3_col else ""
     city  = safe_addr(row.get(city_col))  if city_col  else ""
 
-    # Step 1a: addr1 org detection
+    # Step 1a: manual address override
+    override_key = norm(addr1)
+    if override_key in MANUAL_ADDR_OVERRIDES:
+        hs, hs_city = MANUAL_ADDR_OVERRIDES[override_key]
+        df.at[i, hs_col]      = hs
+        df.at[i, hs_city_col] = hs_city
+        phase1_hits += 1
+        continue
+
+    # Step 1b: addr1 org detection
     if is_org_name(addr1):
         df.at[i, hs_col]      = addr1
         df.at[i, hs_city_col] = city
