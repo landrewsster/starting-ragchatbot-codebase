@@ -105,14 +105,22 @@ _BAD_HS_RE = re.compile(
     r"^(department of|division of|dept\.? of)\b",
     re.IGNORECASE,
 )
-# Matches names that look like individual providers rather than health systems
+# Matches names that look like individual providers rather than health systems.
+# "PA" is intentionally excluded — it also means Professional Association (org suffix).
 _INDIVIDUAL_RE = re.compile(
     r"^dr\.?\s|"                                   # starts with Dr.
-    r",\s*(md|do|dpm|dds|np|pa-?c?|rn|aprn|cnp|cnm|cns|phd|dnp|facc|fhrs|mbbs|msph)[\s,]*$|"
-    r"\s[-–]\s*(md|do|np|pa|rn|aprn)\s*$|"        # " - MD" or " – DO"
+    r",\s*(md|do|dpm|dds|np|rn|aprn|cnp|cnm|cns|phd|dnp|facc|fhrs|mbbs|msph)[\s,]*$|"
+    r"\s[-–]\s*(md|do|np|rn|aprn)\s*$|"           # " - MD" or " – DO"
     r"\b(md|do|dnp|facc|fhrs)\s*$",               # ends with bare credential
     re.IGNORECASE,
 )
+
+# Regex-based address overrides — applied after the dict-based overrides.
+# Each entry: (compiled address pattern, health_system, city)
+ADDR_PATTERN_OVERRIDES = [
+    # Any address on Delaware St → University of Minnesota Health campus
+    (re.compile(r"\bdelaware\b", re.IGNORECASE), "University of Minnesota Health", "Minneapolis"),
+]
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 print(f"\nLoading: {INPUT_FILE.name}")
@@ -163,6 +171,20 @@ for i, row in df.iterrows():
         df.at[i, HS_CITY_COL] = hs_city
         override_hits += 1
 print(f"Manual overrides applied: {override_hits}")
+
+# ── Step 2b: regex-based address pattern overrides ────────────────────────────
+pattern_hits = 0
+for i, row in df.iterrows():
+    if norm(row[HS_COL]):
+        continue
+    addr1 = safe_addr(row.get(addr1_col)) if addr1_col else ""
+    for pattern, hs, hs_city in ADDR_PATTERN_OVERRIDES:
+        if pattern.search(addr1):
+            df.at[i, HS_COL]      = hs
+            df.at[i, HS_CITY_COL] = hs_city
+            pattern_hits += 1
+            break
+print(f"Pattern overrides applied: {pattern_hits}")
 
 # ── Step 3: address propagation ───────────────────────────────────────────────
 def addr_key(row) -> str:
