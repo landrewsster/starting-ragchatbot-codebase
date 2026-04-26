@@ -18,7 +18,7 @@ import pandas as pd
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 INPUT_FILE  = BASE / "mailed_providers_hs.xlsx"
-OUTPUT_FILE = BASE / "mailed_providers_hs.xlsx"   # overwrite in place
+OUTPUT_FILE = BASE / "mailed_providers_hs_reprocessed.xlsx"
 
 HS_COL      = "health_system"
 HS_CITY_COL = "health_system_city"
