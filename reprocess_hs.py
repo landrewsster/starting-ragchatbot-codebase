@@ -31,9 +31,26 @@ MANUAL_ADDR_OVERRIDES = {
     "420 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
     "420 delaware street":             ("University of Minnesota Health", "Minneapolis"),
     "420 delaware st":                 ("University of Minnesota Health", "Minneapolis"),
-    # 920 E 28th St — Allina Minneapolis Heart Institute (Abbott Northwestern campus)
-    "920 e 28th street":               ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
-    "920 e 28th st":                   ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
+    # 717 Delaware St SE — UMN (Division of Nephrology etc.)
+    "717 delaware street se":          ("University of Minnesota Health", "Minneapolis"),
+    "717 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
+    # 401 East River Parkway — VCRC / UMN research buildings
+    "401 east river parkway":          ("University of Minnesota Health", "Minneapolis"),
+    "401 e river parkway":             ("University of Minnesota Health", "Minneapolis"),
+    "401 east river pkwy":             ("University of Minnesota Health", "Minneapolis"),
+    # 920 E 28th St — Allina Health Bandana Square Clinic
+    "920 e 28th street":               ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 e. 28th st.":                 ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 east 28th st.":               ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 e 28th st":                   ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    # 1021 Bandana Blvd E — Allina Health Bandana Square Clinic
+    "1021 bandana blvd e":             ("Allina Health Bandana Square Clinic", "Saint Paul"),
+    "1021 bandana boulevard e":        ("Allina Health Bandana Square Clinic", "Saint Paul"),
+    # 8100 W 78th St — Abbott Northwestern General Medicine Associates (Edina)
+    "8100 w 78th street":              ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 west 78th street":           ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 w 78th st":                  ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 west 78th st.":              ("Abbott Northwestern General Medicine Associates", "Edina"),
     # 2001 Blaisdell Ave S — Park Nicollet Clinic Minneapolis
     "2001 blaisdell avenue s":         ("Park Nicollet Clinic", "Minneapolis"),
     "2001 blaisdell ave s":            ("Park Nicollet Clinic", "Minneapolis"),
@@ -45,17 +62,17 @@ MANUAL_ADDR_OVERRIDES = {
     "1 veterans dr":                   ("VA Medical Center", "Minneapolis"),
     "one veterans drive":              ("VA Medical Center", "Minneapolis"),
     "one veterans dr":                 ("VA Medical Center", "Minneapolis"),
-    # Lakeview Clinic — Waconia (and satellite locations)
+    # Lakeview Clinic — Waconia
     "333 third street sw":             ("Lakeview Clinic", "Waconia"),
     "333 3rd street sw":               ("Lakeview Clinic", "Waconia"),
     "333 3rd st sw":                   ("Lakeview Clinic", "Waconia"),
-    # Welia Health — Mora (formerly Kanabec Hospital area)
+    # Welia Health — Mora
     "301 highway 65 n":                ("Welia Health", "Mora"),
     "301 hwy 65 n":                    ("Welia Health", "Mora"),
-    # St. Cloud Hospital — CentraCare Health
+    # CentraCare Health — St. Cloud Hospital
     "1406 6th avenue n":               ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
     "1406 6th ave n":                  ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
-    # Grand Itasca Clinic and Hospital — Grand Rapids
+    # Grand Itasca Clinic and Hospital
     "1601 golf course road":           ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
     "1601 golf course rd":             ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
     # Perham Health
@@ -115,12 +132,18 @@ _INDIVIDUAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Regex-based address overrides — applied after the dict-based overrides.
-# Each entry: (compiled address pattern, health_system, city)
+# Regex-based address overrides — checked against addr1 AND addr2.
+# Each entry: (compiled pattern, health_system, city)
 ADDR_PATTERN_OVERRIDES = [
-    # Any address on Delaware St → University of Minnesota Health campus
-    (re.compile(r"\bdelaware\b", re.IGNORECASE), "University of Minnesota Health", "Minneapolis"),
+    # Delaware St addresses → UMN campus
+    (re.compile(r"\bdelaware\b", re.IGNORECASE),       "University of Minnesota Health", "Minneapolis"),
+    # VCRC (Variety Club Research Center) in any address field → UMN
+    (re.compile(r"\bvcrc\b", re.IGNORECASE),           "University of Minnesota Health", "Minneapolis"),
+    # East River Parkway → UMN campus buildings
+    (re.compile(r"\beast river parkway\b", re.IGNORECASE), "University of Minnesota Health", "Minneapolis"),
 ]
+
+_DEPT_NAME_RE = re.compile(r"^(department of|division of|dept\.? of)\b", re.IGNORECASE)
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 print(f"\nLoading: {INPUT_FILE.name}")
@@ -178,8 +201,13 @@ for i, row in df.iterrows():
     if norm(row[HS_COL]):
         continue
     addr1 = safe_addr(row.get(addr1_col)) if addr1_col else ""
+    addr2 = safe_addr(row.get(addr2_col)) if addr2_col else ""
+    # When addr1 is a department/division name the real street may be in addr2
+    search_addrs = [addr1]
+    if _DEPT_NAME_RE.match(addr1):
+        search_addrs.append(addr2)
     for pattern, hs, hs_city in ADDR_PATTERN_OVERRIDES:
-        if pattern.search(addr1):
+        if any(pattern.search(a) for a in search_addrs if a):
             df.at[i, HS_COL]      = hs
             df.at[i, HS_CITY_COL] = hs_city
             pattern_hits += 1

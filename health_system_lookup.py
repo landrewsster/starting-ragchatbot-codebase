@@ -151,18 +151,37 @@ MANUAL_ADDR_OVERRIDES = {
     "420 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
     "420 delaware street":             ("University of Minnesota Health", "Minneapolis"),
     "420 delaware st":                 ("University of Minnesota Health", "Minneapolis"),
-    # 920 E 28th St — Allina Minneapolis Heart Institute (Abbott Northwestern campus)
-    "920 e 28th street":               ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
-    "920 e 28th st":                   ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
+    # 717 Delaware St SE — UMN (Division of Nephrology etc.)
+    "717 delaware street se":          ("University of Minnesota Health", "Minneapolis"),
+    "717 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
+    # 401 East River Parkway — VCRC / UMN research buildings
+    "401 east river parkway":          ("University of Minnesota Health", "Minneapolis"),
+    "401 e river parkway":             ("University of Minnesota Health", "Minneapolis"),
+    "401 east river pkwy":             ("University of Minnesota Health", "Minneapolis"),
+    # 920 E 28th St — Allina Health Bandana Square Clinic
+    "920 e 28th street":               ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 e. 28th st.":                 ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 east 28th st.":               ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    "920 e 28th st":                   ("Allina Health Bandana Square Clinic", "Minneapolis"),
+    # 1021 Bandana Blvd E — Allina Health Bandana Square Clinic
+    "1021 bandana blvd e":             ("Allina Health Bandana Square Clinic", "Saint Paul"),
+    "1021 bandana boulevard e":        ("Allina Health Bandana Square Clinic", "Saint Paul"),
+    # 8100 W 78th St — Abbott Northwestern General Medicine Associates (Edina)
+    "8100 w 78th street":              ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 west 78th street":           ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 w 78th st":                  ("Abbott Northwestern General Medicine Associates", "Edina"),
+    "8100 west 78th st.":              ("Abbott Northwestern General Medicine Associates", "Edina"),
     # 2001 Blaisdell Ave S — Park Nicollet Clinic Minneapolis
     "2001 blaisdell avenue s":         ("Park Nicollet Clinic", "Minneapolis"),
     "2001 blaisdell ave s":            ("Park Nicollet Clinic", "Minneapolis"),
     # 333 Smith Ave N — United Hospital (Allina Health)
     "333 smith avenue n":              ("United Hospital", "Saint Paul"),
     "333 smith ave n":                 ("United Hospital", "Saint Paul"),
-    # 1 Veterans Dr — VA Medical Center Minneapolis
+    # 1 / One Veterans Dr — VA Medical Center Minneapolis
     "1 veterans drive":                ("VA Medical Center", "Minneapolis"),
     "1 veterans dr":                   ("VA Medical Center", "Minneapolis"),
+    "one veterans drive":              ("VA Medical Center", "Minneapolis"),
+    "one veterans dr":                 ("VA Medical Center", "Minneapolis"),
     # Lakeview Clinic — Waconia (and satellite locations)
     "333 third street sw":             ("Lakeview Clinic", "Waconia"),
     "333 3rd street sw":               ("Lakeview Clinic", "Waconia"),
@@ -183,6 +202,19 @@ MANUAL_ADDR_OVERRIDES = {
     "927 w churchill street":          ("Lakeview Hospital", "Stillwater"),
     "927 w churchill st":              ("Lakeview Hospital", "Stillwater"),
 }
+
+# Regex-based address overrides — checked against addr1 AND addr2 (addr2 used as
+# fallback when addr1 is a department/division name).
+ADDR_PATTERN_OVERRIDES = [
+    # Delaware St addresses → UMN campus
+    (re.compile(r"\bdelaware\b", re.IGNORECASE),           "University of Minnesota Health", "Minneapolis"),
+    # VCRC (Variety Club Research Center) in any address field → UMN
+    (re.compile(r"\bvcrc\b", re.IGNORECASE),               "University of Minnesota Health", "Minneapolis"),
+    # East River Parkway → UMN campus buildings
+    (re.compile(r"\beast river parkway\b", re.IGNORECASE), "University of Minnesota Health", "Minneapolis"),
+]
+
+_DEPT_NAME_RE = re.compile(r"^(department of|division of|dept\.? of)\b", re.IGNORECASE)
 
 def classify_place(place: dict) -> tuple[str, str]:
     """Return (health_system_name, city) from a Places API result."""
@@ -314,6 +346,22 @@ for i, row in df.iterrows():
         df.at[i, hs_col]      = hs
         df.at[i, hs_city_col] = hs_city
         phase1_hits += 1
+        continue
+
+    # Step 1a2: regex-based pattern overrides (addr1, with addr2 fallback when
+    # addr1 is a department/division name)
+    search_addrs = [addr1]
+    if _DEPT_NAME_RE.match(addr1):
+        search_addrs.append(addr2)
+    matched_pattern = False
+    for pattern, hs, hs_city in ADDR_PATTERN_OVERRIDES:
+        if any(pattern.search(a) for a in search_addrs if a):
+            df.at[i, hs_col]      = hs
+            df.at[i, hs_city_col] = hs_city
+            phase1_hits += 1
+            matched_pattern = True
+            break
+    if matched_pattern:
         continue
 
     # Step 1b: addr1 org detection
