@@ -97,7 +97,7 @@ def places_search(query: str) -> dict | None:
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": API_KEY,
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.types",
+        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.types,places.primaryType",
     }
     payload = {"textQuery": query, "maxResultCount": 1}
     try:
@@ -110,26 +110,40 @@ def places_search(query: str) -> dict | None:
         print(f"    API error for '{query}': {e}")
         return None
 
+MEDICAL_TYPES = {
+    "hospital", "doctor", "pharmacy", "health", "dentist",
+    "physiotherapist", "medical_lab", "drugstore",
+}
+
 def classify_place(place: dict) -> tuple[str, str]:
-    """Return (health_system_name, place_type) from a Places API result."""
+    """Return (health_system_name, city) from a Places API result."""
     if not place:
         return "", ""
-    name    = place.get("displayName", {}).get("text", "")
-    address = place.get("formattedAddress", "")
-    types   = place.get("types", [])
+    name         = place.get("displayName", {}).get("text", "")
+    address      = place.get("formattedAddress", "")
+    types        = place.get("types", [])
+    primary_type = place.get("primaryType", "")
 
-    # Extract city from formatted address (last part before country)
+    # Extract city from formatted address
     city = ""
     parts = address.split(",")
-    if len(parts) >= 2:
-        city = parts[-3].strip() if len(parts) >= 3 else parts[-2].strip()
+    if len(parts) >= 3:
+        city = parts[-3].strip()
+    elif len(parts) >= 2:
+        city = parts[-2].strip()
 
-    if MEDICAL_RE.search(name):
-        return name, city
     if REALESTATE_RE.search(name):
         return "REAL_ESTATE", city
-    if any(t in ("health", "hospital", "doctor", "pharmacy") for t in types):
+
+    # Health system or medical facility by name keywords
+    if MEDICAL_RE.search(name):
         return name, city
+
+    # Catch orgs whose names don't include obvious medical words
+    # but whose Places type is clearly medical
+    if primary_type in MEDICAL_TYPES or any(t in MEDICAL_TYPES for t in types):
+        return name, city
+
     return "", city
 
 # ── Load reference file ───────────────────────────────────────────────────────
@@ -244,27 +258,30 @@ else:
     print(f"\nPhase 1b: Name-based search for {len(p1b_rows)} unclassified providers ...")
     phase1b_hits = 0
 
-    # Detect specialty/taxonomy column if present
+    # Detect specialty/taxonomy and state columns if present
     taxonomy_col = find_col(df, ["taxonomy_descriptions", "primary_taxonomy_code",
                                   "license_type_desc", "specialty boards"])
+    state_col    = find_col(df, ["primary_state", "state", "State"])
 
     for i, row in p1b_rows.iterrows():
         first = str(row.get(first_col, "")).strip() if first_col else ""
         last  = str(row.get(last_col,  "")).strip() if last_col  else ""
         city  = str(row.get(city_col,  "")).strip() if city_col  else ""
+        state = str(row.get(state_col, "")).strip() if state_col else "MN"
 
         if not last:
             continue
 
-        # Build query: name + optional specialty + city + "physician"
+        # Specialty: use up to 3 words (not just first word) to keep query useful
         specialty = ""
         if taxonomy_col:
             tax_val = str(row.get(taxonomy_col, "")).strip()
             if tax_val and tax_val.lower() not in ("nan", ""):
-                # Take first word of taxonomy to keep query short
-                specialty = tax_val.split()[0] if tax_val else ""
+                specialty = " ".join(tax_val.split()[:3])
 
-        parts = [p for p in [first, last, specialty, city, "physician"] if p]
+        # Build query: name + optional specialty + city + state + "physician"
+        location = " ".join(p for p in [city, state] if p)
+        parts = [p for p in [first, last, specialty, location, "physician"] if p]
         query = " ".join(parts)
 
         place = places_search(query)
