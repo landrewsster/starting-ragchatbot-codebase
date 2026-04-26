@@ -146,10 +146,23 @@ MEDICAL_TYPES = {
 # Key: normalized street address (lowercase, no extra spaces).
 # Add entries here as you discover gaps from the unclassified output.
 MANUAL_ADDR_OVERRIDES = {
+    # 420 Delaware St SE — UMN research/clinical offices
     "420 delaware street se":          ("University of Minnesota Health", "Minneapolis"),
     "420 delaware st se":              ("University of Minnesota Health", "Minneapolis"),
+    "420 delaware street":             ("University of Minnesota Health", "Minneapolis"),
+    "420 delaware st":                 ("University of Minnesota Health", "Minneapolis"),
+    # 920 E 28th St — Allina Minneapolis Heart Institute (Abbott Northwestern campus)
     "920 e 28th street":               ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
     "920 e 28th st":                   ("Allina Health - Minneapolis Heart Institute", "Minneapolis"),
+    # 2001 Blaisdell Ave S — Park Nicollet Clinic Minneapolis
+    "2001 blaisdell avenue s":         ("Park Nicollet Clinic", "Minneapolis"),
+    "2001 blaisdell ave s":            ("Park Nicollet Clinic", "Minneapolis"),
+    # 333 Smith Ave N — United Hospital (Allina Health)
+    "333 smith avenue n":              ("United Hospital", "Saint Paul"),
+    "333 smith ave n":                 ("United Hospital", "Saint Paul"),
+    # 1 Veterans Dr — VA Medical Center Minneapolis
+    "1 veterans drive":                ("VA Medical Center", "Minneapolis"),
+    "1 veterans dr":                   ("VA Medical Center", "Minneapolis"),
 }
 
 def classify_place(place: dict) -> tuple[str, str]:
