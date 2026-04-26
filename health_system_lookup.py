@@ -29,17 +29,22 @@ from pathlib import Path
 
 import requests
 import pandas as pd
-import openpyxl
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-BASE        = Path.home() / "Downloads" / "CRC MDH Project"
-INPUT_FILE  = BASE / "ProviderDataFiles" / "Mailing List for Printing Services copy_columns_corrected_orgs.xlsx"
-REF_FILE    = BASE / "ProviderDataFiles" / "GHmatched_phyPA_LMH.xlsx"
-OUTPUT_FILE = BASE / "ProviderDataFiles" / "Mailing List for Printing Services copy_columns_corrected_orgs_hs.xlsx"
+BASE          = Path.home() / "Downloads" / "CRC MDH Project"
+MAILING_BASE  = BASE / "Current Mailing Files"
+PROVIDER_BASE = BASE / "ProviderDataFiles"
 
-# Column indices (0-based) for health_system and health_system_city in input file
-COL_HEALTH_SYSTEM      = 14   # column O
-COL_HEALTH_SYSTEM_CITY = 15   # column P
+INPUT_FILE  = MAILING_BASE / "gold_vs_mailing_check.xlsx"
+INPUT_SHEET = "mailed_providers"
+
+# Both files contribute to the address → health system reference lookup
+REF_FILES = [
+    PROVIDER_BASE / "GHmatched_phyPA_LMH.xlsx",
+    PROVIDER_BASE / "Mailing List for Printing Services copy_columns_corrected_orgs.xlsx",
+]
+
+OUTPUT_FILE = MAILING_BASE / "mailed_providers_hs.xlsx"
 
 # ── API config ───────────────────────────────────────────────────────────────
 API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
@@ -146,60 +151,80 @@ def classify_place(place: dict) -> tuple[str, str]:
 
     return "", city
 
-# ── Load reference file ───────────────────────────────────────────────────────
-print(f"\nLoading reference file: {REF_FILE.name}")
-try:
-    ref_df = pd.read_excel(REF_FILE, dtype=str)
-except FileNotFoundError:
-    print(f"  WARNING: reference file not found, skipping Phase 1 lookup")
-    ref_df = None
-
+# ── Load reference files ──────────────────────────────────────────────────────
 ref_lookup = {}   # norm_addr → (health_system, health_system_city)
-if ref_df is not None:
-    hs_col   = find_col(ref_df, ["Health System Name"])
-    city_col = find_col(ref_df, ["Health System City"])
-    for addr_col in ["work_address_1", "mailing_address_1", "home_address_1", "primary_address_1"]:
-        col = find_col(ref_df, [addr_col])
+
+print(f"\nLoading reference files ...")
+for ref_path in REF_FILES:
+    print(f"  {ref_path.name}")
+    try:
+        ref_df = pd.read_excel(ref_path, dtype=str)
+    except FileNotFoundError:
+        print(f"    WARNING: not found, skipping")
+        continue
+
+    ref_df = ref_df.fillna("")
+
+    # Detect health system columns — GHmatched uses "Health System Name/City";
+    # mailing list file uses "health_system" / "health_system_city" (or col index 14/15)
+    hs_c   = find_col(ref_df, ["Health System Name", "health_system", "HealthSystem"])
+    city_c = find_col(ref_df, ["Health System City", "health_system_city", "HealthSystemCity"])
+    if not hs_c and len(ref_df.columns) > 14:
+        hs_c   = ref_df.columns[14]
+    if not city_c and len(ref_df.columns) > 15:
+        city_c = ref_df.columns[15]
+
+    if not hs_c:
+        print(f"    WARNING: no health system column found, skipping")
+        continue
+
+    added = 0
+    for addr_candidate in ["work_address_1", "mailing_address_1", "home_address_1",
+                            "primary_address_1", "Alternate 1 Address", "npi_primary_address_1"]:
+        col = find_col(ref_df, [addr_candidate])
         if not col:
             continue
         for _, row in ref_df.iterrows():
-            hs   = str(row[hs_col]).strip()  if hs_col   and not pd.isna(row.get(hs_col, ""))   else ""
-            city = str(row[city_col]).strip() if city_col and not pd.isna(row.get(city_col, "")) else ""
-            if hs:
+            hs   = str(row[hs_c]).strip()
+            city = str(row[city_c]).strip() if city_c else ""
+            if hs and hs.lower() not in ("nan", ""):
                 key = norm(row[col])
                 if key and key not in ref_lookup:
                     ref_lookup[key] = (hs, city)
-    print(f"  {len(ref_lookup)} address entries in reference lookup")
+                    added += 1
+    print(f"    +{added} address entries  (total: {len(ref_lookup)})")
 
-# ── Load input file with openpyxl (preserves blank-header columns) ────────────
-print(f"\nLoading input file: {INPUT_FILE.name}")
-wb = openpyxl.load_workbook(INPUT_FILE)
-ws = wb.active
-
-headers = [str(cell.value) if cell.value is not None else f"__col{i}__"
-           for i, cell in enumerate(ws[1])]
-
-rows_data = []
-for row in ws.iter_rows(min_row=2, values_only=True):
-    rows_data.append(list(row))
-
-df = pd.DataFrame(rows_data, columns=headers)
+# ── Load input (mailed_providers sheet) ──────────────────────────────────────
+print(f"\nLoading input: {INPUT_FILE.name}  sheet='{INPUT_SHEET}'")
+try:
+    df = pd.read_excel(INPUT_FILE, sheet_name=INPUT_SHEET, dtype=str)
+except FileNotFoundError:
+    sys.exit(f"ERROR: {INPUT_FILE} not found — run check_gold_vs_mailing.py first")
+df = df.fillna("")
 print(f"  {len(df)} rows | {len(df.columns)} columns")
+
+# Add output columns if not already present
+if "health_system" not in df.columns:
+    df["health_system"] = ""
+if "health_system_city" not in df.columns:
+    df["health_system_city"] = ""
+
+hs_col      = "health_system"
+hs_city_col = "health_system_city"
 
 # Detect key columns
 last_col   = find_col(df, ["last_name", "LastName"])
 first_col  = find_col(df, ["first_name", "FirstName"])
-addr1_col  = find_col(df, ["primary_address_1", "work_address_1", "Alternate 1 Address"])
-addr2_col  = find_col(df, ["primary_address_2", "work_address_2"])
+addr1_col  = find_col(df, ["primary_address_1", "work_address_1", "Alternate 1 Address",
+                            "npi_primary_address_1", "_addr1"])
+addr2_col  = find_col(df, ["primary_address_2", "work_address_2", "npi_primary_address_2"])
 addr3_col  = find_col(df, ["address_line3", "primary_address_3"])
-city_col   = find_col(df, ["primary_city", "work_city", "City"])
-zip_col    = find_col(df, ["zip5", "primary_postal_code", "ZIP+4"])
-hs_col     = headers[COL_HEALTH_SYSTEM]
-hs_city_col = headers[COL_HEALTH_SYSTEM_CITY]
+city_col   = find_col(df, ["primary_city", "work_city", "City", "npi_primary_city", "_city"])
+zip_col    = find_col(df, ["zip5", "primary_postal_code", "ZIP+4", "npi_primary_zip", "_zip"])
 
 print(f"  Name: last={last_col} first={first_col}")
 print(f"  Addr: addr1={addr1_col} city={city_col} zip={zip_col}")
-print(f"  Output cols: hs={hs_col} hs_city={hs_city_col}")
+print(f"  Output cols: {hs_col}, {hs_city_col}")
 
 # ── Phase 1: Reference file lookup ───────────────────────────────────────────
 print(f"\nPhase 1: Reference file lookup ...")
@@ -348,15 +373,8 @@ else:
 # ── Phase 3: Write results ────────────────────────────────────────────────────
 print(f"\nPhase 3: Writing results ...")
 
-# Write back to openpyxl workbook to preserve all original columns
-hs_col_idx      = COL_HEALTH_SYSTEM + 1      # openpyxl is 1-based
-hs_city_col_idx = COL_HEALTH_SYSTEM_CITY + 1
-
-for i, row in df.iterrows():
-    ws.cell(row=i + 2, column=hs_col_idx,      value=row[hs_col])
-    ws.cell(row=i + 2, column=hs_city_col_idx, value=row[hs_city_col])
-
-wb.save(OUTPUT_FILE)
+with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
+    df.to_excel(writer, sheet_name="mailed_providers_hs", index=False)
 print(f"  Saved: {OUTPUT_FILE.name}")
 
 # Summary
