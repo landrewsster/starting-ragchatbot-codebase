@@ -163,10 +163,41 @@ city_col  = find_col(df, ["_check_city", "primary_city", "City", "work_city"])
 
 print(f"  addr1={addr1_col}  addr2={addr2_col}  city={city_col}")
 
+# ── Step 0: apply user annotations from review column ────────────────────────
+# If "Opt. Endorsement Line" has a value the user wrote during review, treat it
+# as a confirmed health_system and exclude that row from likely_clinic_review.
+USER_OVERRIDE_COL = "Opt. Endorsement Line"
+user_col = find_col(df, [USER_OVERRIDE_COL])
+df["_user_reviewed"] = ""
+
+if user_col:
+    user_hits = 0
+    for i, row in df.iterrows():
+        val = safe_addr(row.get(user_col))
+        if not val:
+            continue
+        # Normalize common label variants
+        low = val.lower().strip()
+        if low in ("solo practice", "solo"):
+            val = "Solo Practice"
+        elif low in ("group practice", "group"):
+            val = "Group Practice"
+        df.at[i, HS_COL]           = val
+        df.at[i, "_user_reviewed"] = "yes"
+        city = safe_addr(row.get(city_col)) if city_col else ""
+        if not norm(row.get(HS_CITY_COL)):
+            df.at[i, HS_CITY_COL] = city
+        user_hits += 1
+    print(f"User annotations applied ({USER_OVERRIDE_COL!r}): {user_hits}")
+else:
+    print(f"  (no '{USER_OVERRIDE_COL}' column found — skipping Step 0)")
+
 # ── Step 1: clear bad and individual-provider classifications ─────────────────
 cleared_bad = 0
 cleared_ind = 0
 for i, row in df.iterrows():
+    if row.get("_user_reviewed") == "yes":
+        continue  # never clear user-confirmed classifications
     hs = safe_addr(row[HS_COL])
     if not hs:
         continue
@@ -304,7 +335,10 @@ for label in ["Group Practice", "Solo Practice"]:
 # ── Write ─────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 solo_group_df  = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
-likely_clin_df = df[df["_likely_clinic"] == "likely_clinic"].copy()
+likely_clin_df = df[
+    (df["_likely_clinic"] == "likely_clinic") &
+    (df["_user_reviewed"] != "yes")
+].copy()
 hs_df          = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
 
 # Build health system summary table
