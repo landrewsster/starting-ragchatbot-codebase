@@ -442,9 +442,19 @@ print(f"  Total rows       : {len(df)}")
 print(f"  Classified       : {classified}")
 print(f"  Unclassified     : {unclassified}")
 
-top_systems = df[df[hs_col].apply(norm) != ""][hs_col].value_counts().head(20)
-print(f"\n  Top 20 health systems:")
+classified_df = df[df[hs_col].apply(norm) != ""].copy()
+top_systems = classified_df[hs_col].value_counts().head(20)
+
+print(f"\n  Top 20 health systems  (providers | locations | cities):")
 for hs, cnt in top_systems.items():
-    print(f"    {cnt:4d}  {hs}")
+    subset = classified_df[classified_df[hs_col] == hs]
+    cities = subset[hs_city_col].apply(norm).replace("", pd.NA).dropna().unique().tolist()
+    cities = [c.title() for c in sorted(cities)]
+    n_loc  = len(cities)
+    city_str = ", ".join(cities[:5])
+    if len(cities) > 5:
+        city_str += f" (+{len(cities)-5} more)"
+    print(f"    {cnt:4d} providers | {n_loc:2d} locations | {city_str}")
+    print(f"         {hs}")
 
 print("\nDone.")
