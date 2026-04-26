@@ -300,9 +300,7 @@ def flag_address(row) -> str:
         flags.append("city_blank")
     if not digits:
         flags.append("zip_blank")
-    elif len(digits) == 9:
-        flags.append("zip_9digit")
-    elif len(digits) != 5:
+    elif len(digits) not in (5, 9):
         flags.append("zip_invalid")
     if state and state not in ("MN", "WI"):
         flags.append(f"state_not_mn({state})")
@@ -326,6 +324,48 @@ print(f"  Duplicate NPI in gold        : {len(dup_gold)}")
 print(f"  Gold providers NOT mailed    : {len(not_mailed)}")
 print(f"  Main mailing NOT in gold     : {len(main_missing_df)}")
 print(f"  Addition NOT in gold         : {len(add_missing_df)}")
+
+# ── Check if any removed duplicates were mailed ───────────────────────────────
+print(f"\nChecking removed duplicates against mailed list ...")
+removed_but_mailed_df = pd.DataFrame()
+try:
+    removed_dupes = pd.read_excel(GOLD_FILE, sheet_name="removed_duplicates",
+                                  dtype=str).fillna("")
+    # Build mailed NPI + name sets from combined mailed list
+    m_npi_col   = find_col(mailed_combined_df, ["npi", "NPI"])
+    m_fn_col    = find_col(mailed_combined_df, ["FULL NAME", "Full Name"])
+    m_last_col  = find_col(mailed_combined_df, ["last_name", "LastName"])
+    m_first_col = find_col(mailed_combined_df, ["first_name", "FirstName", "First Name"])
+
+    mailed_npi_set  = set()
+    mailed_name_set = set()
+    for _, row in mailed_combined_df.iterrows():
+        npi = norm(row[m_npi_col]) if m_npi_col else ""
+        if npi and re.fullmatch(r"\d{10}", npi):
+            mailed_npi_set.add(npi)
+        fn   = norm(row.get(m_fn_col, ""))    if m_fn_col    else ""
+        last = norm(row.get(m_last_col, ""))  if m_last_col  else ""
+        frst = norm(row.get(m_first_col, "")) if m_first_col else ""
+        for v in (fullname_variants(fn) if fn else name_variants(last, frst)):
+            mailed_name_set.add(clean_name(v))
+
+    r_npi_col   = find_col(removed_dupes, ["npi", "NPI"])
+    r_last_col  = find_col(removed_dupes, ["last_name", "LastName"])
+    r_first_col = find_col(removed_dupes, ["first_name", "FirstName"])
+
+    found_in_mailing = []
+    for _, row in removed_dupes.iterrows():
+        npi  = norm(row[r_npi_col])   if r_npi_col   else ""
+        last = norm(row[r_last_col])  if r_last_col  else ""
+        frst = norm(row[r_first_col]) if r_first_col else ""
+        in_mail = (re.fullmatch(r"\d{10}", npi) and npi in mailed_npi_set) or \
+                  any(clean_name(v) in mailed_name_set for v in name_variants(last, frst))
+        found_in_mailing.append(in_mail)
+
+    removed_but_mailed_df = removed_dupes[found_in_mailing].copy()
+    print(f"  Removed duplicates found in mailed list: {len(removed_but_mailed_df)}")
+except Exception as e:
+    print(f"  Could not load removed_duplicates sheet: {e}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE}")
@@ -358,15 +398,17 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     bad_addr_df.to_excel(writer,        sheet_name="bad_addresses",           index=False)
     not_mailed.to_excel(writer,       sheet_name="not_in_any_mailing",      index=False)
     gold.to_excel(writer,             sheet_name="gold_all_flagged",        index=False)
-    dup_gold.to_excel(writer,         sheet_name="gold_duplicate_npi",      index=False)
-    main_missing_df.to_excel(writer,  sheet_name="main_mailing_not_in_gold",index=False)
-    add_missing_df.to_excel(writer,   sheet_name="addition_not_in_gold",    index=False)
+    dup_gold.to_excel(writer,              sheet_name="gold_duplicate_npi",      index=False)
+    removed_but_mailed_df.to_excel(writer, sheet_name="removed_dupes_mailed",    index=False)
+    main_missing_df.to_excel(writer,       sheet_name="main_mailing_not_in_gold",index=False)
+    add_missing_df.to_excel(writer,        sheet_name="addition_not_in_gold",    index=False)
     print(f"  summary                  : {len(summary_df)} rows")
     print(f"  mailed_providers         : {len(mailed_combined_df)}")
     print(f"  bad_addresses            : {len(bad_addr_df)}")
     print(f"  not_in_any_mailing       : {len(not_mailed)}")
     print(f"  gold_all_flagged         : {len(gold)}")
     print(f"  gold_duplicate_npi       : {len(dup_gold)}")
+    print(f"  removed_dupes_mailed     : {len(removed_but_mailed_df)}")
     print(f"  main_mailing_not_in_gold : {len(main_missing_df)}")
     print(f"  addition_not_in_gold     : {len(add_missing_df)}")
 
