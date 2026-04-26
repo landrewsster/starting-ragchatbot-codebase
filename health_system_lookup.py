@@ -409,6 +409,69 @@ else:
     print(f"  Phase 2 classified: {phase2_hits}")
     print(f"  Still unclassified: {df[df[hs_col].apply(norm) == ''].shape[0]}")
 
+# ── Phase 2.5: Address propagation within dataset ─────────────────────────────
+# If a classified row shares an address with an unclassified row, copy the
+# health system. Shared addresses are always clinics, not homes.
+print(f"\nPhase 2.5: Address propagation ...")
+
+_SUITE_RE = re.compile(
+    r"\b(suite|ste|floor|fl\b|room|rm\b|apt|unit\b|bldg|#)\s*[\w-]+",
+    re.IGNORECASE,
+)
+
+def addr_key(row) -> str:
+    addr = safe_addr(row.get(addr1_col)) if addr1_col else ""
+    city = safe_addr(row.get(city_col))  if city_col  else ""
+    # Strip inline suite info so "123 Main St Ste 100" and "123 Main St Ste 200"
+    # both map to the same base address key
+    addr_base = _SUITE_RE.sub("", addr).strip().rstrip(",").strip()
+    return norm(addr_base) + "|" + norm(city)
+
+# Build lookup from classified rows
+addr_hs_votes: dict[str, dict] = {}
+for _, row in df[df[hs_col].apply(norm) != ""].iterrows():
+    key = addr_key(row)
+    if not key or key == "|":
+        continue
+    hs      = str(row[hs_col]).strip()
+    hs_city = str(row[hs_city_col]).strip()
+    if key not in addr_hs_votes:
+        addr_hs_votes[key] = {}
+    addr_hs_votes[key][(hs, hs_city)] = addr_hs_votes[key].get((hs, hs_city), 0) + 1
+
+# Pick most common (hs, city) per address
+addr_best: dict[str, tuple] = {
+    k: max(v, key=v.get) for k, v in addr_hs_votes.items()
+}
+
+prop_hits = 0
+for i, row in df[df[hs_col].apply(norm) == ""].iterrows():
+    key = addr_key(row)
+    if key in addr_best:
+        hs, hs_city = addr_best[key]
+        df.at[i, hs_col]      = hs
+        df.at[i, hs_city_col] = hs_city
+        prop_hits += 1
+
+print(f"  Propagation classified: {prop_hits}")
+print(f"  Still unclassified    : {df[df[hs_col].apply(norm) == ''].shape[0]}")
+
+# Flag remaining unclassified rows: suite in addr2 = likely clinic
+_suite_flag = re.compile(r"\b(suite|ste|floor|fl\b|room|rm\b|apt|unit\b|#)\b", re.IGNORECASE)
+if addr2_col:
+    df["_likely_clinic"] = df.apply(
+        lambda r: (
+            norm(r[hs_col]) == "" and
+            bool(_suite_flag.search(safe_addr(r.get(addr2_col))))
+        ),
+        axis=1,
+    ).map({True: "likely_clinic", False: ""})
+else:
+    df["_likely_clinic"] = ""
+
+n_likely = (df["_likely_clinic"] == "likely_clinic").sum()
+print(f"  Unclassified with suite (likely clinic): {n_likely}")
+
 # ── Cleanup: clear non-medical classifications ────────────────────────────────
 _BAD_HS_RE = re.compile(
     r"^(nan|none|n/?a|home)\s*$|"
