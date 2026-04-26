@@ -251,21 +251,6 @@ for label in ["Group Practice", "Solo Practice"]:
     if city_str:
         print(f"    {city_str}")
 
-# Summary — exclude Solo/Group from the health system list
-hs_df = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
-all_systems = hs_df[HS_COL].value_counts()
-print(f"\n  Health systems  (providers | locations | cities):")
-for hs, cnt in all_systems.items():
-    subset = hs_df[hs_df[HS_COL] == hs]
-    cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
-    cities = [c.title() for c in sorted(cities)]
-    n_loc  = len(cities)
-    city_str = ", ".join(cities[:5])
-    if len(cities) > 5:
-        city_str += f" (+{len(cities)-5} more)"
-    print(f"    {cnt:4d} providers | {n_loc:2d} locations | {city_str}")
-    print(f"         {hs}")
-
 # ── Write ─────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 solo_group_df   = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
@@ -277,5 +262,19 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  mailed_providers_hs   : {len(df)} rows")
     print(f"  solo_group_review     : {len(solo_group_df)} rows")
     print(f"  likely_clinic_review  : {len(likely_clin_df)} rows")
+
+# ── Top 30 health systems — printed last so it's always visible ───────────────
+hs_df = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
+top30 = hs_df[HS_COL].value_counts().head(30)
+print(f"\nTop 30 health systems  (providers | locations | cities):")
+for hs, cnt in top30.items():
+    subset = hs_df[hs_df[HS_COL] == hs]
+    cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
+    cities = [c.title() for c in sorted(cities)]
+    city_str = ", ".join(cities[:5])
+    if len(cities) > 5:
+        city_str += f" (+{len(cities)-5} more)"
+    print(f"  {cnt:4d} providers | {len(cities):2d} locations | {city_str}")
+    print(f"       {hs}")
 
 print("\nDone.")
