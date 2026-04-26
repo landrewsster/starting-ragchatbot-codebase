@@ -43,6 +43,25 @@ MANUAL_ADDR_OVERRIDES = {
     # 1 Veterans Dr — VA Medical Center Minneapolis
     "1 veterans drive":                ("VA Medical Center", "Minneapolis"),
     "1 veterans dr":                   ("VA Medical Center", "Minneapolis"),
+    # Lakeview Clinic — Waconia (and satellite locations)
+    "333 third street sw":             ("Lakeview Clinic", "Waconia"),
+    "333 3rd street sw":               ("Lakeview Clinic", "Waconia"),
+    "333 3rd st sw":                   ("Lakeview Clinic", "Waconia"),
+    # Welia Health — Mora (formerly Kanabec Hospital area)
+    "301 highway 65 n":                ("Welia Health", "Mora"),
+    "301 hwy 65 n":                    ("Welia Health", "Mora"),
+    # St. Cloud Hospital — CentraCare Health
+    "1406 6th avenue n":               ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
+    "1406 6th ave n":                  ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
+    # Grand Itasca Clinic and Hospital — Grand Rapids
+    "1601 golf course road":           ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
+    "1601 golf course rd":             ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
+    # Perham Health
+    "1000 coney street w":             ("Perham Health", "Perham"),
+    "1000 coney st w":                 ("Perham Health", "Perham"),
+    # Lakeview Hospital — Stillwater (HealthPartners)
+    "927 w churchill street":          ("Lakeview Hospital", "Stillwater"),
+    "927 w churchill st":              ("Lakeview Hospital", "Stillwater"),
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -164,13 +183,27 @@ if addr2_col:
 else:
     df["_likely_clinic"] = ""
 
-n_likely    = (df["_likely_clinic"] == "likely_clinic").sum()
+n_likely     = (df["_likely_clinic"] == "likely_clinic").sum()
 unclassified = (df[HS_COL].apply(norm) == "").sum()
 classified   = len(df) - unclassified
 print(f"\nResults:")
 print(f"  Classified  : {classified}")
 print(f"  Unclassified: {unclassified}")
 print(f"  Likely clinic (unclassified with suite): {n_likely}")
+
+classified_df = df[df[HS_COL].apply(norm) != ""].copy()
+all_systems = classified_df[HS_COL].value_counts()
+print(f"\n  All health systems  (providers | locations | cities):")
+for hs, cnt in all_systems.items():
+    subset = classified_df[classified_df[HS_COL] == hs]
+    cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
+    cities = [c.title() for c in sorted(cities)]
+    n_loc  = len(cities)
+    city_str = ", ".join(cities[:5])
+    if len(cities) > 5:
+        city_str += f" (+{len(cities)-5} more)"
+    print(f"    {cnt:4d} providers | {n_loc:2d} locations | {city_str}")
+    print(f"         {hs}")
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")

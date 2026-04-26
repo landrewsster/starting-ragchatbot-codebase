@@ -163,6 +163,25 @@ MANUAL_ADDR_OVERRIDES = {
     # 1 Veterans Dr — VA Medical Center Minneapolis
     "1 veterans drive":                ("VA Medical Center", "Minneapolis"),
     "1 veterans dr":                   ("VA Medical Center", "Minneapolis"),
+    # Lakeview Clinic — Waconia (and satellite locations)
+    "333 third street sw":             ("Lakeview Clinic", "Waconia"),
+    "333 3rd street sw":               ("Lakeview Clinic", "Waconia"),
+    "333 3rd st sw":                   ("Lakeview Clinic", "Waconia"),
+    # Welia Health — Mora (formerly Kanabec Hospital area)
+    "301 highway 65 n":                ("Welia Health", "Mora"),
+    "301 hwy 65 n":                    ("Welia Health", "Mora"),
+    # St. Cloud Hospital — CentraCare Health
+    "1406 6th avenue n":               ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
+    "1406 6th ave n":                  ("CentraCare Health - St. Cloud Hospital", "Saint Cloud"),
+    # Grand Itasca Clinic and Hospital — Grand Rapids
+    "1601 golf course road":           ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
+    "1601 golf course rd":             ("Grand Itasca Clinic and Hospital", "Grand Rapids"),
+    # Perham Health
+    "1000 coney street w":             ("Perham Health", "Perham"),
+    "1000 coney st w":                 ("Perham Health", "Perham"),
+    # Lakeview Hospital — Stillwater (HealthPartners)
+    "927 w churchill street":          ("Lakeview Hospital", "Stillwater"),
+    "927 w churchill st":              ("Lakeview Hospital", "Stillwater"),
 }
 
 def classify_place(place: dict) -> tuple[str, str]:
@@ -538,10 +557,10 @@ print(f"  Classified       : {classified}")
 print(f"  Unclassified     : {unclassified}")
 
 classified_df = df[df[hs_col].apply(norm) != ""].copy()
-top_systems = classified_df[hs_col].value_counts().head(20)
+all_systems = classified_df[hs_col].value_counts()
 
-print(f"\n  Top 20 health systems  (providers | locations | cities):")
-for hs, cnt in top_systems.items():
+print(f"\n  All health systems  (providers | locations | cities):")
+for hs, cnt in all_systems.items():
     subset = classified_df[classified_df[hs_col] == hs]
     cities = subset[hs_city_col].apply(norm).replace("", pd.NA).dropna().unique().tolist()
     cities = [c.title() for c in sorted(cities)]
