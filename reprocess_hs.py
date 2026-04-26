@@ -281,8 +281,8 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  likely_clinic_review  : {len(likely_clin_df)} rows")
 
 # ── Top 30 health systems — printed last so it's always visible ───────────────
-top30 = hs_df[HS_COL].value_counts().head(50)
-print(f"\nTop 50 health systems  (providers | locations | cities):")
+top30 = hs_df[HS_COL].value_counts().head(75)
+print(f"\nTop 75 health systems  (providers | locations | cities):")
 for hs, cnt in top30.items():
     subset = hs_df[hs_df[HS_COL] == hs]
     cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
