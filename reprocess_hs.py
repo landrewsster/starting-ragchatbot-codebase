@@ -239,6 +239,18 @@ print(f"  Group Practice : {group_count}")
 print(f"  Solo Practice  : {solo_count}")
 print(f"  Likely clinic (needs review): {n_likely}")
 
+for label in ["Group Practice", "Solo Practice"]:
+    subset = df[df[HS_COL] == label]
+    cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
+    cities = sorted([c.title() for c in cities if c])
+    n_loc  = len(cities)
+    city_str = ", ".join(cities[:8])
+    if len(cities) > 8:
+        city_str += f" (+{len(cities)-8} more)"
+    print(f"\n  {label}: {len(subset)} providers across {n_loc} cities")
+    if city_str:
+        print(f"    {city_str}")
+
 # Summary — exclude Solo/Group from the health system list
 hs_df = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
 all_systems = hs_df[HS_COL].value_counts()
