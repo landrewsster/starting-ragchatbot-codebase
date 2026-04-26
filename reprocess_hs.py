@@ -253,18 +253,34 @@ for label in ["Group Practice", "Solo Practice"]:
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
-solo_group_df   = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
-likely_clin_df  = df[df["_likely_clinic"] == "likely_clinic"].copy()
+solo_group_df  = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
+likely_clin_df = df[df["_likely_clinic"] == "likely_clinic"].copy()
+hs_df          = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
+
+# Build health system summary table
+hs_summary_rows = []
+for hs, cnt in hs_df[HS_COL].value_counts().items():
+    subset = hs_df[hs_df[HS_COL] == hs]
+    cities = sorted({c.title() for c in subset[HS_CITY_COL].apply(norm) if c})
+    hs_summary_rows.append({
+        "health_system":    hs,
+        "provider_count":   cnt,
+        "location_count":   len(cities),
+        "cities":           ", ".join(cities),
+    })
+hs_summary_df = pd.DataFrame(hs_summary_rows)
+
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     df.to_excel(writer, sheet_name="mailed_providers_hs", index=False)
+    hs_summary_df.to_excel(writer, sheet_name="health_system_summary", index=False)
     solo_group_df.to_excel(writer, sheet_name="solo_group_review", index=False)
     likely_clin_df.to_excel(writer, sheet_name="likely_clinic_review", index=False)
     print(f"  mailed_providers_hs   : {len(df)} rows")
+    print(f"  health_system_summary : {len(hs_summary_df)} health systems")
     print(f"  solo_group_review     : {len(solo_group_df)} rows")
     print(f"  likely_clinic_review  : {len(likely_clin_df)} rows")
 
 # ── Top 30 health systems — printed last so it's always visible ───────────────
-hs_df = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
 top30 = hs_df[HS_COL].value_counts().head(30)
 print(f"\nTop 30 health systems  (providers | locations | cities):")
 for hs, cnt in top30.items():
