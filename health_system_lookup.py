@@ -86,11 +86,28 @@ def find_col(df, candidates):
 def is_po_box(addr: str) -> bool:
     return bool(re.match(r"^\s*p\.?\s*o\.?\s*box\b", addr, re.IGNORECASE))
 
+# Patterns that look like they start with a letter but are NOT org names
+_NOT_ORG_RE = re.compile(
+    r"^(nan|none|n/?a|home)\s*$|"
+    r"^(suite|ste|floor|fl\b|room|rm\b|apt|unit\b|bldg|building|"
+    r"c/o|attention|attn|united states postal|usps|post office)\b",
+    re.IGNORECASE,
+)
+
+def safe_addr(val) -> str:
+    """Return address string, treating NaN/None/'nan' as empty."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    s = str(val).strip()
+    return "" if s.lower() == "nan" else s
+
 def is_org_name(addr1: str) -> bool:
-    """Return True if addr1 looks like an org name (starts with letter, not PO Box)."""
+    """Return True if addr1 looks like an org name (starts with letter, not PO Box, not suite/floor/etc.)."""
     if not addr1:
         return False
     if is_po_box(addr1):
+        return False
+    if _NOT_ORG_RE.match(addr1.strip()):
         return False
     return bool(re.match(r"^[a-zA-Z]", addr1.strip()))
 
@@ -235,10 +252,10 @@ for i, row in df.iterrows():
     if norm(row.get(hs_col, "")):
         continue
 
-    addr1 = str(row.get(addr1_col, "")).strip() if addr1_col else ""
-    addr2 = str(row.get(addr2_col, "")).strip() if addr2_col else ""
-    addr3 = str(row.get(addr3_col, "")).strip() if addr3_col else ""
-    city  = str(row.get(city_col,  "")).strip() if city_col  else ""
+    addr1 = safe_addr(row.get(addr1_col)) if addr1_col else ""
+    addr2 = safe_addr(row.get(addr2_col)) if addr2_col else ""
+    addr3 = safe_addr(row.get(addr3_col)) if addr3_col else ""
+    city  = safe_addr(row.get(city_col))  if city_col  else ""
 
     # Step 1a: addr1 org detection
     if is_org_name(addr1):
@@ -368,6 +385,24 @@ else:
             phase2_hits += 1
 
     print(f"  Phase 2 classified: {phase2_hits}")
+    print(f"  Still unclassified: {df[df[hs_col].apply(norm) == ''].shape[0]}")
+
+# ── Cleanup: clear non-medical classifications ────────────────────────────────
+_BAD_HS_RE = re.compile(
+    r"^(nan|none|n/?a|home)\s*$|"
+    r"^(suite|ste|floor|fl\b|room|rm\b|apt|unit\b|bldg|building|"
+    r"c/o|attention|attn|united states postal|usps|post office)\b",
+    re.IGNORECASE,
+)
+cleared = 0
+for i, row in df.iterrows():
+    hs = safe_addr(row[hs_col])
+    if hs and _BAD_HS_RE.match(hs):
+        df.at[i, hs_col]      = ""
+        df.at[i, hs_city_col] = ""
+        cleared += 1
+if cleared:
+    print(f"\nCleanup: cleared {cleared} non-medical classifications")
     print(f"  Still unclassified: {df[df[hs_col].apply(norm) == ''].shape[0]}")
 
 # ── Phase 3: Write results ────────────────────────────────────────────────────
