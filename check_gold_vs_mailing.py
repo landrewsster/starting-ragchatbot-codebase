@@ -284,6 +284,55 @@ mailed_combined_df["_check_state"] = mailed_combined_df.apply(
 mailed_combined_df["_check_zip"]   = mailed_combined_df.apply(
     lambda r: coalesce_col(r, "ZIP+4", "zip5", "zip", "Zip",
                                "primary_postal_code", "npi_primary_zip"), axis=1)
+mailed_combined_df["_check_npi"]   = mailed_combined_df.apply(
+    lambda r: coalesce_col(r, "npi", "NPI"), axis=1)
+
+# ── Deduplicate mailed_providers ──────────────────────────────────────────────
+print(f"\nDeduplicating mailed_providers ...")
+
+def mailed_dedup_key(row) -> str:
+    npi = re.sub(r"\D", "", str(row.get("_check_npi", "")))
+    if re.fullmatch(r"\d{10}", npi):
+        return f"npi:{npi}"
+    fn   = norm(coalesce_col(row, "FULL NAME", "Full Name"))
+    last = norm(coalesce_col(row, "last_name", "LastName"))
+    frst = norm(coalesce_col(row, "first_name", "FirstName", "First Name"))
+    if fn:
+        fn_clean = STRIP_SUFFIXES.sub("", fn).strip()
+        if "," in fn_clean:
+            parts = fn_clean.split(",", 1)
+            last  = parts[0].strip()
+            frst  = parts[1].strip().split()[0] if parts[1].strip() else ""
+        else:
+            words = fn_clean.split()
+            last, frst = (words[-1], words[0]) if len(words) >= 2 else (fn_clean, "")
+    if last:
+        return f"name:{last} {frst.split()[0] if frst else ''}".strip()
+    return ""
+
+def count_nonempty(row) -> int:
+    return sum(1 for v in row if str(v).strip() not in ("", "nan", "NaN"))
+
+mailed_combined_df["_dedup_key"]   = mailed_combined_df.apply(mailed_dedup_key, axis=1)
+mailed_combined_df["_field_count"] = mailed_combined_df.apply(count_nonempty, axis=1)
+
+from collections import defaultdict
+key_to_indices: dict = defaultdict(list)
+for idx, row in mailed_combined_df.iterrows():
+    k = row["_dedup_key"]
+    if k:
+        key_to_indices[k].append(idx)
+
+dup_indices: set = set()
+for key, indices in key_to_indices.items():
+    if len(indices) > 1:
+        best = max(indices, key=lambda i: mailed_combined_df.at[i, "_field_count"])
+        dup_indices.update(i for i in indices if i != best)
+
+mailed_dups_df    = mailed_combined_df.loc[sorted(dup_indices)].copy()
+mailed_deduped_df = mailed_combined_df.drop(index=sorted(dup_indices)).reset_index(drop=True)
+print(f"  Duplicate rows removed : {len(mailed_dups_df)}")
+print(f"  Unique mailed providers: {len(mailed_deduped_df)}")
 
 # ── Flag bad addresses ────────────────────────────────────────────────────────
 def flag_address(row) -> str:
@@ -319,6 +368,8 @@ print(f"  Gold reference total         : {len(gold)}")
 print(f"  In main mailing (241498)     : {len(main_df)}")
 print(f"  In addition mailing          : {len(add_df)}")
 print(f"  Total mailed rows            : {len(mailed_combined_df)}")
+print(f"  Mailed duplicates removed    : {len(mailed_dups_df)}")
+print(f"  Unique mailed providers      : {len(mailed_deduped_df)}")
 print(f"  Bad address flags            : {len(bad_addr_df)}")
 print(f"  Duplicate NPI in gold        : {len(dup_gold)}")
 print(f"  Gold providers NOT mailed    : {len(not_mailed)}")
@@ -394,8 +445,9 @@ summary_df = pd.DataFrame(summary_rows)
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     summary_df.to_excel(writer,       sheet_name="summary",                index=False)
-    mailed_combined_df.to_excel(writer, sheet_name="mailed_providers",        index=False)
-    bad_addr_df.to_excel(writer,        sheet_name="bad_addresses",           index=False)
+    mailed_deduped_df.to_excel(writer, sheet_name="mailed_providers",        index=False)
+    mailed_dups_df.to_excel(writer,    sheet_name="mailed_duplicates",       index=False)
+    bad_addr_df.to_excel(writer,       sheet_name="bad_addresses",           index=False)
     not_mailed.to_excel(writer,       sheet_name="not_in_any_mailing",      index=False)
     gold.to_excel(writer,             sheet_name="gold_all_flagged",        index=False)
     dup_gold.to_excel(writer,              sheet_name="gold_duplicate_npi",      index=False)
@@ -403,7 +455,8 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     main_missing_df.to_excel(writer,       sheet_name="main_mailing_not_in_gold",index=False)
     add_missing_df.to_excel(writer,        sheet_name="addition_not_in_gold",    index=False)
     print(f"  summary                  : {len(summary_df)} rows")
-    print(f"  mailed_providers         : {len(mailed_combined_df)}")
+    print(f"  mailed_providers         : {len(mailed_deduped_df)}")
+    print(f"  mailed_duplicates        : {len(mailed_dups_df)}")
     print(f"  bad_addresses            : {len(bad_addr_df)}")
     print(f"  not_in_any_mailing       : {len(not_mailed)}")
     print(f"  gold_all_flagged         : {len(gold)}")
