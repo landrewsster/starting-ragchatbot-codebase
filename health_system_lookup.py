@@ -51,7 +51,12 @@ API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
 API_DELAY  = 0.15   # seconds between API calls
 
-# ── Classification patterns ──────────────────────────────────────────────────
+# ── Name/classification patterns ─────────────────────────────────────────────
+STRIP_SUFFIXES = re.compile(
+    r"\b(jr|sr|ii|iii|iv|md|do|dpm|dds|phd|np|pa|rn|aprn|cnp|cnm|cns|esq)\.?\s*$",
+    re.IGNORECASE,
+)
+
 MEDICAL_RE = re.compile(
     r"clinic|hospital|medical|health|care|wellness|rehab|therapy|therapist|"
     r"surgery|surgical|ortho|cardio|oncol|pediatr|neuro|psych|mental|dental|"
@@ -229,18 +234,21 @@ if "health_system_city" not in df.columns:
 hs_col      = "health_system"
 hs_city_col = "health_system_city"
 
-# Detect key columns
-last_col   = find_col(df, ["last_name", "LastName"])
-first_col  = find_col(df, ["first_name", "FirstName"])
-addr1_col  = find_col(df, ["primary_address_1", "work_address_1", "Alternate 1 Address",
-                            "npi_primary_address_1", "_addr1"])
-addr2_col  = find_col(df, ["primary_address_2", "work_address_2", "npi_primary_address_2"])
-addr3_col  = find_col(df, ["address_line3", "primary_address_3"])
-city_col   = find_col(df, ["primary_city", "work_city", "City", "npi_primary_city", "_city"])
-zip_col    = find_col(df, ["zip5", "primary_postal_code", "ZIP+4", "npi_primary_zip", "_zip"])
+# Use coalesced _check_* columns written by check_gold_vs_mailing.py —
+# these cover both the main mailing file and addition file column name variants.
+last_col      = find_col(df, ["_check_last",     "last_name",  "LastName"])
+first_col     = find_col(df, ["_check_first",    "first_name", "FirstName"])
+fullname_col  = find_col(df, ["_check_fullname", "FULL NAME",  "Full Name"])
+addr1_col     = find_col(df, ["_check_addr",  "primary_address_1", "Delivery Address",
+                               "work_address_1", "Alternate 1 Address", "npi_primary_address_1"])
+addr2_col     = find_col(df, ["primary_address_2", "work_address_2", "npi_primary_address_2"])
+addr3_col     = find_col(df, ["address_line3", "primary_address_3"])
+city_col      = find_col(df, ["_check_city",  "primary_city", "work_city", "City", "npi_primary_city"])
+zip_col       = find_col(df, ["_check_zip",   "zip5", "primary_postal_code", "ZIP+4", "npi_primary_zip"])
+state_col     = find_col(df, ["_check_state", "primary_state", "state", "State", "St"])
 
-print(f"  Name: last={last_col} first={first_col}")
-print(f"  Addr: addr1={addr1_col} city={city_col} zip={zip_col}")
+print(f"  Name: last={last_col} first={first_col} fullname={fullname_col}")
+print(f"  Addr: addr1={addr1_col} city={city_col} zip={zip_col} state={state_col}")
 print(f"  Output cols: {hs_col}, {hs_city_col}")
 
 # ── Phase 1: Reference file lookup ───────────────────────────────────────────
@@ -300,16 +308,30 @@ else:
     print(f"\nPhase 1b: Name-based search for {len(p1b_rows)} unclassified providers ...")
     phase1b_hits = 0
 
-    # Detect specialty/taxonomy and state columns if present
+    # Detect specialty/taxonomy column if present
     taxonomy_col = find_col(df, ["taxonomy_descriptions", "primary_taxonomy_code",
                                   "license_type_desc", "specialty boards"])
-    state_col    = find_col(df, ["primary_state", "state", "State"])
 
     for i, row in p1b_rows.iterrows():
-        first = str(row.get(first_col, "")).strip() if first_col else ""
-        last  = str(row.get(last_col,  "")).strip() if last_col  else ""
-        city  = str(row.get(city_col,  "")).strip() if city_col  else ""
-        state = str(row.get(state_col, "")).strip() if state_col else "MN"
+        first = safe_addr(row.get(first_col)) if first_col else ""
+        last  = safe_addr(row.get(last_col))  if last_col  else ""
+        city  = safe_addr(row.get(city_col))  if city_col  else ""
+        state = safe_addr(row.get(state_col)) if state_col else "MN"
+
+        # For main mailing file rows, last/first are blank — parse from FULL NAME
+        if not last and fullname_col:
+            fn = safe_addr(row.get(fullname_col))
+            if fn:
+                if "," in fn:
+                    parts = fn.split(",", 1)
+                    last  = STRIP_SUFFIXES.sub("", parts[0]).strip()
+                    first = STRIP_SUFFIXES.sub("", parts[1]).strip().split()[0] if parts[1].strip() else ""
+                else:
+                    words = STRIP_SUFFIXES.sub("", fn).strip().split()
+                    if len(words) >= 2:
+                        last, first = words[-1], words[0]
+                    elif words:
+                        last = words[0]
 
         if not last:
             continue

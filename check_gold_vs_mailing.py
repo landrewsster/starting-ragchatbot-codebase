@@ -284,8 +284,14 @@ mailed_combined_df["_check_state"] = mailed_combined_df.apply(
 mailed_combined_df["_check_zip"]   = mailed_combined_df.apply(
     lambda r: coalesce_col(r, "ZIP+4", "zip5", "zip", "Zip",
                                "primary_postal_code", "npi_primary_zip"), axis=1)
-mailed_combined_df["_check_npi"]   = mailed_combined_df.apply(
+mailed_combined_df["_check_npi"]      = mailed_combined_df.apply(
     lambda r: coalesce_col(r, "npi", "NPI"), axis=1)
+mailed_combined_df["_check_last"]     = mailed_combined_df.apply(
+    lambda r: coalesce_col(r, "last_name", "LastName"), axis=1)
+mailed_combined_df["_check_first"]    = mailed_combined_df.apply(
+    lambda r: coalesce_col(r, "first_name", "FirstName", "First Name"), axis=1)
+mailed_combined_df["_check_fullname"] = mailed_combined_df.apply(
+    lambda r: coalesce_col(r, "FULL NAME", "Full Name", "full_name"), axis=1)
 
 # ── Deduplicate mailed_providers ──────────────────────────────────────────────
 print(f"\nDeduplicating mailed_providers ...")
