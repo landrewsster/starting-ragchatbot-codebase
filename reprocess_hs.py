@@ -455,17 +455,18 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  health_system_summary : {len(hs_summary_df)} health systems")
     print(f"  solo_group_review     : {len(solo_group_df)} rows  ({n_suite} with suite address)")
 
-# ── Top 30 health systems — printed last so it's always visible ───────────────
-top30 = hs_df[HS_COL].value_counts().head(75)
-print(f"\nTop 75 health systems  (providers | locations | cities):")
-for hs, cnt in top30.items():
+# ── Top 50 health systems — printed last so it's always visible ───────────────
+top50 = hs_df[HS_COL].value_counts().head(50)
+print(f"\nTop 50 health systems:")
+for hs, cnt in top50.items():
     subset = hs_df[hs_df[HS_COL] == hs]
     cities = subset[HS_CITY_COL].apply(norm).replace("", pd.NA).dropna().unique().tolist()
     cities = [c.title() for c in sorted(cities)]
     city_str = ", ".join(cities[:5])
     if len(cities) > 5:
         city_str += f" (+{len(cities)-5} more)"
-    print(f"  {cnt:4d} providers | {len(cities):2d} locations | {city_str}")
-    print(f"       {hs}")
+    print(f"  {hs}")
+    print(f"    {city_str}")
+    print(f"    {cnt} providers")
 
 print("\nDone.")
