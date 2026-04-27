@@ -160,23 +160,57 @@ addr1_col = find_col(df, ["_check_addr", "primary_address_1", "Delivery Address"
                            "work_address_1", "Alternate 1 Address"])
 addr2_col = find_col(df, ["primary_address_2", "work_address_2"])
 city_col  = find_col(df, ["_check_city", "primary_city", "City", "work_city"])
+npi_col   = find_col(df, ["npi", "NPI", "national_provider_identifier"])
 
-print(f"  addr1={addr1_col}  addr2={addr2_col}  city={city_col}")
+print(f"  addr1={addr1_col}  addr2={addr2_col}  city={city_col}  npi={npi_col}")
 
 # ── Step 0: apply user annotations from review column ────────────────────────
-# If "Opt. Endorsement Line" has a value the user wrote during review, treat it
-# as a confirmed health_system and exclude that row from likely_clinic_review.
-USER_OVERRIDE_COL = "Opt. Endorsement Line"
+# "Opt. Endorsement Line" (column K) written during review → confirmed
+# health_system.  Also merges annotations written into any review sheet
+# (solo_group_review, likely_clinic_review) back into the main df by NPI.
+USER_OVERRIDE_COL  = "Opt. Endorsement Line"
+REVIEW_SHEETS      = ["solo_group_review", "likely_clinic_review"]
 user_col = find_col(df, [USER_OVERRIDE_COL])
 df["_user_reviewed"] = ""
 
-if user_col:
-    user_hits = 0
+# Merge annotations from review sheets into main df by NPI
+if npi_col:
+    xl = pd.ExcelFile(INPUT_FILE)
+    for sheet in REVIEW_SHEETS:
+        if sheet not in xl.sheet_names:
+            continue
+        rdf = xl.parse(sheet, dtype=str).fillna("")
+        r_npi  = find_col(rdf, ["npi", "NPI", "national_provider_identifier"])
+        r_user = find_col(rdf, [USER_OVERRIDE_COL])
+        if not r_npi or not r_user:
+            continue
+        ann_map = {
+            safe_addr(r[r_npi]): safe_addr(r[r_user])
+            for _, r in rdf.iterrows()
+            if safe_addr(r.get(r_npi)) and safe_addr(r.get(r_user))
+        }
+        if not ann_map:
+            continue
+        merged = 0
+        for i, row in df.iterrows():
+            if safe_addr(row.get(user_col or "")) or not safe_addr(row.get(npi_col)):
+                continue
+            ann = ann_map.get(safe_addr(row[npi_col]))
+            if ann:
+                if user_col:
+                    df.at[i, user_col] = ann
+                merged += 1
+        if merged:
+            print(f"  Merged {merged} annotations from '{sheet}' sheet")
+
+def _apply_user_col(df):
+    if not user_col:
+        return 0
+    hits = 0
     for i, row in df.iterrows():
         val = safe_addr(row.get(user_col))
         if not val:
             continue
-        # Normalize common label variants
         low = val.lower().strip()
         if low in ("solo practice", "solo"):
             val = "Solo Practice"
@@ -187,7 +221,11 @@ if user_col:
         city = safe_addr(row.get(city_col)) if city_col else ""
         if not norm(row.get(HS_CITY_COL)):
             df.at[i, HS_CITY_COL] = city
-        user_hits += 1
+        hits += 1
+    return hits
+
+user_hits = _apply_user_col(df)
+if user_col:
     print(f"User annotations applied ({USER_OVERRIDE_COL!r}): {user_hits}")
 else:
     print(f"  (no '{USER_OVERRIDE_COL}' column found — skipping Step 0)")
