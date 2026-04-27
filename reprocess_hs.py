@@ -17,7 +17,7 @@ import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-INPUT_FILE  = BASE / "mailed_providers_hs.xlsx"
+INPUT_FILE  = BASE / "mailed_providers_hs_reprocessed.xlsx"
 OUTPUT_FILE = BASE / "mailed_providers_hs_reprocessed.xlsx"
 
 HS_COL      = "health_system"
