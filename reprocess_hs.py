@@ -252,28 +252,55 @@ def addr_key(row) -> str:
     addr_base = _SUITE_RE.sub("", addr).strip().rstrip(",").strip()
     return norm(addr_base) + "|" + norm(city)
 
-addr_hs_votes: dict = {}
+_PRACTICE_LABELS = {"Solo Practice", "Group Practice"}
+
+addr_votes_named: dict = {}  # named health systems only (not Solo/Group)
+addr_votes_all:   dict = {}  # all health systems
+
 for _, row in df[df[HS_COL].apply(norm) != ""].iterrows():
     key = addr_key(row)
     if not key or key == "|":
         continue
     hs      = str(row[HS_COL]).strip()
     hs_city = str(row[HS_CITY_COL]).strip()
-    if key not in addr_hs_votes:
-        addr_hs_votes[key] = {}
-    addr_hs_votes[key][(hs, hs_city)] = addr_hs_votes[key].get((hs, hs_city), 0) + 1
+    addr_votes_all.setdefault(key, {})
+    addr_votes_all[key][(hs, hs_city)] = addr_votes_all[key].get((hs, hs_city), 0) + 1
+    if hs not in _PRACTICE_LABELS:
+        addr_votes_named.setdefault(key, {})
+        addr_votes_named[key][(hs, hs_city)] = addr_votes_named[key].get((hs, hs_city), 0) + 1
 
-addr_best = {k: max(v, key=v.get) for k, v in addr_hs_votes.items()}
+addr_best_named = {k: max(v, key=v.get) for k, v in addr_votes_named.items()}
+addr_best_all   = {k: max(v, key=v.get) for k, v in addr_votes_all.items()}
 
 prop_hits = 0
+# Pass 1: fill rows with no health system yet
 for i, row in df[df[HS_COL].apply(norm) == ""].iterrows():
     key = addr_key(row)
-    if key in addr_best:
-        hs, hs_city = addr_best[key]
+    if key in addr_best_all:
+        hs, hs_city = addr_best_all[key]
         df.at[i, HS_COL]      = hs
         df.at[i, HS_CITY_COL] = hs_city
         prop_hits += 1
-print(f"Propagation classified: {prop_hits}")
+
+# Pass 2: upgrade Solo/Group Practice rows when a named system exists at the
+# same address — propagates user annotations across all rows at an address
+upgrade_hits = 0
+for i, row in df.iterrows():
+    if row.get("_user_reviewed") == "yes":
+        continue
+    if row[HS_COL] not in _PRACTICE_LABELS:
+        continue
+    key = addr_key(row)
+    if key in addr_best_named:
+        hs, hs_city = addr_best_named[key]
+        df.at[i, HS_COL]      = hs
+        df.at[i, HS_CITY_COL] = hs_city
+        upgrade_hits += 1
+        prop_hits += 1
+
+print(f"Propagation classified : {prop_hits - upgrade_hits}")
+print(f"Propagation upgraded   : {upgrade_hits}  (Solo/Group → named system)")
+
 
 # ── Step 4: label remaining unclassified as Solo or Group Practice ────────────
 # Count how many providers share each base address across the whole dataset
@@ -298,7 +325,9 @@ group_count = (df[HS_COL] == "Group Practice").sum()
 print(f"Labeled as Solo Practice : {solo_count}")
 print(f"Labeled as Group Practice: {group_count}")
 
-# ── Step 5: flag likely clinics ───────────────────────────────────────────────
+# ── Step 5: flag suite addresses within solo/group rows ───────────────────────
+# Suite in addr2 means office building — could be a clinic or a legitimate solo
+# practice. Flagged here for reference; review via solo_group_review sheet.
 if addr2_col:
     df["_likely_clinic"] = df.apply(
         lambda r: (
@@ -306,19 +335,18 @@ if addr2_col:
             bool(_SUITE_FLAG.search(safe_addr(r.get(addr2_col))))
         ),
         axis=1,
-    ).map({True: "likely_clinic", False: ""})
+    ).map({True: "suite_address", False: ""})
 else:
     df["_likely_clinic"] = ""
 
-n_likely = (df["_likely_clinic"] == "likely_clinic").sum()
-print(f"Likely clinic (solo/group with suite): {n_likely}")
+n_suite = (df["_likely_clinic"] == "suite_address").sum()
 
 print(f"\nResults:")
 print(f"  Total          : {len(df)}")
 print(f"  Health system  : {(~df[HS_COL].isin(['Solo Practice','Group Practice',''])).sum()}")
 print(f"  Group Practice : {group_count}")
 print(f"  Solo Practice  : {solo_count}")
-print(f"  Likely clinic (needs review): {n_likely}")
+print(f"  Suite address (solo/group, for reference): {n_suite}")
 
 for label in ["Group Practice", "Solo Practice"]:
     subset = df[df[HS_COL] == label]
@@ -334,12 +362,10 @@ for label in ["Group Practice", "Solo Practice"]:
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
-solo_group_df  = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
-likely_clin_df = df[
-    (df["_likely_clinic"] == "likely_clinic") &
-    (df["_user_reviewed"] != "yes")
-].copy()
-hs_df          = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
+# solo_group_review includes the _likely_clinic column so the user can filter
+# by "suite_address" to see office-building rows that may warrant a closer look.
+solo_group_df = df[df[HS_COL].isin(["Solo Practice", "Group Practice"])].copy()
+hs_df         = df[~df[HS_COL].isin(["Solo Practice", "Group Practice", ""])].copy()
 
 # Build health system summary table
 hs_summary_rows = []
@@ -358,11 +384,9 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     df.to_excel(writer, sheet_name="mailed_providers_hs", index=False)
     hs_summary_df.to_excel(writer, sheet_name="health_system_summary", index=False)
     solo_group_df.to_excel(writer, sheet_name="solo_group_review", index=False)
-    likely_clin_df.to_excel(writer, sheet_name="likely_clinic_review", index=False)
     print(f"  mailed_providers_hs   : {len(df)} rows")
     print(f"  health_system_summary : {len(hs_summary_df)} health systems")
-    print(f"  solo_group_review     : {len(solo_group_df)} rows")
-    print(f"  likely_clinic_review  : {len(likely_clin_df)} rows")
+    print(f"  solo_group_review     : {len(solo_group_df)} rows  ({n_suite} with suite address)")
 
 # ── Top 30 health systems — printed last so it's always visible ───────────────
 top30 = hs_df[HS_COL].value_counts().head(75)
