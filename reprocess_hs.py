@@ -238,6 +238,9 @@ def _apply_user_col(df):
         val = safe_addr(row.get(user_col))
         if not val:
             continue
+        # Ignore pre-existing mailing data (USPS sort codes, dept names, etc.)
+        if _BAD_HS_RE.match(val) or _INDIVIDUAL_RE.search(val):
+            continue
         low = val.lower().strip()
         if low in ("solo practice", "solo"):
             val = "Solo Practice"
