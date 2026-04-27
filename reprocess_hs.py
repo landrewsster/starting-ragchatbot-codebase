@@ -118,8 +118,14 @@ _BAD_HS_RE = re.compile(
     # internal mail/room codes
     r"^(mmc|mail route|mail stop|vcrc)\b|"
     r"mr#\s*\d+|"
-    # department names — not health system names
-    r"^(department of|division of|dept\.? of)\b",
+    r"\bmail\s+(delivery\s+)?code\b|"
+    # department names at start OR embedded after a comma
+    r"^(department of|division of|dept\.? of)\b|"
+    r",\s*(department of|division of)\b|"
+    # USPS bulk mail sort codes — start with 3+ asterisks
+    r"^\*{3,}|"
+    # street address fragments
+    r"^at\s+\w",
     re.IGNORECASE,
 )
 # Matches names that look like individual providers rather than health systems.
@@ -322,6 +328,8 @@ for _, row in df[df[HS_COL].apply(norm) != ""].iterrows():
         continue
     hs      = str(row[HS_COL]).strip()
     hs_city = str(row[HS_CITY_COL]).strip()
+    if _BAD_HS_RE.match(hs) or _INDIVIDUAL_RE.search(hs):
+        continue  # don't let bad values spread via propagation
     addr_votes_all.setdefault(key, {})
     addr_votes_all[key][(hs, hs_city)] = addr_votes_all[key].get((hs, hs_city), 0) + 1
     if hs not in _PRACTICE_LABELS:
