@@ -161,47 +161,68 @@ addr1_col = find_col(df, ["_check_addr", "primary_address_1", "Delivery Address"
 addr2_col = find_col(df, ["primary_address_2", "work_address_2"])
 city_col  = find_col(df, ["_check_city", "primary_city", "City", "work_city"])
 npi_col   = find_col(df, ["npi", "NPI", "national_provider_identifier"])
+last_col  = find_col(df, ["last_name", "Last Name", "lname", "_check_last"])
+first_col = find_col(df, ["first_name", "First Name", "fname", "_check_first"])
 
 print(f"  addr1={addr1_col}  addr2={addr2_col}  city={city_col}  npi={npi_col}")
 
 # ── Step 0: apply user annotations from review column ────────────────────────
 # "Opt. Endorsement Line" (column K) written during review → confirmed
 # health_system.  Also merges annotations written into any review sheet
-# (solo_group_review, likely_clinic_review) back into the main df by NPI.
+# (solo_group_review, likely_clinic_review) back into the main df.
+# Matching priority: NPI → last|first|addr1 composite key.
 USER_OVERRIDE_COL  = "Opt. Endorsement Line"
 REVIEW_SHEETS      = ["solo_group_review", "likely_clinic_review"]
 user_col = find_col(df, [USER_OVERRIDE_COL])
 df["_user_reviewed"] = ""
 
-# Merge annotations from review sheets into main df by NPI
-if npi_col:
-    xl = pd.ExcelFile(INPUT_FILE)
-    for sheet in REVIEW_SHEETS:
-        if sheet not in xl.sheet_names:
+def _row_key(row, npi_c, last_c, first_c, addr_c):
+    """Return a unique key for a row: NPI if present, else name+addr."""
+    npi = safe_addr(row.get(npi_c)) if npi_c else ""
+    if npi:
+        return "npi:" + npi
+    last  = norm(row.get(last_c))  if last_c  else ""
+    first = norm(row.get(first_c)) if first_c else ""
+    addr  = norm(row.get(addr_c))  if addr_c  else ""
+    return f"name:{last}|{first}|{addr}" if (last or first) and addr else ""
+
+# Build key → index map for main df
+main_key_to_idx: dict[str, int] = {}
+for i, row in df.iterrows():
+    k = _row_key(row, npi_col, last_col, first_col, addr1_col)
+    if k:
+        main_key_to_idx[k] = i
+
+# Merge annotations from review sheets
+xl = pd.ExcelFile(INPUT_FILE)
+for sheet in REVIEW_SHEETS:
+    if sheet not in xl.sheet_names:
+        continue
+    rdf    = xl.parse(sheet, dtype=str).fillna("")
+    r_npi  = find_col(rdf, ["npi", "NPI", "national_provider_identifier"])
+    r_last = find_col(rdf, ["last_name", "Last Name", "lname", "_check_last"])
+    r_frst = find_col(rdf, ["first_name", "First Name", "fname", "_check_first"])
+    r_addr = find_col(rdf, ["_check_addr", "primary_address_1", "Delivery Address",
+                             "work_address_1", "Alternate 1 Address"])
+    r_user = find_col(rdf, [USER_OVERRIDE_COL])
+    if not r_user:
+        continue
+    merged = 0
+    for _, rrow in rdf.iterrows():
+        ann = safe_addr(rrow.get(r_user))
+        if not ann:
             continue
-        rdf = xl.parse(sheet, dtype=str).fillna("")
-        r_npi  = find_col(rdf, ["npi", "NPI", "national_provider_identifier"])
-        r_user = find_col(rdf, [USER_OVERRIDE_COL])
-        if not r_npi or not r_user:
+        k = _row_key(rrow, r_npi, r_last, r_frst, r_addr)
+        if not k or k not in main_key_to_idx:
             continue
-        ann_map = {
-            safe_addr(r[r_npi]): safe_addr(r[r_user])
-            for _, r in rdf.iterrows()
-            if safe_addr(r.get(r_npi)) and safe_addr(r.get(r_user))
-        }
-        if not ann_map:
-            continue
-        merged = 0
-        for i, row in df.iterrows():
-            if safe_addr(row.get(user_col or "")) or not safe_addr(row.get(npi_col)):
-                continue
-            ann = ann_map.get(safe_addr(row[npi_col]))
-            if ann:
-                if user_col:
-                    df.at[i, user_col] = ann
-                merged += 1
-        if merged:
-            print(f"  Merged {merged} annotations from '{sheet}' sheet")
+        i = main_key_to_idx[k]
+        if safe_addr(df.at[i, user_col] if user_col else ""):
+            continue  # already annotated in main sheet — don't overwrite
+        if user_col:
+            df.at[i, user_col] = ann
+        merged += 1
+    if merged:
+        print(f"  Merged {merged} annotations from '{sheet}' sheet")
 
 def _apply_user_col(df):
     if not user_col:
