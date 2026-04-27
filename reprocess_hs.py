@@ -16,9 +16,10 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-INPUT_FILE  = BASE / "mailed_providers_hs_reprocessed.xlsx"
-OUTPUT_FILE = BASE / "mailed_providers_hs_reprocessed.xlsx"
+BASE            = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+INPUT_FILE      = BASE / "mailed_providers_hs.xlsx"
+ANNOTATION_FILE = BASE / "mailed_providers_hs_reprocessed.xlsx"  # read annotations from here
+OUTPUT_FILE     = BASE / "mailed_providers_hs_reprocessed.xlsx"
 
 HS_COL      = "health_system"
 HS_CITY_COL = "health_system_city"
@@ -199,36 +200,41 @@ for i, row in df.iterrows():
     if k:
         main_key_to_idx[k] = i
 
-# Merge annotations from review sheets
-xl = pd.ExcelFile(INPUT_FILE)
-for sheet in REVIEW_SHEETS:
-    if sheet not in xl.sheet_names:
-        continue
-    rdf    = xl.parse(sheet, dtype=str).fillna("")
-    r_npi  = find_col(rdf, ["npi", "NPI", "national_provider_identifier"])
-    r_last = find_col(rdf, ["last_name", "Last Name", "lname", "_check_last"])
-    r_frst = find_col(rdf, ["first_name", "First Name", "fname", "_check_first"])
-    r_addr = find_col(rdf, ["_check_addr", "primary_address_1", "Delivery Address",
-                             "work_address_1", "Alternate 1 Address"])
-    r_user = find_col(rdf, [USER_OVERRIDE_COL])
-    if not r_user:
-        continue
-    merged = 0
-    for _, rrow in rdf.iterrows():
-        ann = safe_addr(rrow.get(r_user))
-        if not ann:
+# Merge annotations from review sheets in INPUT_FILE and ANNOTATION_FILE
+_ann_files = [INPUT_FILE]
+if ANNOTATION_FILE != INPUT_FILE and ANNOTATION_FILE.exists():
+    _ann_files.append(ANNOTATION_FILE)
+
+for _ann_path in _ann_files:
+    xl = pd.ExcelFile(_ann_path)
+    for sheet in REVIEW_SHEETS:
+        if sheet not in xl.sheet_names:
             continue
-        k = _row_key(rrow, r_npi, r_last, r_frst, r_addr)
-        if not k or k not in main_key_to_idx:
+        rdf    = xl.parse(sheet, dtype=str).fillna("")
+        r_npi  = find_col(rdf, ["npi", "NPI", "national_provider_identifier"])
+        r_last = find_col(rdf, ["last_name", "Last Name", "lname", "_check_last"])
+        r_frst = find_col(rdf, ["first_name", "First Name", "fname", "_check_first"])
+        r_addr = find_col(rdf, ["_check_addr", "primary_address_1", "Delivery Address",
+                                 "work_address_1", "Alternate 1 Address"])
+        r_user = find_col(rdf, [USER_OVERRIDE_COL])
+        if not r_user:
             continue
-        i = main_key_to_idx[k]
-        if safe_addr(df.at[i, user_col] if user_col else ""):
-            continue  # already annotated in main sheet — don't overwrite
-        if user_col:
-            df.at[i, user_col] = ann
-        merged += 1
-    if merged:
-        print(f"  Merged {merged} annotations from '{sheet}' sheet")
+        merged = 0
+        for _, rrow in rdf.iterrows():
+            ann = safe_addr(rrow.get(r_user))
+            if not ann:
+                continue
+            k = _row_key(rrow, r_npi, r_last, r_frst, r_addr)
+            if not k or k not in main_key_to_idx:
+                continue
+            i = main_key_to_idx[k]
+            if safe_addr(df.at[i, user_col] if user_col else ""):
+                continue  # already annotated — don't overwrite
+            if user_col:
+                df.at[i, user_col] = ann
+            merged += 1
+        if merged:
+            print(f"  Merged {merged} annotations from '{_ann_path.name}' / '{sheet}'")
 
 def _apply_user_col(df):
     if not user_col:
