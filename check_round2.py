@@ -43,42 +43,6 @@ STRIP_SUFFIXES = re.compile(
     re.IGNORECASE,
 )
 
-# Common first names — used to flag likely first names in the last-name column
-COMMON_FIRST_NAMES = {
-    "james","john","robert","michael","william","david","richard","joseph",
-    "thomas","charles","christopher","daniel","matthew","anthony","mark",
-    "donald","steven","paul","andrew","joshua","kenneth","kevin","brian",
-    "george","timothy","ronald","edward","jason","jeffrey","ryan","gary",
-    "jacob","nicholas","eric","jonathan","stephen","larry","justin","scott",
-    "brandon","benjamin","samuel","raymond","frank","gregory","raymond",
-    "mary","patricia","linda","barbara","elizabeth","jennifer","maria",
-    "susan","margaret","dorothy","lisa","nancy","karen","betty","helen",
-    "sandra","donna","carol","ruth","sharon","michelle","laura","sarah",
-    "kimberly","deborah","jessica","shirley","cynthia","angela","melissa",
-    "brenda","amy","anna","rebecca","virginia","kathleen","pamela","martha",
-    "debra","amanda","stephanie","carolyn","christine","marie","janet",
-    "catherine","frances","ann","joyce","diane","alice","julie","heather",
-    "teresa","doris","gloria","evelyn","jean","cheryl","mildred","katherine",
-    "joan","ashley","judith","rose","janice","kelly","nicole","judy",
-    "christina","kathy","theresa","beverly","denise","tammy","irene","jane",
-    "lori","rachel","marilyn","andrea","kathryn","louise","sara","anne",
-    "jacqueline","wanda","bonnie","julia","ruby","lois","tina","phyllis",
-    "norma","paula","diana","annie","lillian","emily","robin","peggy",
-    "crystal","gladys","rita","dawn","connie","florence","tracy","edna",
-    "tiffany","carmen","rosa","cindy","grace","wendy","victoria","edith",
-    "kim","sherry","sylvia","josephine","thelma","shannon","sheila","ethel",
-    "ellen","elaine","marjorie","carrie","charlotte","monica","esther",
-    "pauline","emma","juanita","anita","rhonda","hazel","amber","eva",
-    "debbie","april","leslie","clara","lucille","jamie","joanne","eleanor",
-    "valerie","danielle","megan","alicia","suzanne","michele","gail","bertha",
-    "darlene","veronica","jill","erin","geraldine","lauren","cathy","joann",
-    "lorraine","lynn","sally","regina","erica","beatrice","dolores","bernice",
-    "audrey","yvonne","annette","june","samantha","marion","dana","stacy",
-    "ana","renee","ida","vivian","roberta","holly","brittany","melanie",
-    "loretta","yolanda","jeanette","laurie","katie","kristen","vanessa",
-    "alma","sue","elsie","beth","jeanne",
-}
-
 # ── Load ──────────────────────────────────────────────────────────────────────
 print(f"\nLoading: {INPUT_FILE.name}")
 try:
@@ -96,47 +60,33 @@ print(f"  Columns: {list(df.columns)}")
 col_a = df.columns[0]   # expected: last name
 col_b = df.columns[1] if len(df.columns) > 1 else None  # expected: first name
 
-npi_col  = find_col(df, ["npi", "NPI"])
-addr_col = find_col(df, ["address", "address1", "address_1", "addr1", "addr",
-                          "Delivery Address", "primary_address_1", "AddressLine1",
-                          "mailing_address_1"])
-city_col = find_col(df, ["city", "City", "primary_city", "mailing_city"])
-state_col= find_col(df, ["state", "State", "primary_state", "mailing_state"])
-zip_col  = find_col(df, ["zip", "Zip", "zip5", "postal_code", "mailing_postal_code",
-                          "primary_zip", "mailing_zip"])
+# Columns D, E, F are the three address columns (positions 3, 4, 5)
+# Column C (position 2) is middle name
+addr_cols = [df.columns[i] for i in range(3, min(6, len(df.columns)))]
+print(f"\n  Address columns (D-F): {addr_cols}")
 
-print(f"\n  col_A (last?)={col_a}  col_B (first?)={col_b}")
-print(f"  npi={npi_col}  addr={addr_col}  city={city_col}  state={state_col}  zip={zip_col}")
+npi_col   = find_col(df, ["npi", "NPI"])
+state_col = find_col(df, ["state", "State", "primary_state", "mailing_state"])
+zip_col   = find_col(df, ["zip", "Zip", "zip5", "postal_code", "mailing_postal_code",
+                           "primary_zip", "mailing_zip"])
+
+print(f"  npi={npi_col}  state={state_col}  zip={zip_col}")
 
 # ── Flag issues ───────────────────────────────────────────────────────────────
+# Address is missing only if ALL THREE of columns C, D, E are empty.
 issues = []
 
 for i, row in df.iterrows():
     row_issues = []
-    val_a = norm(row[col_a])
-    val_b = norm(row[col_b]) if col_b else ""
 
-    # Full name in column B (contains a space → likely "First Last" or "First M Last")
-    if val_b and " " in val_b.strip():
-        row_issues.append("fullname_in_col_B")
-
-    # First name in column A (single word matching common first names)
-    if val_a and " " not in val_a and val_a in COMMON_FIRST_NAMES:
-        row_issues.append("firstname_in_col_A")
-
-    # Incomplete address
-    addr  = norm(row[addr_col])  if addr_col  else ""
-    city  = norm(row[city_col])  if city_col  else ""
-    state = norm(row[state_col]) if state_col else ""
-    zipv  = norm(row[zip_col])   if zip_col   else ""
-
-    if not addr:
+    # All three address columns empty → no address at all
+    addr_values = [norm(row[c]) for c in addr_cols]
+    if not any(addr_values):
         row_issues.append("missing_address")
-    if not city:
-        row_issues.append("missing_city")
-    if not state:
+
+    if state_col and not norm(row[state_col]):
         row_issues.append("missing_state")
-    if not zipv:
+    if zip_col and not norm(row[zip_col]):
         row_issues.append("missing_zip")
 
     if row_issues:
@@ -166,41 +116,32 @@ dup_name_rows = dup_name_rows.sort_values("_name_key")
 print(f"Duplicate name rows   : {len(dup_name_rows)}")
 
 # ── Build issue dataframe ─────────────────────────────────────────────────────
-issue_df = df.loc[[i for i, _ in issues]].copy()
-issue_df["_issues"] = [f for _, f in issues]
-issue_df = issue_df.sort_values("_issues")
+addr_issues_df = df.loc[[i for i, _ in issues]].copy()
+addr_issues_df["_issues"] = [f for _, f in issues]
+addr_issues_df = addr_issues_df.sort_values("_issues")
 
-name_issues_df = issue_df[issue_df["_issues"].str.contains(
-    "fullname_in_col_B|firstname_in_col_A")].copy()
-addr_issues_df = issue_df[issue_df["_issues"].str.contains(
-    "missing_address|missing_city|missing_state|missing_zip")].copy()
-
-print(f"Name column issues    : {len(name_issues_df)}")
 print(f"Incomplete address    : {len(addr_issues_df)}")
-print(f"Total flagged rows    : {len(issue_df)}")
 
 # ── Issue summary ─────────────────────────────────────────────────────────────
 from collections import Counter
 all_flags = []
 for _, flags in issues:
     all_flags.extend(flags.split("|"))
-print(f"\nIssue breakdown:")
-for flag, cnt in sorted(Counter(all_flags).items(), key=lambda x: -x[1]):
-    print(f"  {cnt:4d}  {flag}")
+if all_flags:
+    print(f"\nIssue breakdown:")
+    for flag, cnt in sorted(Counter(all_flags).items(), key=lambda x: -x[1]):
+        print(f"  {cnt:4d}  {flag}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-df_clean = df.drop(columns=["_name_key"])
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    name_issues_df.drop(columns=["_name_key"], errors="ignore").to_excel(
-        writer, sheet_name="name_issues", index=False)
     addr_issues_df.drop(columns=["_name_key"], errors="ignore").to_excel(
         writer, sheet_name="address_issues", index=False)
     dup_npi_rows.to_excel(
         writer, sheet_name="duplicate_npi",  index=False)
     dup_name_rows.drop(columns=["_name_key"], errors="ignore").to_excel(
         writer, sheet_name="duplicate_name", index=False)
-    print(f"  name_issues    : {len(name_issues_df)} rows")
+    print(f"  address_issues : {len(addr_issues_df)} rows")
     print(f"  address_issues : {len(addr_issues_df)} rows")
     print(f"  duplicate_npi  : {len(dup_npi_rows)} rows")
     print(f"  duplicate_name : {len(dup_name_rows)} rows")
