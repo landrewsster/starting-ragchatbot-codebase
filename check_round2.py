@@ -142,7 +142,6 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     dup_name_rows.drop(columns=["_name_key"], errors="ignore").to_excel(
         writer, sheet_name="duplicate_name", index=False)
     print(f"  address_issues : {len(addr_issues_df)} rows")
-    print(f"  address_issues : {len(addr_issues_df)} rows")
     print(f"  duplicate_npi  : {len(dup_npi_rows)} rows")
     print(f"  duplicate_name : {len(dup_name_rows)} rows")
 
