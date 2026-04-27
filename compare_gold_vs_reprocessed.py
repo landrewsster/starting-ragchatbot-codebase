@@ -67,6 +67,24 @@ def name_key(last: str, first: str) -> set[str]:
         keys.add(last)
     return keys
 
+def fullname_keys(fn: str) -> set[str]:
+    """Keys from a 'First Last' or 'Last, First' full-name string."""
+    fn = clean_name(fn)
+    if not fn:
+        return set()
+    keys = set()
+    words = fn.split()
+    if len(words) >= 2:
+        last  = words[-1]
+        first = words[0]
+        first1 = first.split()[0]
+        for f in {first, first1} - {""}:
+            keys.add(f"{last}|{f}")
+            keys.add(f"{f}|{last}")
+    elif fn:
+        keys.add(fn)
+    return keys
+
 # ── Load gold reference ────────────────────────────────────────────────────────
 print(f"\nLoading gold reference: {GOLD_FILE.name}  sheet='{GOLD_SHEET}'")
 xl = pd.ExcelFile(GOLD_FILE)
@@ -87,12 +105,13 @@ print(f"\nLoading mailed providers: {MAILED_FILE.name}  sheet='{MAILED_SHEET}'")
 mailed = pd.read_excel(MAILED_FILE, sheet_name=MAILED_SHEET, dtype=str).fillna("")
 print(f"  {len(mailed)} rows | columns: {list(mailed.columns[:15])} ...")
 
-m_npi   = find_col(mailed, ["npi", "NPI"])
-m_last  = find_col(mailed, ["last_name", "LastName", "Last Name", "_check_last"])
-m_first = find_col(mailed, ["first_name", "FirstName", "First Name", "_check_first"])
-m_hs    = find_col(mailed, ["health_system"])
-m_city  = find_col(mailed, ["health_system_city"])
-print(f"  npi={m_npi}  last={m_last}  first={m_first}  hs={m_hs}")
+m_npi      = find_col(mailed, ["npi", "NPI"])
+m_last     = find_col(mailed, ["last_name", "LastName", "Last Name", "_check_last"])
+m_first    = find_col(mailed, ["first_name", "FirstName", "First Name", "_check_first"])
+m_fullname = find_col(mailed, ["_check_fullname", "FULL NAME", "Full Name", "full_name"])
+m_hs       = find_col(mailed, ["health_system"])
+m_city     = find_col(mailed, ["health_system_city"])
+print(f"  npi={m_npi}  last={m_last}  first={m_first}  fullname={m_fullname}  hs={m_hs}")
 
 # ── Build lookup sets from mailed list ────────────────────────────────────────
 mailed_npi_set:  set[str] = set()
@@ -103,9 +122,10 @@ npi_to_hs:   dict[str, str] = {}
 npi_to_city: dict[str, str] = {}
 
 for _, row in mailed.iterrows():
-    npi  = norm(row[m_npi])  if m_npi  else ""
-    last = norm(row[m_last]) if m_last else ""
-    frst = norm(row[m_first]) if m_first else ""
+    npi  = norm(row[m_npi])      if m_npi      else ""
+    last = norm(row[m_last])     if m_last     else ""
+    frst = norm(row[m_first])    if m_first    else ""
+    fn   = norm(row[m_fullname]) if m_fullname else ""
     hs   = str(row[m_hs]).strip()   if m_hs   else ""
     city = str(row[m_city]).strip() if m_city else ""
 
@@ -115,6 +135,8 @@ for _, row in mailed.iterrows():
             npi_to_hs[npi]   = hs
             npi_to_city[npi] = city
     for k in name_key(last, frst):
+        mailed_name_set.add(k)
+    for k in fullname_keys(fn):
         mailed_name_set.add(k)
 
 print(f"\n  Mailed NPIs : {len(mailed_npi_set)}")
