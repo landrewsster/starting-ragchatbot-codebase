@@ -230,6 +230,26 @@ r2_zip_col  = mail_df.columns[5] if len(mail_df.columns) > 5 else None
 print(f"  col_a={r2_col_a!r}  col_b={r2_col_b!r}  npi={r2_npi_col}")
 print(f"  addr={r2_addr_col!r}  city={r2_city_col!r}  zip={r2_zip_col!r}")
 
+# ── Assign source group ───────────────────────────────────────────────────────
+# If the file already has a _source column (user pre-labeled goldaddition rows),
+# use it.  Otherwise auto-detect: multi-word col B → mailingaddition, else → firstmailing.
+# To get three-way labels, add a column named "_source" to MailingListRound2.xlsx
+# and mark your ~623 added rows as "goldaddition" before running this script.
+_source_col = find_col(mail_df, ["_source", "source"])
+if _source_col:
+    mail_df["_source"] = mail_df[_source_col].apply(norm)
+    # Auto-fill blank mailingaddition rows even when a _source column exists
+    mask = mail_df["_source"].eq("") & mail_df[r2_col_b].apply(lambda v: " " in str(v).strip())
+    mail_df.loc[mask, "_source"] = "mailingaddition"
+    print(f"  Using existing '_source' column; auto-filled {mask.sum()} mailingaddition rows")
+else:
+    mail_df["_source"] = mail_df[r2_col_b].apply(
+        lambda v: "mailingaddition" if " " in str(v).strip() else "firstmailing"
+    )
+    src_counts = mail_df["_source"].value_counts().to_dict()
+    print(f"  Auto-detected sources: {src_counts}")
+    print(f"  (add a '_source' column to the file to label 'goldaddition' rows separately)")
+
 # ── Build lookup from gold reference ──────────────────────────────────────────
 print(f"\nLoading gold reference: {GOLD_FILE.name}")
 
@@ -355,9 +375,14 @@ mail_df["_match_method"]   = match_methods
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 status_counts = pd.Series(statuses).value_counts()
-print(f"\nResults:")
+print(f"\nResults (all rows):")
 for status, cnt in status_counts.items():
     print(f"  {status}: {cnt}")
+
+print(f"\nMultiple-address rows by source:")
+multi_tmp = mail_df[mail_df["address_status"] == "multiple_addresses"]
+for src, cnt in multi_tmp["_source"].value_counts().items():
+    print(f"  {src}: {cnt}")
 
 # ── Subsets ───────────────────────────────────────────────────────────────────
 multi      = mail_df[mail_df["address_status"] == "multiple_addresses"]
@@ -369,9 +394,9 @@ collisions = mail_df[mail_df["address_status"] == "name_collision_different_peop
 compare_rows = []
 for _, row in multi.iterrows():
     r = {}
+    r["_source"]      = row.get("_source", "")
     r["col_a"]        = row.get(r2_col_a,   "") if r2_col_a   else ""
     r["col_b"]        = row.get(r2_col_b,   "") if r2_col_b   else ""
-    r["npi"]          = row.get(r2_npi_col, "") if r2_npi_col else ""
     r["mail_address"] = row.get(r2_addr_col, "") if r2_addr_col else ""
     r["mail_city"]    = row.get(r2_city_col, "") if r2_city_col else ""
     r["mail_zip"]     = row.get(r2_zip_col,  "") if r2_zip_col  else ""
