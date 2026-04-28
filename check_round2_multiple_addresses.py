@@ -34,7 +34,7 @@ import pandas as pd
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project"
-MAIL_FILE   = BASE / "Current Mailing Files" / "MailingListRound2.xlsx"
+MAIL_FILE   = BASE / "Current Mailing Files" / "MailingListRound2 copy 2.xlsx"
 GOLD_FILE   = BASE / "Current Mailing Files" / "gold_reference_providers.xlsx"
 OUTPUT_FILE = BASE / "Current Mailing Files" / "round2_multiple_address_check.xlsx"
 
