@@ -238,10 +238,14 @@ print(f"  addr={r2_addr_col!r}  city={r2_city_col!r}  zip={r2_zip_col!r}")
 _source_col = find_col(mail_df, ["_source", "source"])
 if _source_col:
     mail_df["_source"] = mail_df[_source_col].apply(norm)
-    # Auto-fill blank mailingaddition rows even when a _source column exists
-    mask = mail_df["_source"].eq("") & mail_df[r2_col_b].apply(lambda v: " " in str(v).strip())
-    mail_df.loc[mask, "_source"] = "mailingaddition"
-    print(f"  Using existing '_source' column; auto-filled {mask.sum()} mailingaddition rows")
+    # Auto-fill blank mailingaddition rows from col B content
+    mask_ma = mail_df["_source"].eq("") & mail_df[r2_col_b].apply(lambda v: " " in str(v).strip())
+    mail_df.loc[mask_ma, "_source"] = "mailingaddition"
+    # Default any remaining blank rows to firstmailing
+    mask_fm = mail_df["_source"].eq("")
+    mail_df.loc[mask_fm, "_source"] = "firstmailing"
+    print(f"  Using existing '_source' column; auto-filled {mask_ma.sum()} mailingaddition, "
+          f"{mask_fm.sum()} firstmailing rows")
 else:
     mail_df["_source"] = mail_df[r2_col_b].apply(
         lambda v: "mailingaddition" if " " in str(v).strip() else "firstmailing"
