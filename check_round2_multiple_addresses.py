@@ -179,7 +179,7 @@ def get_all_addr_keys(row, cols) -> list[tuple[str, str]]:
         z    = zip5(row[zip_col])  if zip_col  and zip_col  in row.index else ""
         if addr:
             raw      = f"{addr}|{city}|{z}"
-            norm_key = f"{norm_addr(row[addr_col])}|{norm_city(city)}|{z}"
+            norm_key = norm_addr(row[addr_col] if addr_col else "")
             results.append((raw, norm_key))
     return results
 
