@@ -62,6 +62,7 @@ STRIP_SUFFIXES = re.compile(
 )
 
 ADDR_ABBREVS = [
+    # Street types
     (r"\bstreet\b",    "st"),
     (r"\bavenue\b",    "ave"),
     (r"\bboulevard\b", "blvd"),
@@ -71,18 +72,45 @@ ADDR_ABBREVS = [
     (r"\blane\b",      "ln"),
     (r"\broad\b",      "rd"),
     (r"\bplace\b",     "pl"),
+    (r"\bparkway\b",   "pkwy"),
+    (r"\bexpressway\b","expy"),
+    (r"\bhighway\b",   "hwy"),
+    # Suite / unit — normalize all variants to "ste"
     (r"\bsuite\b",     "ste"),
+    (r"\bfloor\b",     "fl"),
+    (r"\bbuilding\b",  "bldg"),
+    (r"\bno\.?\s+(?=\d)", "ste "),  # "No. 100" → "ste 100"
+    (r"#\s*(?=\d)",    "ste "),     # "#100" → "ste 100"
+    # Compound directions first (before single-letter replacements)
+    (r"\bnorthwest\b", "nw"),
+    (r"\bnortheast\b", "ne"),
+    (r"\bsouthwest\b", "sw"),
+    (r"\bsoutheast\b", "se"),
+    # Cardinal directions
     (r"\bnorth\b",     "n"),
     (r"\bsouth\b",     "s"),
     (r"\beast\b",      "e"),
     (r"\bwest\b",      "w"),
-    (r"[,#\.]",        " "),
+    # Punctuation
+    (r"[,\.]",         " "),
+]
+
+CITY_ABBREVS = [
+    (r"\bsaint\b", "st"),
+    (r"\bfort\b",  "ft"),
+    (r"\bmount\b", "mt"),
 ]
 
 def norm_addr(s) -> str:
     s = norm(s)
     for pattern, repl in ADDR_ABBREVS:
-        s = re.sub(pattern, repl, s)
+        s = re.sub(pattern, repl, s, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", s).strip()
+
+def norm_city(s) -> str:
+    s = norm(s)
+    for pattern, repl in CITY_ABBREVS:
+        s = re.sub(pattern, repl, s, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", s).strip()
 
 def name_variants(last: str, first: str) -> set[str]:
@@ -151,7 +179,7 @@ def get_all_addr_keys(row, cols) -> list[tuple[str, str]]:
         z    = zip5(row[zip_col])  if zip_col  and zip_col  in row.index else ""
         if addr:
             raw      = f"{addr}|{city}|{z}"
-            norm_key = f"{norm_addr(row[addr_col])}|{city}|{z}"
+            norm_key = f"{norm_addr(row[addr_col])}|{norm_city(city)}|{z}"
             results.append((raw, norm_key))
     return results
 
