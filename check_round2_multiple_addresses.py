@@ -35,8 +35,14 @@ import pandas as pd
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project"
 MAIL_FILE   = BASE / "Current Mailing Files" / "MailingListRound2 copy 2.xlsx"
-GOLD_FILE   = BASE / "Current Mailing Files" / "gold_reference_providers.xlsx"
 OUTPUT_FILE = BASE / "Current Mailing Files" / "round2_multiple_address_check.xlsx"
+
+REF_FILES = [
+    BASE / "Current Mailing Files" / "gold_reference_providers.xlsx",
+    BASE / "NPPES" / "npi_results_physicians_corrected.xlsx",
+    BASE / "NPPES" / "npi_results_nurses_new.xlsx",
+    BASE / "NPPES" / "npi_results_physician_assistants_new.xlsx",
+]
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def norm(s) -> str:
@@ -282,56 +288,58 @@ else:
     print(f"  Auto-detected sources: {src_counts}")
     print(f"  (add a '_source' column to the file to label 'goldaddition' rows separately)")
 
-# ── Build lookup from gold reference ──────────────────────────────────────────
-print(f"\nLoading gold reference: {GOLD_FILE.name}")
+# ── Build lookup from all reference files ─────────────────────────────────────
+print(f"\nLoading reference files ...")
 
-npi_to_addresses:  dict[str, list[tuple]] = {}  # npi  → [(raw, norm, src, npi, mid)]
-name_to_addresses: dict[str, list[tuple]] = {}  # name → [(raw, norm, src, npi, mid)]
+npi_to_addresses:  dict[str, list[tuple]] = {}  # npi  → [(raw, norm_addr, src, npi, mid)]
+name_to_addresses: dict[str, list[tuple]] = {}  # name → [(raw, norm_addr, src, npi, mid)]
 
-try:
-    sheets = pd.read_excel(GOLD_FILE, sheet_name=None, dtype=str)
-except FileNotFoundError:
-    sys.exit(f"ERROR: {GOLD_FILE} not found")
+for ref_path in REF_FILES:
+    if not ref_path.exists():
+        print(f"  WARNING: {ref_path.name} not found, skipping")
+        continue
+    print(f"\n  {ref_path.name}")
+    sheets = pd.read_excel(ref_path, sheet_name=None, dtype=str)
+    for sheet_name, df in sheets.items():
+        df = df.fillna("")
+        cols = detect_gold_cols(df, sheet_name)
+        npi_col    = find_col(df, ["npi", "NPI"])
+        middle_col = find_col(df, ["middle_name", "MiddleName"])
+        rows_added = 0
+        for _, row in df.iterrows():
+            npi     = norm(row[npi_col])    if npi_col    else ""
+            middle  = norm(row[middle_col]) if middle_col else ""
+            middle1 = middle[0] if middle else ""
 
-for sheet_name, df in sheets.items():
-    print(f"  Sheet '{sheet_name}': {len(df)} rows")
-    df = df.fillna("")
-    cols = detect_gold_cols(df, sheet_name)
+            if cols["fullname"] and norm(row.get(cols["fullname"], "")):
+                name_keys = fullname_variants(norm(row[cols["fullname"]]))
+            else:
+                last  = norm(row.get(cols["last"],  "")) if cols["last"]  else ""
+                first = norm(row.get(cols["first"], "")) if cols["first"] else ""
+                name_keys = name_variants(last, first)
 
-    npi_col    = find_col(df, ["npi", "NPI"])
-    middle_col = find_col(df, ["middle_name", "MiddleName"])
+            addr_pairs = get_all_addr_keys(row, cols)
+            if not addr_pairs:
+                continue
 
-    for _, row in df.iterrows():
-        npi    = norm(row[npi_col])    if npi_col    else ""
-        middle = norm(row[middle_col]) if middle_col else ""
-        middle1 = middle[0] if middle else ""
+            for name_key in name_keys:
+                name_to_addresses.setdefault(name_key, [])
+                for raw_addr, norm_addr_key in addr_pairs:
+                    name_to_addresses[name_key].append(
+                        (raw_addr, norm_addr_key, ref_path.name, npi, middle1)
+                    )
 
-        # Name keys from gold
-        if cols["fullname"] and norm(row.get(cols["fullname"], "")):
-            name_keys = fullname_variants(norm(row[cols["fullname"]]))
-        else:
-            last  = norm(row.get(cols["last"],  "")) if cols["last"]  else ""
-            first = norm(row.get(cols["first"], "")) if cols["first"] else ""
-            name_keys = name_variants(last, first)
+            if npi:
+                npi_to_addresses.setdefault(npi, [])
+                for raw_addr, norm_addr_key in addr_pairs:
+                    npi_to_addresses[npi].append(
+                        (raw_addr, norm_addr_key, ref_path.name, npi, middle1)
+                    )
+            rows_added += 1
+        print(f"    Sheet '{sheet_name}': {len(df)} rows, {rows_added} with addresses")
 
-        addr_pairs = get_all_addr_keys(row, cols)
-
-        for name_key in name_keys:
-            name_to_addresses.setdefault(name_key, [])
-            for raw_addr, norm_addr_key in addr_pairs:
-                name_to_addresses[name_key].append(
-                    (raw_addr, norm_addr_key, GOLD_FILE.name, npi, middle1)
-                )
-
-        if npi:
-            npi_to_addresses.setdefault(npi, [])
-            for raw_addr, norm_addr_key in addr_pairs:
-                npi_to_addresses[npi].append(
-                    (raw_addr, norm_addr_key, GOLD_FILE.name, npi, middle1)
-                )
-
-print(f"\n  Gold NPI keys   : {len(npi_to_addresses)}")
-print(f"  Gold name keys  : {len(name_to_addresses)}")
+print(f"\n  Total NPI keys : {len(npi_to_addresses)}")
+print(f"  Total name keys: {len(name_to_addresses)}")
 
 # ── Classify each Round 2 row ─────────────────────────────────────────────────
 print(f"\nClassifying {len(mail_df)} Round 2 rows ...")
