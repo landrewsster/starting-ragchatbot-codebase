@@ -179,10 +179,16 @@ def round2_name_keys(col_a_val: str, col_b_val: str) -> set[str]:
 
     return keys
 
+ALLOWED_STATES = {"mn", "wi"}
+
 def get_all_addr_keys(row, cols) -> list[tuple[str, str]]:
-    """Return (raw_key, norm_key) for every address set in the row."""
+    """Return (raw_key, norm_key) for every MN/WI address set in the row."""
     results = []
-    for addr_col, city_col, zip_col in cols["addr_sets"]:
+    for addr_col, city_col, zip_col, state_col in cols["addr_sets"]:
+        if state_col and state_col in row.index:
+            st = norm(row[state_col])
+            if st and st not in ALLOWED_STATES:
+                continue  # skip out-of-state addresses
         addr = norm(row[addr_col]) if addr_col and addr_col in row.index else ""
         city = norm(row[city_col]) if city_col and city_col in row.index else ""
         z    = zip5(row[zip_col])  if zip_col  and zip_col  in row.index else ""
@@ -200,33 +206,40 @@ def detect_gold_cols(df, label):
         "addr_sets": [],
     }
     if find_col(df, ["_addr1"]):
+        state = find_col(df, ["_state", "primary_state", "state"])
         cols["addr_sets"].append((find_col(df, ["_addr1"]),
                                   find_col(df, ["_city"]),
-                                  find_col(df, ["_zip"])))
+                                  find_col(df, ["_zip"]),
+                                  state))
         mail = find_col(df, ["_mail_addr"])
         if mail:
+            m_state = find_col(df, ["_mail_state", "mailing_state"])
             cols["addr_sets"].append((mail,
                                       find_col(df, ["_mail_city"]),
-                                      find_col(df, ["_mail_zip"])))
+                                      find_col(df, ["_mail_zip"]),
+                                      m_state))
     else:
-        addr = find_col(df, ["npi_primary_address_1", "primary_address_1",
-                              "Delivery Address", "address_line1", "Alternate 1 Address"])
-        city = find_col(df, ["npi_primary_city", "primary_city", "City", "city"])
-        z    = find_col(df, ["npi_primary_zip", "zip5", "ZIP+4", "zip", "Zip"])
+        addr  = find_col(df, ["npi_primary_address_1", "primary_address_1",
+                               "Delivery Address", "address_line1", "Alternate 1 Address"])
+        city  = find_col(df, ["npi_primary_city", "primary_city", "City", "city"])
+        z     = find_col(df, ["npi_primary_zip", "zip5", "ZIP+4", "zip", "Zip"])
+        state = find_col(df, ["npi_primary_state", "primary_state", "State", "state"])
         if addr:
-            cols["addr_sets"].append((addr, city, z))
+            cols["addr_sets"].append((addr, city, z, state))
 
-        m_addr = find_col(df, ["npi_mailing_address_1", "mailing_address_1"])
-        m_city = find_col(df, ["npi_mailing_city", "mailing_city"])
-        m_zip  = find_col(df, ["npi_mailing_zip", "mailing_zip", "mailing_postal_code"])
+        m_addr  = find_col(df, ["npi_mailing_address_1", "mailing_address_1"])
+        m_city  = find_col(df, ["npi_mailing_city", "mailing_city"])
+        m_zip   = find_col(df, ["npi_mailing_zip", "mailing_zip", "mailing_postal_code"])
+        m_state = find_col(df, ["npi_mailing_state", "mailing_state"])
         if m_addr and m_addr != addr:
-            cols["addr_sets"].append((m_addr, m_city, m_zip))
+            cols["addr_sets"].append((m_addr, m_city, m_zip, m_state))
 
         mn_addr = find_col(df, ["mn_address_1"])
         mn_city = find_col(df, ["mn_city"])
         mn_zip  = find_col(df, ["mn_zip"])
         if mn_addr and mn_addr != addr:
-            cols["addr_sets"].append((mn_addr, mn_city, mn_zip))
+            # mn_address columns are MN-specific; pass None so state check is skipped
+            cols["addr_sets"].append((mn_addr, mn_city, mn_zip, None))
 
     print(f"  [{label}] last={cols['last']} first={cols['first']} "
           f"addr_sets={len(cols['addr_sets'])}: {[a[0] for a in cols['addr_sets']]}")
