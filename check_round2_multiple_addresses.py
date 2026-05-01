@@ -410,21 +410,20 @@ for _, row in mail_df.iterrows():
         match_methods.append(used_method)
         continue
 
-    # Deduplicate by raw address string
-    seen_raw: dict[str, str] = {}
+    # Deduplicate by normalized address, keeping the most complete raw version for display
+    seen_norm: dict[str, str] = {}  # norm_key → best raw (most info)
     for raw, norm_a, src, n, mid in all_entries:
-        seen_raw.setdefault(raw, norm_a)
+        if norm_a not in seen_norm or len(raw) > len(seen_norm[norm_a]):
+            seen_norm[norm_a] = raw
 
-    unique_raw   = list(seen_raw.keys())
-    unique_norms = list(seen_raw.values())
-    addr_counts.append(len(unique_raw))
+    unique_norms = list(seen_norm.keys())
+    unique_raw   = list(seen_norm.values())
+    addr_counts.append(len(unique_norms))
     addresses_found.append(" | ".join(unique_raw))
     match_methods.append(used_method)
 
-    if len(unique_raw) == 1:
+    if len(unique_norms) == 1:
         statuses.append("unique")
-    elif len(set(unique_norms)) == 1:
-        statuses.append("same_address_variant")
     else:
         statuses.append("multiple_addresses")
 
@@ -446,7 +445,6 @@ for src, cnt in multi_tmp["_source"].value_counts().items():
 
 # ── Subsets ───────────────────────────────────────────────────────────────────
 multi      = mail_df[mail_df["address_status"] == "multiple_addresses"]
-variant    = mail_df[mail_df["address_status"] == "same_address_variant"]
 not_in     = mail_df[mail_df["address_status"] == "not_in_gold"]
 collisions = mail_df[mail_df["address_status"] == "name_collision_different_people"]
 
@@ -472,16 +470,14 @@ compare_df = pd.DataFrame(compare_rows)
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    mail_df.to_excel(writer, sheet_name="all",                        index=False)
-    multi.to_excel(  writer, sheet_name="multiple_addresses",         index=False)
+    mail_df.to_excel(writer, sheet_name="all",                           index=False)
+    multi.to_excel(  writer, sheet_name="multiple_addresses",            index=False)
     compare_df.to_excel(writer, sheet_name="multiple_addresses_compare", index=False)
-    variant.to_excel(writer, sheet_name="same_address_variant",       index=False)
-    collisions.to_excel(writer, sheet_name="name_collision",          index=False)
-    not_in.to_excel( writer, sheet_name="not_in_gold",                index=False)
+    collisions.to_excel(writer, sheet_name="name_collision",             index=False)
+    not_in.to_excel( writer, sheet_name="not_in_gold",                   index=False)
     print(f"  all                          : {len(mail_df)}")
     print(f"  multiple_addresses           : {len(multi)}")
     print(f"  multiple_addresses_compare   : {len(compare_df)} rows, {len(compare_df.columns)} cols")
-    print(f"  same_address_variant         : {len(variant)}")
     print(f"  name_collision               : {len(collisions)}")
     print(f"  not_in_gold                  : {len(not_in)}")
 
