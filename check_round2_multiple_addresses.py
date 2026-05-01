@@ -44,6 +44,9 @@ REF_FILES = [
     BASE / "NPPES" / "npi_results_physician_assistants_new.xlsx",
 ]
 
+# Only these sheets are used from the NPPES files; "grey" sheets are excluded
+NPPES_ALLOWED_SHEETS = {"clear", "orange"}
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def norm(s) -> str:
     if s is None or (isinstance(s, float) and pd.isna(s)):
@@ -300,7 +303,11 @@ for ref_path in REF_FILES:
         continue
     print(f"\n  {ref_path.name}")
     sheets = pd.read_excel(ref_path, sheet_name=None, dtype=str)
+    is_nppes = ref_path.parent.name == "NPPES"
     for sheet_name, df in sheets.items():
+        if is_nppes and sheet_name.strip().lower() not in NPPES_ALLOWED_SHEETS:
+            print(f"    Skipping sheet '{sheet_name}'")
+            continue
         df = df.fillna("")
         cols = detect_gold_cols(df, sheet_name)
         npi_col    = find_col(df, ["npi", "NPI"])
