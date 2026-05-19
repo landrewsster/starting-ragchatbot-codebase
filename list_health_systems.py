@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# ── Self-update: always pull the latest version before running ────────────────
+import os, sys, urllib.request
+_URL = ("https://raw.githubusercontent.com/landrewsster/"
+        "starting-ragchatbot-codebase/claude/clean-sort-merge-npi-GngZZ/"
+        "list_health_systems.py")
+try:
+    _new = urllib.request.urlopen(_URL, timeout=10).read()
+    _old = open(__file__, "rb").read()
+    if _new != _old:
+        open(__file__, "wb").write(_new)
+        print("Updated list_health_systems.py — restarting ...")
+        os.execv(sys.executable, [sys.executable, __file__] + sys.argv[1:])
+except Exception as _e:
+    print(f"(self-update skipped: {_e})")
+# ─────────────────────────────────────────────────────────────────────────────
+
 """
 list_health_systems.py
 
