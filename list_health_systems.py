@@ -22,7 +22,7 @@ import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-INPUT_FILE  = BASE / "mailed_providers_hs_reprocessed.xlsx"
+INPUT_FILE  = BASE / "MailingList_Round3_20260519.xlsx"
 INPUT_SHEET = "mailed_providers_hs"
 OUTPUT_FILE = BASE / "health_systems_ranked.xlsx"
 
