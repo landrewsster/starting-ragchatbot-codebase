@@ -18,10 +18,10 @@ except Exception as _e:
 """
 cross_reference_providers.py
 
-Name-match individual providers between the dup check list and the Round 3
-mailing list to find:
-  - Providers in the dup list NOT in Round 3
-  - Providers in Round 3 NOT in the dup list
+Name-match individual providers between ManualSearch_05172026.xlsx and the
+Round 3 mailing list to find:
+  - Providers in the manual search file NOT in Round 3
+  - Providers in Round 3 NOT in the manual search file
   - Providers matched in both
 
 Matching is done by normalized (last, first) name key.  Suffix stripping
@@ -29,8 +29,8 @@ Matching is done by normalized (last, first) name key.  Suffix stripping
 before comparison.
 
 Output: provider_crossref.xlsx
-  not_in_round3   — dup list providers with no Round 3 match
-  not_in_dup      — Round 3 providers with no dup list match
+  not_in_round3   — manual search providers with no Round 3 match
+  not_in_dup      — Round 3 providers not in manual search file
   matched         — providers found in both lists
 
 Usage:
@@ -45,7 +45,7 @@ import pandas as pd
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 ROUND3_FILE = BASE / "MailingList_Round3_20260519.xlsx"
-DUP_FILE    = BASE / "dup check list.xlsx"
+DUP_FILE    = BASE / "ManualSearch_05172026.xlsx"
 OUTPUT_FILE = BASE / "provider_crossref.xlsx"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -123,19 +123,26 @@ for idx, row in r3.iterrows():
 
 print(f"  Unique name keys in Round 3: {len(r3_key_to_rows)}")
 
-# ── Load dup check list ───────────────────────────────────────────────────────
-print(f"\nLoading dup check list: {DUP_FILE.name}")
-dup = pd.read_excel(DUP_FILE, dtype=str).fillna("")
+# ── Load manual search file ───────────────────────────────────────────────────
+print(f"\nLoading manual search file: {DUP_FILE.name}")
+xl_dup = pd.ExcelFile(DUP_FILE)
+print(f"  Sheets: {xl_dup.sheet_names}")
+dup = xl_dup.parse(xl_dup.sheet_names[0], dtype=str).fillna("")
 print(f"  {len(dup)} rows")
 print(f"  Columns: {list(dup.columns)}")
 
-dup_last  = find_col(dup, ["Last_Name",  "last_name",  "LastName",  "Last Name"])
-dup_first = find_col(dup, ["First_Name", "first_name", "FirstName", "First Name"])
+dup_last  = find_col(dup, ["Last_Name",  "last_name",  "LastName",  "Last Name",
+                            "last",       "LAST",       "surname",   "Surname"])
+dup_first = find_col(dup, ["First_Name", "first_name", "FirstName", "First Name",
+                            "first",      "FIRST",      "given_name"])
 
+# Positional fallback — print columns and let user know
 if not dup_last:
-    raise SystemExit(f"ERROR: no Last_Name column found in dup check list.")
+    print(f"  WARNING: no last name column found — using column A ({dup.columns[0]!r})")
+    dup_last = dup.columns[0]
 if not dup_first:
-    raise SystemExit(f"ERROR: no First_Name column found in dup check list.")
+    print(f"  WARNING: no first name column found — using column B ({dup.columns[1]!r})")
+    dup_first = dup.columns[1]
 
 print(f"  last={dup_last!r}  first={dup_first!r}")
 
@@ -211,10 +218,13 @@ not_in_dup = (
 )
 
 # ── Terminal summary for not_in_r3 ────────────────────────────────────────────
-print(f"\nDup list providers NOT in Round 3 ({len(not_in_r3)}):")
+sys_col  = find_col(dup, ["System", "system", "health_system", "HealthSystem"])
+city_col = find_col(dup, ["Clinic_City", "clinic_city", "City", "city"])
+
+print(f"\nManual search providers NOT in Round 3 ({len(not_in_r3)}):")
 for _, row in not_in_r3.iterrows():
-    sys_val  = row.get("System", "")
-    city_val = row.get("Clinic_City", "")
+    sys_val  = row.get(sys_col,  "") if sys_col  else ""
+    city_val = row.get(city_col, "") if city_col else ""
     print(f"  {row[dup_last]}, {row[dup_first]}  |  {sys_val}  |  {city_val}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
