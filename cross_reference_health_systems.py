@@ -109,7 +109,7 @@ unmatched_r3 = r3[r3["health_system"] == ""]
 print(f"  Round 3 matched to health system : {len(matched_r3)}")
 print(f"  Round 3 unmatched                : {len(unmatched_r3)}")
 
-# ── Health system counts for Round 3 ─────────────────────────────────────────
+# ── Health system + city counts for Round 3 ──────────────────────────────────
 r3_hs_counts = (
     matched_r3.groupby("health_system")
     .size()
@@ -118,36 +118,68 @@ r3_hs_counts = (
 )
 r3_hs_set = set(r3_hs_counts["health_system"])
 
+r3_loc_counts = (
+    matched_r3.groupby(["health_system", "health_system_city"])
+    .size()
+    .reset_index(name="round3_providers")
+    .sort_values("round3_providers", ascending=False)
+)
+r3_loc_set = {(row["health_system"], row["health_system_city"])
+              for _, row in r3_loc_counts.iterrows()}
+
 # ── Load dup check list ───────────────────────────────────────────────────────
 print(f"\nLoading dup check list: {DUP_FILE.name}")
 dup = pd.read_excel(DUP_FILE, dtype=str).fillna("")
 print(f"  {len(dup)} rows")
 
-dup_sys_col = find_col(dup, ["System", "system", "health_system"])
+dup_sys_col  = find_col(dup, ["System", "system", "health_system"])
+dup_city_col = find_col(dup, ["Clinic_City", "clinic_city", "city", "City"])
 if not dup_sys_col:
     raise SystemExit(f"ERROR: no System column found. Columns: {list(dup.columns)}")
 
 dup["_system"] = dup[dup_sys_col].apply(norm)
+dup["_city"]   = dup[dup_city_col].apply(norm) if dup_city_col else ""
+
+dup_valid = dup[dup["_system"] != ""]
+
 dup_hs_counts = (
-    dup[dup["_system"] != ""]
-    .groupby("_system")
+    dup_valid.groupby("_system")
     .size()
     .reset_index(name="dup_providers")
     .sort_values("dup_providers", ascending=False)
 )
 dup_hs_set = set(dup_hs_counts["_system"])
 
-print(f"  Unique systems in dup check list : {len(dup_hs_set)}")
-print(f"  Unique systems in Round 3        : {len(r3_hs_set)}")
+dup_loc_counts = (
+    dup_valid.groupby(["_system", "_city"])
+    .size()
+    .reset_index(name="dup_providers")
+    .sort_values("dup_providers", ascending=False)
+)
+dup_loc_set = {(row["_system"], row["_city"]) for _, row in dup_loc_counts.iterrows()}
 
-# ── Compare ───────────────────────────────────────────────────────────────────
+print(f"  Unique systems in dup check list         : {len(dup_hs_set)}")
+print(f"  Unique (system, city) in dup check list  : {len(dup_loc_set)}")
+print(f"  Unique systems in Round 3                : {len(r3_hs_set)}")
+print(f"  Unique (system, city) in Round 3         : {len(r3_loc_set)}")
+
+# ── System-level comparison ───────────────────────────────────────────────────
 only_in_r3  = r3_hs_set - dup_hs_set
 only_in_dup = dup_hs_set - r3_hs_set
 in_both     = r3_hs_set & dup_hs_set
 
-print(f"\n  In Round 3, missing from dup list : {len(only_in_r3)}")
-print(f"  In dup list, missing from Round 3 : {len(only_in_dup)}")
-print(f"  In both                           : {len(in_both)}")
+print(f"\n  Systems in Round 3, missing from dup list : {len(only_in_r3)}")
+print(f"  Systems in dup list, missing from Round 3 : {len(only_in_dup)}")
+print(f"  Systems in both                           : {len(in_both)}")
+
+# ── (System, city) level comparison ──────────────────────────────────────────
+only_loc_in_r3  = r3_loc_set - dup_loc_set
+only_loc_in_dup = dup_loc_set - r3_loc_set
+in_both_loc     = r3_loc_set & dup_loc_set
+
+print(f"\n  (System, city) in Round 3, missing from dup list : {len(only_loc_in_r3)}")
+print(f"  (System, city) in dup list, missing from Round 3 : {len(only_loc_in_dup)}")
+print(f"  (System, city) in both                           : {len(in_both_loc)}")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 in_r3_not_dup = (
@@ -171,6 +203,33 @@ matched_df = (
     .reset_index(drop=True)
 )
 
+# Location-level sheets
+loc_r3_not_dup = (
+    r3_loc_counts[r3_loc_counts.apply(
+        lambda r: (r["health_system"], r["health_system_city"]) in only_loc_in_r3, axis=1)]
+    .sort_values("round3_providers", ascending=False)
+    .reset_index(drop=True)
+)
+
+loc_dup_not_r3 = (
+    dup_loc_counts[dup_loc_counts.apply(
+        lambda r: (r["_system"], r["_city"]) in only_loc_in_dup, axis=1)]
+    .rename(columns={"_system": "health_system", "_city": "city"})
+    .sort_values("dup_providers", ascending=False)
+    .reset_index(drop=True)
+)
+
+loc_matched = (
+    r3_loc_counts[r3_loc_counts.apply(
+        lambda r: (r["health_system"], r["health_system_city"]) in in_both_loc, axis=1)]
+    .merge(
+        dup_loc_counts.rename(columns={"_system": "health_system", "_city": "health_system_city"}),
+        on=["health_system", "health_system_city"], how="left"
+    )
+    .sort_values("round3_providers", ascending=False)
+    .reset_index(drop=True)
+)
+
 # ── Terminal summary ──────────────────────────────────────────────────────────
 print(f"\nSystems in Round 3 NOT in dup check list ({len(in_r3_not_dup)}):")
 for _, row in in_r3_not_dup.iterrows():
@@ -183,13 +242,19 @@ for _, row in in_dup_not_r3.iterrows():
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    in_r3_not_dup.to_excel(writer, sheet_name="in_round3_not_in_dup", index=False)
-    in_dup_not_r3.to_excel(writer, sheet_name="in_dup_not_in_round3", index=False)
-    matched_df.to_excel(   writer, sheet_name="matched",              index=False)
-    unmatched_r3.to_excel( writer, sheet_name="round3_unmatched",     index=False)
-    print(f"  in_round3_not_in_dup : {len(in_r3_not_dup)}")
-    print(f"  in_dup_not_in_round3 : {len(in_dup_not_r3)}")
-    print(f"  matched              : {len(matched_df)}")
-    print(f"  round3_unmatched     : {len(unmatched_r3)}")
+    in_r3_not_dup.to_excel( writer, sheet_name="sys_in_r3_not_dup",  index=False)
+    in_dup_not_r3.to_excel( writer, sheet_name="sys_in_dup_not_r3",  index=False)
+    matched_df.to_excel(    writer, sheet_name="sys_matched",         index=False)
+    loc_r3_not_dup.to_excel(writer, sheet_name="loc_in_r3_not_dup",  index=False)
+    loc_dup_not_r3.to_excel(writer, sheet_name="loc_in_dup_not_r3",  index=False)
+    loc_matched.to_excel(   writer, sheet_name="loc_matched",         index=False)
+    unmatched_r3.to_excel(  writer, sheet_name="round3_unmatched",    index=False)
+    print(f"  sys_in_r3_not_dup  : {len(in_r3_not_dup)}")
+    print(f"  sys_in_dup_not_r3  : {len(in_dup_not_r3)}")
+    print(f"  sys_matched        : {len(matched_df)}")
+    print(f"  loc_in_r3_not_dup  : {len(loc_r3_not_dup)}")
+    print(f"  loc_in_dup_not_r3  : {len(loc_dup_not_r3)}")
+    print(f"  loc_matched        : {len(loc_matched)}")
+    print(f"  round3_unmatched   : {len(unmatched_r3)}")
 
 print("\nDone.")
