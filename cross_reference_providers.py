@@ -146,8 +146,17 @@ if not dup_first:
 
 print(f"  last={dup_last!r}  first={dup_first!r}")
 
+# ── Deduplicate manual search file by name ────────────────────────────────────
+dup["_norm_key"] = dup.apply(
+    lambda row: make_key(row[dup_last], row[dup_first]), axis=1
+)
+before = len(dup)
+dup = dup.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
+after = len(dup)
+print(f"  Duplicates removed from manual search file: {before - after}  ({after} unique providers remain)")
+
 # ── Match dup list against Round 3 ───────────────────────────────────────────
-print(f"\nMatching {len(dup)} dup list providers against Round 3 ...")
+print(f"\nMatching {after} manual search providers against Round 3 ...")
 
 dup_matched_flags = []   # True if found in Round 3
 dup_r3_name       = []   # The matched Round 3 name (for review)
@@ -200,14 +209,14 @@ print(f"  Round 3 in dup list         : {sum(r3_matched_flags)}")
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_r3 = (
     dup[~dup["_in_round3"]]
-    .drop(columns=["_in_round3", "_r3_name_match"])
+    .drop(columns=["_in_round3", "_r3_name_match", "_norm_key"])
     .reset_index(drop=True)
 )
 
 matched_dup = (
     dup[dup["_in_round3"]]
     .rename(columns={"_r3_name_match": "round3_name_match"})
-    .drop(columns=["_in_round3"])
+    .drop(columns=["_in_round3", "_norm_key"])
     .reset_index(drop=True)
 )
 
