@@ -239,9 +239,11 @@ except FileNotFoundError:
     raise SystemExit(f"ERROR: {LICENSE_FILE} not found")
 print(f"  {len(lic_df)} rows | columns: {list(lic_df.columns)}")
 
-l_last  = find_col(lic_df, ["last_name", "LastName", "Last Name", "last", "LAST"]) or lic_df.columns[0]
-l_first = find_col(lic_df, ["first_name", "FirstName", "First Name", "first", "FIRST"]) or lic_df.columns[1]
+l_last  = find_col(lic_df, ["last_name", "LastName", "Last Name"]) or lic_df.columns[0]
+l_first = find_col(lic_df, ["first_name", "FirstName", "First Name"]) or lic_df.columns[1]
 print(f"  last={l_last!r}  first={l_first!r}")
+print(f"  sample last values : {lic_df[l_last].dropna().head(3).tolist()}")
+print(f"  sample first values: {lic_df[l_first].dropna().head(3).tolist()}")
 
 lic_key_to_idx: dict[str, int] = {}
 for idx, row in lic_df.iterrows():
