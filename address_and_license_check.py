@@ -20,21 +20,19 @@ address_and_license_check.py
 
 Two tasks:
 
-1. ADDRESS COMPARISON (matched providers)
-   Re-runs the ManualSearch vs Round 3 name match, then for each matched
-   pair compares the address from both files. Flags as same, different,
-   or missing on one side.
+1. ADDRESS COMPARISON (matched.csv)
+   For each provider in matched.csv, look them up in the master mailing
+   list by name and compare addresses side-by-side.
 
-2. LICENSE BOARD CHECK (not-in-Round-3 providers)
-   Name-matches the unmatched manual search providers against the MN
-   Physician and PA list (MN State Licensing Board) to see who appears
-   in the state licensing file.
+2. LICENSE BOARD CHECK (not_in_master.csv)
+   Name-match providers in not_in_master.csv against the MN Physician
+   and PA list (MN State Licensing Board).
 
 Output: address_and_license_check.xlsx
   address_same       — matched providers with the same address
   address_different  — matched providers with differing addresses
-  in_license_board   — not-in-Round-3 providers found in MN license file
-  not_in_license     — not-in-Round-3 providers not found in MN license file
+  in_license_board   — not-in-master providers found in MN license file
+  not_in_license     — not-in-master providers not found in license file
 
 Usage:
     python3 address_and_license_check.py
@@ -47,8 +45,9 @@ import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-ROUND3_FILE  = BASE / "MailingList_Round3_20260519.xlsx"
-MANUAL_FILE  = BASE / "ManualSearch_05172026.xlsx"
+MATCHED_FILE = BASE / "matched.csv"
+NOTMATCH_FILE= BASE / "not_in_master.csv"
+MASTER_FILE  = BASE / "MasterMailingList_multiple_address_check_20260504.xlsx - all.csv"
 LICENSE_FILE = BASE / "MN State Licensing Board" / "MN Physician and PA list March 2026.xlsx"
 OUTPUT_FILE  = BASE / "address_and_license_check.xlsx"
 
@@ -96,12 +95,6 @@ def find_col(df, candidates):
             return low[c.lower()]
     return None
 
-def make_key(last: str, first: str) -> str:
-    l  = clean_name(last)
-    f  = clean_name(first)
-    f1 = f.split()[0] if f else ""
-    return f"{l}|{f1}"
-
 def lf_keys(last: str, first: str) -> set[str]:
     l  = clean_name(last)
     f  = clean_name(first)
@@ -123,134 +116,145 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
         keys |= lf_keys(words[-1], col_a)
     return keys
 
-# ── Load Round 3 ──────────────────────────────────────────────────────────────
-print(f"\nLoading Round 3: {ROUND3_FILE.name}")
-r3 = pd.read_excel(ROUND3_FILE, dtype=str).fillna("")
-print(f"  {len(r3)} rows | columns: {list(r3.columns)}")
+# ── Load matched.csv ──────────────────────────────────────────────────────────
+print(f"\nLoading matched file: {MATCHED_FILE.name}")
+try:
+    matched = pd.read_csv(MATCHED_FILE, dtype=str).fillna("")
+except FileNotFoundError:
+    raise SystemExit(f"ERROR: {MATCHED_FILE} not found")
+print(f"  {len(matched)} rows | columns: {list(matched.columns)}")
 
-r3_last  = find_col(r3, ["last_name", "LastName", "Last Name"]) or r3.columns[0]
-r3_first = find_col(r3, ["first_name", "FirstName", "First Name"]) or r3.columns[1]
-r3_mid   = find_col(r3, ["middle_name", "middle", "MiddleName"]) or (r3.columns[2] if len(r3.columns) > 2 else None)
-r3_addr  = find_col(r3, ["primary_address_1", "Delivery Address", "address_line1"])
-r3_city  = find_col(r3, ["primary_city", "City", "city"])
-r3_zip   = find_col(r3, ["zip5", "ZIP+4", "zip", "Zip"])
-print(f"  last={r3_last!r}  first={r3_first!r}  mid={r3_mid!r}")
-print(f"  addr={r3_addr!r}  city={r3_city!r}  zip={r3_zip!r}")
+m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
+m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
+m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_middle_initial"])
+m_addr  = find_col(matched, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
+m_city  = find_col(matched, ["primary_city", "Clinic_City", "city", "City"])
+m_zip   = find_col(matched, ["zip5", "Clinic_Zip", "zip", "Zip"])
+print(f"  last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
+print(f"  addr={m_addr!r}  city={m_city!r}  zip={m_zip!r}")
 
-r3_key_to_idx: dict[str, int] = {}
-for idx, row in r3.iterrows():
-    for key in make_all_keys(row[r3_last], row[r3_first]):
-        r3_key_to_idx.setdefault(key, idx)
+# ── Load not_in_master.csv ────────────────────────────────────────────────────
+print(f"\nLoading not-in-master file: {NOTMATCH_FILE.name}")
+try:
+    not_matched = pd.read_csv(NOTMATCH_FILE, dtype=str).fillna("")
+except FileNotFoundError:
+    raise SystemExit(f"ERROR: {NOTMATCH_FILE} not found")
+print(f"  {len(not_matched)} rows | columns: {list(not_matched.columns)}")
 
-# ── Load manual search file ───────────────────────────────────────────────────
-print(f"\nLoading manual search file: {MANUAL_FILE.name}")
-xl = pd.ExcelFile(MANUAL_FILE)
-sheet = "ProviderList_COMBINED" if "ProviderList_COMBINED" in xl.sheet_names else xl.sheet_names[0]
-print(f"  Using sheet: {sheet!r}")
-manual = xl.parse(sheet, dtype=str).fillna("")
-print(f"  {len(manual)} rows | columns: {list(manual.columns)}")
+nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
+nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
+print(f"  last={nm_last!r}  first={nm_first!r}")
 
-s_last  = find_col(manual, ["Last_Name",  "last_name",  "LastName",  "Last Name"])  or manual.columns[0]
-s_first = find_col(manual, ["First_Name", "first_name", "FirstName", "First Name"]) or manual.columns[1]
-s_mid   = find_col(manual, ["middle_name", "middle", "MiddleName", "middle_initial"]) or (manual.columns[1] if len(manual.columns) > 1 else None)
-s_addr  = find_col(manual, ["primary_address_1", "address", "Address", "Clinic_Address", "address_line1"])
-s_city  = find_col(manual, ["primary_city", "city", "City", "Clinic_City"])
-s_zip   = find_col(manual, ["zip5", "zip", "Zip", "Clinic_Zip", "ZIP"])
-print(f"  last={s_last!r}  first={s_first!r}  mid={s_mid!r}")
-print(f"  addr={s_addr!r}  city={s_city!r}  zip={s_zip!r}")
+# ── Load master mailing list (CSV) for address lookup ─────────────────────────
+print(f"\nLoading master mailing list: {MASTER_FILE.name}")
+try:
+    master = pd.read_csv(MASTER_FILE, dtype=str).fillna("")
+except FileNotFoundError:
+    raise SystemExit(f"ERROR: {MASTER_FILE} not found")
+print(f"  {len(master)} rows | columns: {list(master.columns)}")
 
-# Deduplicate by name
-manual["_norm_key"] = manual.apply(lambda row: make_key(row[s_last], row[s_first]), axis=1)
-before = len(manual)
-manual = manual.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
-print(f"  Duplicates removed: {before - len(manual)}  ({len(manual)} unique providers remain)")
+ma_last  = find_col(master, ["last_name", "LastName", "Last Name"]) or master.columns[0]
+ma_first = find_col(master, ["first_name", "FirstName", "First Name"]) or master.columns[1]
+ma_addr  = find_col(master, ["primary_address_1", "Delivery Address", "address_line1"])
+ma_city  = find_col(master, ["primary_city", "City", "city"])
+ma_zip   = find_col(master, ["zip5", "zip", "Zip"])
+print(f"  last={ma_last!r}  first={ma_first!r}")
+print(f"  addr={ma_addr!r}  city={ma_city!r}  zip={ma_zip!r}")
 
-# ── Match and compare addresses ───────────────────────────────────────────────
-print(f"\nMatching and comparing addresses ...")
+# Build name → row index lookup from master
+master_key_to_idx: dict[str, int] = {}
+for idx, row in master.iterrows():
+    for key in make_all_keys(row[ma_last], row[ma_first]):
+        master_key_to_idx.setdefault(key, idx)
+print(f"  Unique name keys: {len(master_key_to_idx)}")
+
+# ── Compare addresses for matched providers ───────────────────────────────────
+print(f"\nComparing addresses for {len(matched)} matched providers ...")
 
 addr_rows = []
-unmatched_rows = []
+for _, row in matched.iterrows():
+    keys      = make_all_keys(row[m_last], row[m_first])
+    found_idx = next((master_key_to_idx[k] for k in keys if k in master_key_to_idx), None)
 
-for _, row in manual.iterrows():
-    keys      = make_all_keys(row[s_last], row[s_first])
-    found_idx = next((r3_key_to_idx[k] for k in keys if k in r3_key_to_idx), None)
+    manual_name = f"{row[m_last]}, {row[m_first]}"
+    if m_mid and row.get(m_mid, ""):
+        manual_name += f" {row[m_mid]}"
 
-    manual_name = f"{row[s_last]}, {row[s_first]} {row[s_mid] if s_mid else ''}".strip()
+    m_addr_raw  = row[m_addr]  if m_addr  else ""
+    m_city_raw  = row[m_city]  if m_city  else ""
+    m_zip_raw   = row[m_zip]   if m_zip   else ""
 
     if found_idx is not None:
-        r3_row   = r3.iloc[found_idx]
-        r3_name  = f"{r3_row[r3_last]}, {r3_row[r3_first]} {r3_row[r3_mid] if r3_mid else ''}".strip()
+        ma_row       = master.iloc[found_idx]
+        master_name  = f"{ma_row[ma_last]}, {ma_row[ma_first]}"
+        ma_addr_raw  = ma_row[ma_addr] if ma_addr else ""
+        ma_city_raw  = ma_row[ma_city] if ma_city else ""
+        ma_zip_raw   = ma_row[ma_zip]  if ma_zip  else ""
 
-        m_addr_raw  = row[s_addr]  if s_addr  else ""
-        m_city_raw  = row[s_city]  if s_city  else ""
-        m_zip_raw   = row[s_zip]   if s_zip   else ""
-        r3_addr_raw = r3_row[r3_addr] if r3_addr else ""
-        r3_city_raw = r3_row[r3_city] if r3_city else ""
-        r3_zip_raw  = r3_row[r3_zip]  if r3_zip  else ""
-
-        m_addr_norm  = f"{norm_addr(m_addr_raw)}|{norm(m_city_raw)}|{zip5(m_zip_raw)}"
-        r3_addr_norm = f"{norm_addr(r3_addr_raw)}|{norm(r3_city_raw)}|{zip5(r3_zip_raw)}"
-        same = (m_addr_norm == r3_addr_norm)
+        m_norm  = f"{norm_addr(m_addr_raw)}|{norm(m_city_raw)}|{zip5(m_zip_raw)}"
+        ma_norm = f"{norm_addr(ma_addr_raw)}|{norm(ma_city_raw)}|{zip5(ma_zip_raw)}"
+        same    = (m_norm == ma_norm)
 
         addr_rows.append({
             "manual_name":      manual_name,
-            "r3_name_match":    r3_name,
+            "master_name":      master_name,
             "address_match":    "same" if same else "different",
             "manual_address":   m_addr_raw,
             "manual_city":      m_city_raw,
             "manual_zip":       m_zip_raw,
-            "r3_address":       r3_addr_raw,
-            "r3_city":          r3_city_raw,
-            "r3_zip":           r3_zip_raw,
+            "master_address":   ma_addr_raw,
+            "master_city":      ma_city_raw,
+            "master_zip":       ma_zip_raw,
         })
     else:
-        unmatched_rows.append(row)
+        addr_rows.append({
+            "manual_name":      manual_name,
+            "master_name":      "(not found in master)",
+            "address_match":    "not_found",
+            "manual_address":   m_addr_raw,
+            "manual_city":      m_city_raw,
+            "manual_zip":       m_zip_raw,
+            "master_address":   "",
+            "master_city":      "",
+            "master_zip":       "",
+        })
 
-addr_df      = pd.DataFrame(addr_rows)
-unmatched_df = pd.DataFrame(unmatched_rows).drop(columns=["_norm_key"], errors="ignore")
+addr_df  = pd.DataFrame(addr_rows)
+n_same   = (addr_df["address_match"] == "same").sum()
+n_diff   = (addr_df["address_match"] == "different").sum()
+n_nf     = (addr_df["address_match"] == "not_found").sum()
+print(f"  Same address      : {n_same}")
+print(f"  Different address : {n_diff}")
+print(f"  Not found in master: {n_nf}")
 
-n_same = (addr_df["address_match"] == "same").sum()     if len(addr_df) else 0
-n_diff = (addr_df["address_match"] == "different").sum() if len(addr_df) else 0
-print(f"  Matched providers       : {len(addr_df)}")
-print(f"    Same address          : {n_same}")
-print(f"    Different address     : {n_diff}")
-print(f"  Not in Round 3         : {len(unmatched_rows)}")
-
-# ── Load MN licensing board file ──────────────────────────────────────────────
+# ── Load MN licensing board ───────────────────────────────────────────────────
 print(f"\nLoading MN licensing board: {LICENSE_FILE.name}")
 try:
-    lic_xl    = pd.ExcelFile(LICENSE_FILE)
+    lic_xl = pd.ExcelFile(LICENSE_FILE)
     print(f"  Sheets: {lic_xl.sheet_names}")
-    lic_df    = lic_xl.parse(lic_xl.sheet_names[0], dtype=str).fillna("")
+    lic_df = lic_xl.parse(lic_xl.sheet_names[0], dtype=str).fillna("")
 except FileNotFoundError:
     raise SystemExit(f"ERROR: {LICENSE_FILE} not found")
 print(f"  {len(lic_df)} rows | columns: {list(lic_df.columns)}")
 
-l_last  = find_col(lic_df, ["last_name", "LastName", "Last Name", "last", "LAST"])
-l_first = find_col(lic_df, ["first_name", "FirstName", "First Name", "first", "FIRST"])
-if not l_last:
-    l_last  = lic_df.columns[0]
-    print(f"  WARNING: using column A ({l_last!r}) as last name")
-if not l_first:
-    l_first = lic_df.columns[1]
-    print(f"  WARNING: using column B ({l_first!r}) as first name")
+l_last  = find_col(lic_df, ["last_name", "LastName", "Last Name", "last", "LAST"]) or lic_df.columns[0]
+l_first = find_col(lic_df, ["first_name", "FirstName", "First Name", "first", "FIRST"]) or lic_df.columns[1]
 print(f"  last={l_last!r}  first={l_first!r}")
 
 lic_key_to_idx: dict[str, int] = {}
 for idx, row in lic_df.iterrows():
     for key in make_all_keys(row[l_last], row[l_first]):
         lic_key_to_idx.setdefault(key, idx)
+print(f"  Unique name keys: {len(lic_key_to_idx)}")
 
-print(f"  Unique name keys in license file: {len(lic_key_to_idx)}")
-
-# ── Match not-in-Round-3 against licensing board ──────────────────────────────
-print(f"\nChecking {len(unmatched_rows)} not-in-Round-3 providers against license board ...")
+# ── Match not_in_master against licensing board ───────────────────────────────
+print(f"\nChecking {len(not_matched)} not-in-master providers against license board ...")
 
 in_license     = []
 not_in_license = []
 
-for _, row in unmatched_df.iterrows():
-    keys      = make_all_keys(row[s_last], row[s_first] if s_first else "")
+for _, row in not_matched.iterrows():
+    keys      = make_all_keys(row[nm_last], row[nm_first])
     found_idx = next((lic_key_to_idx[k] for k in keys if k in lic_key_to_idx), None)
 
     if found_idx is not None:
@@ -264,24 +268,23 @@ for _, row in unmatched_df.iterrows():
 
 in_lic_df     = pd.DataFrame(in_license).reset_index(drop=True)
 not_in_lic_df = pd.DataFrame(not_in_license).reset_index(drop=True)
-print(f"  Found in license board  : {len(in_lic_df)}")
-print(f"  Not in license board    : {len(not_in_lic_df)}")
+print(f"  Found in license board : {len(in_lic_df)}")
+print(f"  Not in license board   : {len(not_in_lic_df)}")
 
 # ── Terminal summary ──────────────────────────────────────────────────────────
-if len(addr_df):
-    print(f"\nProviders with DIFFERENT addresses ({n_diff}):")
-    for _, row in addr_df[addr_df["address_match"] == "different"].iterrows():
-        print(f"  {row['manual_name']}")
-        print(f"    Manual : {row['manual_address']}, {row['manual_city']} {row['manual_zip']}")
-        print(f"    Round3 : {row['r3_address']}, {row['r3_city']} {row['r3_zip']}")
+print(f"\nProviders with DIFFERENT addresses ({n_diff}):")
+for _, row in addr_df[addr_df["address_match"] == "different"].iterrows():
+    print(f"  {row['manual_name']}")
+    print(f"    Manual : {row['manual_address']}, {row['manual_city']} {row['manual_zip']}")
+    print(f"    Master : {row['master_address']}, {row['master_city']} {row['master_zip']}")
 
-print(f"\nNot-in-Round-3 found in license board ({len(in_lic_df)}):")
+print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
 for _, row in in_lic_df.iterrows():
-    print(f"  {row[s_last]}, {row[s_first]}  →  {row['license_name_match']}")
+    print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-addr_same = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)   if len(addr_df) else pd.DataFrame()
-addr_diff = addr_df[addr_df["address_match"] == "different"].reset_index(drop=True) if len(addr_df) else pd.DataFrame()
+addr_same = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
+addr_diff = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
