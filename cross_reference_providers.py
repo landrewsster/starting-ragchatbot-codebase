@@ -178,6 +178,7 @@ manual["_norm_key"] = manual.apply(
     lambda row: make_key(row[s_last], row[s_first] if s_first else ""), axis=1
 )
 before = len(manual)
+dups_removed = manual[manual.duplicated(subset=["_norm_key"], keep="first")].copy()
 manual = manual.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
 after  = len(manual)
 print(f"  Duplicates removed: {before - after}  ({after} unique providers remain)")
@@ -241,11 +242,15 @@ for _, row in not_in_master.iterrows():
     print(f"  {row[s_last]}, {row[s_first]}  |  {sys_val}  |  {city_val}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
+dups_out = dups_removed.drop(columns=["_norm_key"], errors="ignore").reset_index(drop=True)
+
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    not_in_master.to_excel(writer, sheet_name="not_in_master", index=False)
-    matched_df.to_excel(   writer, sheet_name="matched",        index=False)
-    print(f"  not_in_master : {len(not_in_master)} providers")
-    print(f"  matched       : {len(matched_df)} providers")
+    not_in_master.to_excel(writer, sheet_name="not_in_master",     index=False)
+    matched_df.to_excel(   writer, sheet_name="matched",            index=False)
+    dups_out.to_excel(     writer, sheet_name="removed_duplicates", index=False)
+    print(f"  not_in_master      : {len(not_in_master)} providers")
+    print(f"  matched            : {len(matched_df)} providers")
+    print(f"  removed_duplicates : {len(dups_out)} providers")
 
 print("\nDone.")
