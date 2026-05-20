@@ -249,15 +249,11 @@ for idx, row in lic_df.iterrows():
         lic_key_to_idx.setdefault(key, idx)
 print(f"  Unique name keys: {len(lic_key_to_idx)}")
 
-# Debug: show license keys containing 'baker' and sample raw rows
-baker_keys = [k for k in lic_key_to_idx if "baker" in k]
-print(f"  DEBUG license keys containing 'baker': {baker_keys}")
-baker_rows = lic_df[lic_df[l_last].str.lower().str.contains("baker", na=False)
-                    | lic_df[l_first].str.lower().str.contains("baker", na=False)]
-if not baker_rows.empty:
-    print(f"  DEBUG raw baker rows in license file:")
-    for _, r in baker_rows.iterrows():
-        print(f"    {l_last}={r[l_last]!r}  {l_first}={r[l_first]!r}")
+# Collect debug info for Baker — printed at end
+_debug_baker_lic_keys  = [k for k in lic_key_to_idx if "baker" in k]
+_debug_baker_lic_rows  = lic_df[lic_df[l_last].str.lower().str.contains("baker", na=False)
+                                | lic_df[l_first].str.lower().str.contains("baker", na=False)]
+_debug_baker_nm_keys   = []
 
 # ── Match not_in_master against licensing board ───────────────────────────────
 print(f"\nChecking {len(not_matched)} not-in-master providers against license board ...")
@@ -274,10 +270,10 @@ for _, row in not_matched.iterrows():
         keys |= make_all_keys(row[nm_third], row[nm_last])
         keys |= make_all_keys(row[nm_third], row[nm_first])
 
-    # Debug: print keys for Baker
+    # Collect Baker debug info
     if "baker" in norm(row[nm_last]) or "baker" in norm(row[nm_first]) or \
        (nm_third and "baker" in norm(row[nm_third])):
-        print(f"  DEBUG Baker keys generated: {sorted(keys)}")
+        _debug_baker_nm_keys.append(sorted(keys))
 
     found_idx = next((lic_key_to_idx[k] for k in keys if k in lic_key_to_idx), None)
 
@@ -322,3 +318,16 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  not_in_license      : {len(not_in_lic_df)}")
 
 print("\nDone.")
+
+# ── DEBUG: Baker name matching ────────────────────────────────────────────────
+print("\n── DEBUG: Baker ──────────────────────────────────────────────────────")
+print(f"  License keys containing 'baker'  : {_debug_baker_lic_keys}")
+if not _debug_baker_lic_rows.empty:
+    print(f"  Raw baker rows in license file:")
+    for _, r in _debug_baker_lic_rows.iterrows():
+        print(f"    {l_last}={r[l_last]!r}  {l_first}={r[l_first]!r}")
+else:
+    print(f"  No rows containing 'baker' found in license file columns {l_last!r}/{l_first!r}")
+print(f"  Keys generated for Baker in not_in_master:")
+for keys in _debug_baker_nm_keys:
+    print(f"    {keys}")
