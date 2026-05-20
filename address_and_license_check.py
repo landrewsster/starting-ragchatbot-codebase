@@ -249,6 +249,16 @@ for idx, row in lic_df.iterrows():
         lic_key_to_idx.setdefault(key, idx)
 print(f"  Unique name keys: {len(lic_key_to_idx)}")
 
+# Debug: show license keys containing 'baker' and sample raw rows
+baker_keys = [k for k in lic_key_to_idx if "baker" in k]
+print(f"  DEBUG license keys containing 'baker': {baker_keys}")
+baker_rows = lic_df[lic_df[l_last].str.lower().str.contains("baker", na=False)
+                    | lic_df[l_first].str.lower().str.contains("baker", na=False)]
+if not baker_rows.empty:
+    print(f"  DEBUG raw baker rows in license file:")
+    for _, r in baker_rows.iterrows():
+        print(f"    {l_last}={r[l_last]!r}  {l_first}={r[l_first]!r}")
+
 # ── Match not_in_master against licensing board ───────────────────────────────
 print(f"\nChecking {len(not_matched)} not-in-master providers against license board ...")
 
@@ -263,6 +273,12 @@ for _, row in not_matched.iterrows():
         keys |= make_all_keys(row[nm_last],  row[nm_third])
         keys |= make_all_keys(row[nm_third], row[nm_last])
         keys |= make_all_keys(row[nm_third], row[nm_first])
+
+    # Debug: print keys for Baker
+    if "baker" in norm(row[nm_last]) or "baker" in norm(row[nm_first]) or \
+       (nm_third and "baker" in norm(row[nm_third])):
+        print(f"  DEBUG Baker keys generated: {sorted(keys)}")
+
     found_idx = next((lic_key_to_idx[k] for k in keys if k in lic_key_to_idx), None)
 
     if found_idx is not None:
