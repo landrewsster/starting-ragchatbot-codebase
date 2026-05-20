@@ -131,7 +131,11 @@ if not m_first and len(master.columns) >= 2:
     m_first = master.columns[1]
     print(f"  WARNING: using column B ({m_first!r}) as first name")
 
-print(f"  last={m_last!r}  first={m_first!r}")
+m_mid = find_col(master, ["middle_name", "middle", "MiddleName", "Middle Name", "middle_initial"])
+if not m_mid and len(master.columns) >= 3:
+    m_mid = master.columns[2]
+    print(f"  WARNING: using column C ({m_mid!r}) as middle name")
+print(f"  last={m_last!r}  first={m_first!r}  middle={m_mid!r}")
 
 # Build lookup: key → row index in master
 master_key_to_idx: dict[str, int] = {}
@@ -163,7 +167,11 @@ if not s_first:
     print(f"  WARNING: no first name column found — using column B ({manual.columns[1]!r})")
     s_first = manual.columns[1]
 
-print(f"  last={s_last!r}  first={s_first!r}")
+s_mid = find_col(manual, ["middle_name", "middle", "MiddleName", "Middle Name", "middle_initial"])
+if not s_mid and len(manual.columns) >= 2:
+    s_mid = manual.columns[1]   # col B = middle initial in manual search
+    print(f"  Using column B ({s_mid!r}) as middle initial")
+print(f"  last={s_last!r}  first={s_first!r}  middle={s_mid!r}")
 
 # ── Deduplicate manual search file by name ────────────────────────────────────
 manual["_norm_key"] = manual.apply(
@@ -186,15 +194,19 @@ for _, row in manual.iterrows():
 
     if found_idx is not None:
         matched_flags.append(True)
-        m_row  = master.iloc[found_idx]
-        m_name = f"{m_row[m_last] if m_last else ''}, {m_row[m_first] if m_first else ''}".strip(", ")
+        m_row   = master.iloc[found_idx]
+        m_l     = m_row[m_last]  if m_last  else ""
+        m_f     = m_row[m_first] if m_first else ""
+        m_m     = m_row[m_mid]   if m_mid   else ""
+        m_name  = f"{m_l}, {m_f} {m_m}".strip().strip(",").strip()
         matched_names.append(m_name)
     else:
         matched_flags.append(False)
         matched_names.append("")
 
-manual["_in_master"]      = matched_flags
+manual["_in_master"]         = matched_flags
 manual["_master_name_match"] = matched_names
+manual["_manual_middle"]     = manual[s_mid].apply(norm) if s_mid else ""
 
 n_matched   = sum(matched_flags)
 n_not_found = after - n_matched
@@ -204,13 +216,16 @@ print(f"  NOT in master list     : {n_not_found}")
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
     manual[~manual["_in_master"]]
-    .drop(columns=["_in_master", "_master_name_match", "_norm_key"])
+    .drop(columns=["_in_master", "_master_name_match", "_manual_middle", "_norm_key"])
     .reset_index(drop=True)
 )
 
 matched_df = (
     manual[manual["_in_master"]]
-    .rename(columns={"_master_name_match": "master_name_match"})
+    .rename(columns={
+        "_master_name_match": "master_name_match",
+        "_manual_middle":     "manual_middle_initial",
+    })
     .drop(columns=["_in_master", "_norm_key"])
     .reset_index(drop=True)
 )
