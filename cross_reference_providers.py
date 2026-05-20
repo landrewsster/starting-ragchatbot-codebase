@@ -151,7 +151,9 @@ print(f"  Unique name keys in master list: {len(master_key_to_idx)}")
 print(f"\nLoading manual search file: {MANUAL_FILE.name}")
 xl = pd.ExcelFile(MANUAL_FILE)
 print(f"  Sheets: {xl.sheet_names}")
-manual = xl.parse(xl.sheet_names[0], dtype=str).fillna("")
+sheet = "ProviderList_COMBINED" if "ProviderList_COMBINED" in xl.sheet_names else xl.sheet_names[0]
+print(f"  Using sheet: {sheet!r}")
+manual = xl.parse(sheet, dtype=str).fillna("")
 print(f"  {len(manual)} rows")
 print(f"  Columns: {list(manual.columns)}")
 
