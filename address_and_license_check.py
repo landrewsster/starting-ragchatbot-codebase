@@ -143,7 +143,9 @@ print(f"  {len(not_matched)} rows | columns: {list(not_matched.columns)}")
 
 nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
 nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
-print(f"  last={nm_last!r}  first={nm_first!r}")
+# col C may be the "other" name field (first or last) when col B is a middle initial
+nm_third = not_matched.columns[2] if len(not_matched.columns) > 2 else None
+print(f"  last={nm_last!r}  first={nm_first!r}  third={nm_third!r}")
 
 # ── Load multiple_addresses.csv for address lookup ────────────────────────────
 print(f"\nLoading multiple addresses file: {MASTER_FILE.name}")
@@ -254,7 +256,13 @@ in_license     = []
 not_in_license = []
 
 for _, row in not_matched.iterrows():
-    keys      = make_all_keys(row[nm_last], row[nm_first])
+    # Try col_a + col_b and also col_a + col_c, since col_b may be a middle
+    # initial and col_c the actual first or last name (mixed format)
+    keys = make_all_keys(row[nm_last], row[nm_first])
+    if nm_third:
+        keys |= make_all_keys(row[nm_last],  row[nm_third])
+        keys |= make_all_keys(row[nm_third], row[nm_last])
+        keys |= make_all_keys(row[nm_third], row[nm_first])
     found_idx = next((lic_key_to_idx[k] for k in keys if k in lic_key_to_idx), None)
 
     if found_idx is not None:
