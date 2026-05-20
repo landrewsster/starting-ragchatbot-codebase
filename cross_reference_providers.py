@@ -92,8 +92,9 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     """
     Generate name keys covering both possible column formats:
       - col_a = last name,  col_b = first name  (standard)
-      - col_a = first name, col_b = full name   (mailingaddition style)
-      - col_b treated as 'First Last' fullname  (reversed parse)
+      - col_a = first name, col_b = full name   (mailingaddition style, col_b has a space)
+    The reversed interpretation (col_a=first, col_b=last) is intentionally omitted
+    to avoid false matches from middle initials or short values in col_b.
     """
     keys = set()
 
@@ -108,9 +109,6 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
         keys |= lf_keys(words[-1], words[0])
         # col_a might be first name, col_b last word is last name
         keys |= lf_keys(words[-1], col_a)
-
-    # Interpretation 3: col_a = first, col_b = last (reversed)
-    keys |= lf_keys(col_b, col_a)
 
     return keys
 
