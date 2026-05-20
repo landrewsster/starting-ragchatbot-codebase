@@ -40,9 +40,9 @@ import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-MASTER_FILE  = BASE / "MasterMailingList_multiple_address_check_20260504.xlsx - all.csv"
+MASTER_FILE  = BASE / "MailingList_Round3_20260519.xlsx"
 MANUAL_FILE  = BASE / "ManualSearch_05172026.xlsx"
-OUTPUT_FILE  = BASE / "provider_crossref.xlsx"
+OUTPUT_FILE  = BASE / "provider_round3_crossref.xlsx"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(
@@ -117,9 +117,9 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     return keys
 
 # ── Load master mailing list (CSV) ────────────────────────────────────────────
-print(f"\nLoading master mailing list: {MASTER_FILE.name}")
+print(f"\nLoading Round 3 mailing list: {MASTER_FILE.name}")
 try:
-    master = pd.read_csv(MASTER_FILE, dtype=str).fillna("")
+    master = pd.read_excel(MASTER_FILE, dtype=str).fillna("")
 except FileNotFoundError:
     raise SystemExit(f"ERROR: {MASTER_FILE} not found")
 print(f"  {len(master)} rows")
