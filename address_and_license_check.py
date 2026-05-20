@@ -114,13 +114,20 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     If col B has no space: col A = last name, col B = first name.
     If col B has a space:  col B = full name (first [middle] last),
                            col A is a repeat of the first name — ignore it.
+    For 3+ word full names, also tries last two words as a compound last name
+    to handle names like 'Kaeley Whiting Allen' where last name = 'Whiting Allen'.
     """
     b = clean_name(col_b)
     if " " in b:
         words = b.split()
-        return lf_keys(words[-1], words[0])   # last=last word, first=first word
+        first = words[0]
+        keys  = lf_keys(words[-1], first)           # single last word
+        if len(words) >= 3:
+            compound = " ".join(words[-2:])
+            keys |= lf_keys(compound, first)         # last two words as last name
+        return keys
     else:
-        return lf_keys(col_a, col_b)          # standard: col A=last, col B=first
+        return lf_keys(col_a, col_b)                 # standard: col A=last, col B=first
 
 # ── Load matched.csv ──────────────────────────────────────────────────────────
 print(f"\nLoading matched file: {MATCHED_FILE.name}")
