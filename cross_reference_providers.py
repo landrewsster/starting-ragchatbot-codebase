@@ -18,19 +18,15 @@ except Exception as _e:
 """
 cross_reference_providers.py
 
-Name-match individual providers between ManualSearch_05172026.xlsx and the
-Round 3 mailing list to find:
-  - Providers in the manual search file NOT in Round 3
-  - Providers in Round 3 NOT in the manual search file
-  - Providers matched in both
+Name-match providers between ManualSearch_05172026.xlsx and the master
+mailing list (MasterMailingList_multiple_address_check_20260504 - all.csv)
+to find providers in the manual search file that are NOT in the master list.
 
-Matching is done by normalized (last, first) name key.  Suffix stripping
-(MD, DO, NP, etc.) and whitespace normalization are applied to both sides
-before comparison.
+Matching is done by normalized (last, first) name key with suffix stripping
+(MD, DO, NP, etc.) and first-token first-name matching.
 
 Output: provider_crossref.xlsx
-  not_in_round3   — manual search providers with no Round 3 match
-  not_in_dup      — Round 3 providers not in manual search file
+  not_in_master   — manual search providers with no master list match
   matched         — providers found in both lists
 
 Usage:
@@ -43,10 +39,10 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE        = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-ROUND3_FILE = BASE / "MailingList_Round3_20260519.xlsx"
-DUP_FILE    = BASE / "ManualSearch_05172026.xlsx"
-OUTPUT_FILE = BASE / "provider_crossref.xlsx"
+BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+MASTER_FILE  = BASE / "MasterMailingList_multiple_address_check_20260504.xlsx - all.csv"
+MANUAL_FILE  = BASE / "ManualSearch_05172026.xlsx"
+OUTPUT_FILE  = BASE / "provider_crossref.xlsx"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(
@@ -75,175 +71,141 @@ def find_col(df, candidates):
     return None
 
 def make_key(last: str, first: str) -> str:
-    """Canonical matching key: 'lastname|firstname_initial'."""
-    l = clean_name(last)
-    f = clean_name(first)
-    f1 = f.split()[0] if f else ""   # first token only (handles middle names)
+    l  = clean_name(last)
+    f  = clean_name(first)
+    f1 = f.split()[0] if f else ""
     return f"{l}|{f1}"
 
 def make_key_full(last: str, first: str) -> set[str]:
-    """Return a set of keys to try: strict (last|first) and loose (last|initial)."""
+    """Set of keys to try: exact first name and first-token variant."""
     l  = clean_name(last)
     f  = clean_name(first)
     f1 = f.split()[0] if f else ""
     keys = set()
     if l and f:
-        keys.add(f"{l}|{f}")    # exact first name
-    if l and f1:
-        keys.add(f"{l}|{f1}")   # first initial / first token
+        keys.add(f"{l}|{f}")
+    if l and f1 and f1 != f:
+        keys.add(f"{l}|{f1}")
     if l:
-        keys.add(f"{l}|")       # last name only fallback
+        keys.add(f"{l}|")
     return keys
 
-# ── Load Round 3 ──────────────────────────────────────────────────────────────
-print(f"\nLoading Round 3: {ROUND3_FILE.name}")
-r3 = pd.read_excel(ROUND3_FILE, dtype=str).fillna("")
-print(f"  {len(r3)} rows")
-print(f"  Columns: {list(r3.columns)}")
+# ── Load master mailing list (CSV) ────────────────────────────────────────────
+print(f"\nLoading master mailing list: {MASTER_FILE.name}")
+try:
+    master = pd.read_csv(MASTER_FILE, dtype=str).fillna("")
+except FileNotFoundError:
+    raise SystemExit(f"ERROR: {MASTER_FILE} not found")
+print(f"  {len(master)} rows")
+print(f"  Columns: {list(master.columns)}")
 
-r3_last  = find_col(r3, ["last_name", "LastName", "Last Name", "LAST NAME"])
-r3_first = find_col(r3, ["first_name", "FirstName", "First Name", "FIRST NAME"])
+m_last  = find_col(master, ["last_name",  "LastName",  "Last Name",  "LAST NAME",  "last"])
+m_first = find_col(master, ["first_name", "FirstName", "First Name", "FIRST NAME", "first"])
 
-# Positional fallback if named columns not found
-if not r3_last and len(r3.columns) >= 1:
-    r3_last = r3.columns[0]
-    print(f"  WARNING: using column A ({r3_last!r}) as last name")
-if not r3_first and len(r3.columns) >= 2:
-    r3_first = r3.columns[1]
-    print(f"  WARNING: using column B ({r3_first!r}) as first name")
+if not m_last and len(master.columns) >= 1:
+    m_last = master.columns[0]
+    print(f"  WARNING: using column A ({m_last!r}) as last name")
+if not m_first and len(master.columns) >= 2:
+    m_first = master.columns[1]
+    print(f"  WARNING: using column B ({m_first!r}) as first name")
 
-print(f"  last={r3_last!r}  first={r3_first!r}")
+print(f"  last={m_last!r}  first={m_first!r}")
 
-# Build lookup: key → list of original r3 row indices
-r3_key_to_rows: dict[str, list[int]] = {}
-for idx, row in r3.iterrows():
-    for key in make_key_full(row[r3_last] if r3_last else "",
-                              row[r3_first] if r3_first else ""):
-        r3_key_to_rows.setdefault(key, []).append(idx)
+# Build lookup: key → row index in master
+master_key_to_idx: dict[str, int] = {}
+for idx, row in master.iterrows():
+    for key in make_key_full(row[m_last] if m_last else "",
+                              row[m_first] if m_first else ""):
+        master_key_to_idx.setdefault(key, idx)
 
-print(f"  Unique name keys in Round 3: {len(r3_key_to_rows)}")
+print(f"  Unique name keys in master list: {len(master_key_to_idx)}")
 
 # ── Load manual search file ───────────────────────────────────────────────────
-print(f"\nLoading manual search file: {DUP_FILE.name}")
-xl_dup = pd.ExcelFile(DUP_FILE)
-print(f"  Sheets: {xl_dup.sheet_names}")
-dup = xl_dup.parse(xl_dup.sheet_names[0], dtype=str).fillna("")
-print(f"  {len(dup)} rows")
-print(f"  Columns: {list(dup.columns)}")
+print(f"\nLoading manual search file: {MANUAL_FILE.name}")
+xl = pd.ExcelFile(MANUAL_FILE)
+print(f"  Sheets: {xl.sheet_names}")
+manual = xl.parse(xl.sheet_names[0], dtype=str).fillna("")
+print(f"  {len(manual)} rows")
+print(f"  Columns: {list(manual.columns)}")
 
-dup_last  = find_col(dup, ["Last_Name",  "last_name",  "LastName",  "Last Name",
-                            "last",       "LAST",       "surname",   "Surname"])
-dup_first = find_col(dup, ["First_Name", "first_name", "FirstName", "First Name",
-                            "first",      "FIRST",      "given_name"])
+s_last  = find_col(manual, ["Last_Name",  "last_name",  "LastName",  "Last Name",  "last",  "LAST",  "surname"])
+s_first = find_col(manual, ["First_Name", "first_name", "FirstName", "First Name", "first", "FIRST", "given_name"])
 
-# Positional fallback — print columns and let user know
-if not dup_last:
-    print(f"  WARNING: no last name column found — using column A ({dup.columns[0]!r})")
-    dup_last = dup.columns[0]
-if not dup_first:
-    print(f"  WARNING: no first name column found — using column B ({dup.columns[1]!r})")
-    dup_first = dup.columns[1]
+if not s_last:
+    print(f"  WARNING: no last name column found — using column A ({manual.columns[0]!r})")
+    s_last = manual.columns[0]
+if not s_first:
+    print(f"  WARNING: no first name column found — using column B ({manual.columns[1]!r})")
+    s_first = manual.columns[1]
 
-print(f"  last={dup_last!r}  first={dup_first!r}")
+print(f"  last={s_last!r}  first={s_first!r}")
 
 # ── Deduplicate manual search file by name ────────────────────────────────────
-dup["_norm_key"] = dup.apply(
-    lambda row: make_key(row[dup_last], row[dup_first]), axis=1
+manual["_norm_key"] = manual.apply(
+    lambda row: make_key(row[s_last], row[s_first]), axis=1
 )
-before = len(dup)
-dup = dup.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
-after = len(dup)
-print(f"  Duplicates removed from manual search file: {before - after}  ({after} unique providers remain)")
+before = len(manual)
+manual = manual.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
+after  = len(manual)
+print(f"  Duplicates removed: {before - after}  ({after} unique providers remain)")
 
-# ── Match dup list against Round 3 ───────────────────────────────────────────
-print(f"\nMatching {after} manual search providers against Round 3 ...")
+# ── Match manual search providers against master list ─────────────────────────
+print(f"\nMatching {after} manual search providers against master list ...")
 
-dup_matched_flags = []   # True if found in Round 3
-dup_r3_name       = []   # The matched Round 3 name (for review)
+matched_flags  = []
+matched_names  = []
 
-for _, row in dup.iterrows():
-    last  = row[dup_last]
-    first = row[dup_first]
-    keys  = make_key_full(last, first)
-
-    found_idx = None
-    for key in keys:
-        if key in r3_key_to_rows:
-            found_idx = r3_key_to_rows[key][0]
-            break
+for _, row in manual.iterrows():
+    keys      = make_key_full(row[s_last], row[s_first])
+    found_idx = next((master_key_to_idx[k] for k in keys if k in master_key_to_idx), None)
 
     if found_idx is not None:
-        dup_matched_flags.append(True)
-        r3_row = r3.iloc[found_idx]
-        r3_name = f"{r3_row[r3_last] if r3_last else ''}, {r3_row[r3_first] if r3_first else ''}".strip(", ")
-        dup_r3_name.append(r3_name)
+        matched_flags.append(True)
+        m_row  = master.iloc[found_idx]
+        m_name = f"{m_row[m_last] if m_last else ''}, {m_row[m_first] if m_first else ''}".strip(", ")
+        matched_names.append(m_name)
     else:
-        dup_matched_flags.append(False)
-        dup_r3_name.append("")
+        matched_flags.append(False)
+        matched_names.append("")
 
-dup["_in_round3"]     = dup_matched_flags
-dup["_r3_name_match"] = dup_r3_name
+manual["_in_master"]      = matched_flags
+manual["_master_name_match"] = matched_names
 
-n_matched     = sum(dup_matched_flags)
-n_not_in_r3   = len(dup) - n_matched
-print(f"  Dup list matched to Round 3 : {n_matched}")
-print(f"  Dup list NOT in Round 3     : {n_not_in_r3}")
-
-# ── Match Round 3 against dup list ───────────────────────────────────────────
-# Build dup key set for quick lookup
-dup_keys: set[str] = set()
-for _, row in dup.iterrows():
-    dup_keys.update(make_key_full(row[dup_last], row[dup_first]))
-
-r3_matched_flags = []
-for _, row in r3.iterrows():
-    keys = make_key_full(row[r3_last] if r3_last else "",
-                          row[r3_first] if r3_first else "")
-    r3_matched_flags.append(bool(keys & dup_keys))
-
-r3["_in_dup"] = r3_matched_flags
-n_r3_not_dup  = sum(1 for f in r3_matched_flags if not f)
-print(f"  Round 3 NOT in dup list     : {n_r3_not_dup}")
-print(f"  Round 3 in dup list         : {sum(r3_matched_flags)}")
+n_matched   = sum(matched_flags)
+n_not_found = after - n_matched
+print(f"  Matched to master list : {n_matched}")
+print(f"  NOT in master list     : {n_not_found}")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
-not_in_r3 = (
-    dup[~dup["_in_round3"]]
-    .drop(columns=["_in_round3", "_r3_name_match", "_norm_key"])
+not_in_master = (
+    manual[~manual["_in_master"]]
+    .drop(columns=["_in_master", "_master_name_match", "_norm_key"])
     .reset_index(drop=True)
 )
 
-matched_dup = (
-    dup[dup["_in_round3"]]
-    .rename(columns={"_r3_name_match": "round3_name_match"})
-    .drop(columns=["_in_round3", "_norm_key"])
+matched_df = (
+    manual[manual["_in_master"]]
+    .rename(columns={"_master_name_match": "master_name_match"})
+    .drop(columns=["_in_master", "_norm_key"])
     .reset_index(drop=True)
 )
 
-not_in_dup = (
-    r3[~r3["_in_dup"]]
-    .drop(columns=["_in_dup"])
-    .reset_index(drop=True)
-)
+# ── Terminal summary ──────────────────────────────────────────────────────────
+sys_col  = find_col(manual, ["System", "system", "health_system", "HealthSystem"])
+city_col = find_col(manual, ["Clinic_City", "clinic_city", "City", "city"])
 
-# ── Terminal summary for not_in_r3 ────────────────────────────────────────────
-sys_col  = find_col(dup, ["System", "system", "health_system", "HealthSystem"])
-city_col = find_col(dup, ["Clinic_City", "clinic_city", "City", "city"])
-
-print(f"\nManual search providers NOT in Round 3 ({len(not_in_r3)}):")
-for _, row in not_in_r3.iterrows():
+print(f"\nManual search providers NOT in master list ({len(not_in_master)}):")
+for _, row in not_in_master.iterrows():
     sys_val  = row.get(sys_col,  "") if sys_col  else ""
     city_val = row.get(city_col, "") if city_col else ""
-    print(f"  {row[dup_last]}, {row[dup_first]}  |  {sys_val}  |  {city_val}")
+    print(f"  {row[s_last]}, {row[s_first]}  |  {sys_val}  |  {city_val}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    not_in_r3.to_excel( writer, sheet_name="not_in_round3", index=False)
-    matched_dup.to_excel(writer, sheet_name="matched",       index=False)
-    not_in_dup.to_excel( writer, sheet_name="not_in_dup",    index=False)
-    print(f"  not_in_round3 : {len(not_in_r3)} dup list providers")
-    print(f"  matched       : {len(matched_dup)} providers in both")
-    print(f"  not_in_dup    : {len(not_in_dup)} Round 3 providers not in dup list")
+    not_in_master.to_excel(writer, sheet_name="not_in_master", index=False)
+    matched_df.to_excel(   writer, sheet_name="matched",        index=False)
+    print(f"  not_in_master : {len(not_in_master)} providers")
+    print(f"  matched       : {len(matched_df)} providers")
 
 print("\nDone.")
