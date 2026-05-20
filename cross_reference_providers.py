@@ -76,8 +76,8 @@ def make_key(last: str, first: str) -> str:
     f1 = f.split()[0] if f else ""
     return f"{l}|{f1}"
 
-def make_key_full(last: str, first: str) -> set[str]:
-    """Set of keys to try: exact first name and first-token variant."""
+def lf_keys(last: str, first: str) -> set[str]:
+    """Keys from explicit last + first values."""
     l  = clean_name(last)
     f  = clean_name(first)
     f1 = f.split()[0] if f else ""
@@ -88,6 +88,32 @@ def make_key_full(last: str, first: str) -> set[str]:
         keys.add(f"{l}|{f1}")
     if l:
         keys.add(f"{l}|")
+    return keys
+
+def make_all_keys(col_a: str, col_b: str) -> set[str]:
+    """
+    Generate name keys covering both possible column formats:
+      - col_a = last name,  col_b = first name  (standard)
+      - col_a = first name, col_b = full name   (mailingaddition style)
+      - col_b treated as 'First Last' fullname  (reversed parse)
+    """
+    keys = set()
+
+    # Interpretation 1: col_a = last, col_b = first
+    keys |= lf_keys(col_a, col_b)
+
+    # Interpretation 2: col_b is a full name (has a space)
+    b = clean_name(col_b)
+    if " " in b:
+        words = b.split()
+        # "First Last" → last=words[-1], first=words[0]
+        keys |= lf_keys(words[-1], words[0])
+        # col_a might be first name, col_b last word is last name
+        keys |= lf_keys(words[-1], col_a)
+
+    # Interpretation 3: col_a = first, col_b = last (reversed)
+    keys |= lf_keys(col_b, col_a)
+
     return keys
 
 # ── Load master mailing list (CSV) ────────────────────────────────────────────
@@ -114,8 +140,9 @@ print(f"  last={m_last!r}  first={m_first!r}")
 # Build lookup: key → row index in master
 master_key_to_idx: dict[str, int] = {}
 for idx, row in master.iterrows():
-    for key in make_key_full(row[m_last] if m_last else "",
-                              row[m_first] if m_first else ""):
+    col_a = row[m_last]  if m_last  else ""
+    col_b = row[m_first] if m_first else ""
+    for key in make_all_keys(col_a, col_b):
         master_key_to_idx.setdefault(key, idx)
 
 print(f"  Unique name keys in master list: {len(master_key_to_idx)}")
@@ -142,7 +169,7 @@ print(f"  last={s_last!r}  first={s_first!r}")
 
 # ── Deduplicate manual search file by name ────────────────────────────────────
 manual["_norm_key"] = manual.apply(
-    lambda row: make_key(row[s_last], row[s_first]), axis=1
+    lambda row: make_key(row[s_last], row[s_first] if s_first else ""), axis=1
 )
 before = len(manual)
 manual = manual.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
@@ -156,7 +183,7 @@ matched_flags  = []
 matched_names  = []
 
 for _, row in manual.iterrows():
-    keys      = make_key_full(row[s_last], row[s_first])
+    keys      = make_all_keys(row[s_last], row[s_first] if s_first else "")
     found_idx = next((master_key_to_idx[k] for k in keys if k in master_key_to_idx), None)
 
     if found_idx is not None:
