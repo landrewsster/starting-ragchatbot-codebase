@@ -321,13 +321,22 @@ print("\nDone.")
 
 # ── DEBUG: Baker name matching ────────────────────────────────────────────────
 print("\n── DEBUG: Baker ──────────────────────────────────────────────────────")
-print(f"  License keys containing 'baker'  : {_debug_baker_lic_keys}")
+print(f"  License file columns detected: last={l_last!r}  first={l_first!r}")
+print(f"  License keys containing 'baker': {_debug_baker_lic_keys}")
 if not _debug_baker_lic_rows.empty:
-    print(f"  Raw baker rows in license file:")
+    print(f"  Raw baker rows in license file (detected columns):")
     for _, r in _debug_baker_lic_rows.iterrows():
         print(f"    {l_last}={r[l_last]!r}  {l_first}={r[l_first]!r}")
 else:
-    print(f"  No rows containing 'baker' found in license file columns {l_last!r}/{l_first!r}")
+    print(f"  'baker' NOT found in detected columns {l_last!r}/{l_first!r}")
+
+# Search every column in the license file for 'baker'
+print(f"  Searching ALL license file columns for 'baker':")
+for col in lic_df.columns:
+    hits = lic_df[lic_df[col].astype(str).str.lower().str.contains("baker", na=False)]
+    if not hits.empty:
+        print(f"    Column {col!r}: {len(hits)} rows — sample: {hits[col].iloc[0]!r}")
+
 print(f"  Keys generated for Baker in not_in_master:")
 for keys in _debug_baker_nm_keys:
     print(f"    {keys}")
