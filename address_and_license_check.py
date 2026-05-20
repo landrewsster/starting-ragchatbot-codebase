@@ -47,7 +47,7 @@ import pandas as pd
 BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 MATCHED_FILE = BASE / "matched.csv"
 NOTMATCH_FILE= BASE / "not_in_master.csv"
-MASTER_FILE  = BASE / "MasterMailingList_multiple_address_check_20260504.xlsx - all.csv"
+MASTER_FILE  = BASE / "multiple_addresses.csv"
 LICENSE_FILE = BASE / "MN State Licensing Board" / "MN Physician and PA list March 2026.xlsx"
 OUTPUT_FILE  = BASE / "address_and_license_check.xlsx"
 
@@ -145,8 +145,8 @@ nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Na
 nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
 print(f"  last={nm_last!r}  first={nm_first!r}")
 
-# ── Load master mailing list (CSV) for address lookup ─────────────────────────
-print(f"\nLoading master mailing list: {MASTER_FILE.name}")
+# ── Load multiple_addresses.csv for address lookup ────────────────────────────
+print(f"\nLoading multiple addresses file: {MASTER_FILE.name}")
 try:
     master = pd.read_csv(MASTER_FILE, dtype=str).fillna("")
 except FileNotFoundError:
@@ -197,26 +197,26 @@ for _, row in matched.iterrows():
 
         addr_rows.append({
             "manual_name":      manual_name,
-            "master_name":      master_name,
+            "multi_addr_name":   master_name,
             "address_match":    "same" if same else "different",
             "manual_address":   m_addr_raw,
             "manual_city":      m_city_raw,
             "manual_zip":       m_zip_raw,
-            "master_address":   ma_addr_raw,
-            "master_city":      ma_city_raw,
-            "master_zip":       ma_zip_raw,
+            "multi_addr_address": ma_addr_raw,
+            "multi_addr_city":    ma_city_raw,
+            "multi_addr_zip":     ma_zip_raw,
         })
     else:
         addr_rows.append({
             "manual_name":      manual_name,
-            "master_name":      "(not found in master)",
+            "multi_addr_name":   "(not found in multiple_addresses)",
             "address_match":    "not_found",
             "manual_address":   m_addr_raw,
             "manual_city":      m_city_raw,
             "manual_zip":       m_zip_raw,
-            "master_address":   "",
-            "master_city":      "",
-            "master_zip":       "",
+            "multi_addr_address": "",
+            "multi_addr_city":    "",
+            "multi_addr_zip":     "",
         })
 
 addr_df  = pd.DataFrame(addr_rows)
@@ -275,8 +275,8 @@ print(f"  Not in license board   : {len(not_in_lic_df)}")
 print(f"\nProviders with DIFFERENT addresses ({n_diff}):")
 for _, row in addr_df[addr_df["address_match"] == "different"].iterrows():
     print(f"  {row['manual_name']}")
-    print(f"    Manual : {row['manual_address']}, {row['manual_city']} {row['manual_zip']}")
-    print(f"    Master : {row['master_address']}, {row['master_city']} {row['master_zip']}")
+    print(f"    Manual     : {row['manual_address']}, {row['manual_city']} {row['manual_zip']}")
+    print(f"    Multi-addr : {row['multi_addr_address']}, {row['multi_addr_city']} {row['multi_addr_zip']}")
 
 print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
 for _, row in in_lic_df.iterrows():
@@ -288,13 +288,13 @@ addr_diff = addr_df[addr_df["address_match"].isin(["different", "not_found"])].r
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    addr_same.to_excel(    writer, sheet_name="address_same",      index=False)
-    addr_diff.to_excel(    writer, sheet_name="address_different",  index=False)
-    in_lic_df.to_excel(    writer, sheet_name="in_license_board",   index=False)
-    not_in_lic_df.to_excel(writer, sheet_name="not_in_license",     index=False)
-    print(f"  address_same      : {len(addr_same)}")
-    print(f"  address_different : {len(addr_diff)}")
-    print(f"  in_license_board  : {len(in_lic_df)}")
-    print(f"  not_in_license    : {len(not_in_lic_df)}")
+    addr_same.to_excel(    writer, sheet_name="multi_addr_match",    index=False)
+    addr_diff.to_excel(    writer, sheet_name="multi_addr_no_match", index=False)
+    in_lic_df.to_excel(    writer, sheet_name="in_license_board",    index=False)
+    not_in_lic_df.to_excel(writer, sheet_name="not_in_license",      index=False)
+    print(f"  multi_addr_match    : {len(addr_same)}")
+    print(f"  multi_addr_no_match : {len(addr_diff)}")
+    print(f"  in_license_board    : {len(in_lic_df)}")
+    print(f"  not_in_license      : {len(not_in_lic_df)}")
 
 print("\nDone.")
