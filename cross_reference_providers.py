@@ -77,7 +77,7 @@ def make_key(last: str, first: str) -> str:
     return f"{l}|{f1}"
 
 def lf_keys(last: str, first: str) -> set[str]:
-    """Keys from explicit last + first values."""
+    """Keys from explicit last + first values. Requires both to be non-empty."""
     l  = clean_name(last)
     f  = clean_name(first)
     f1 = f.split()[0] if f else ""
@@ -86,8 +86,6 @@ def lf_keys(last: str, first: str) -> set[str]:
         keys.add(f"{l}|{f}")
     if l and f1 and f1 != f:
         keys.add(f"{l}|{f1}")
-    if l:
-        keys.add(f"{l}|")
     return keys
 
 def make_all_keys(col_a: str, col_b: str) -> set[str]:
