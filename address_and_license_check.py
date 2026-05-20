@@ -99,11 +99,14 @@ def lf_keys(last: str, first: str) -> set[str]:
     l  = clean_name(last)
     f  = clean_name(first)
     f1 = f.split()[0] if f else ""
+    fi = f1[0] if f1 else ""        # first initial only
     keys = set()
     if l and f:
         keys.add(f"{l}|{f}")
     if l and f1 and f1 != f:
         keys.add(f"{l}|{f1}")
+    if l and fi:
+        keys.add(f"{l}|~{fi}")      # prefix ~ marks initial-only keys
     return keys
 
 def make_all_keys(col_a: str, col_b: str) -> set[str]:
@@ -277,13 +280,21 @@ for _, row in not_matched.iterrows():
        (nm_third and "baker" in norm(row[nm_third])):
         _debug_baker_nm_keys.append(sorted(keys))
 
-    found_idx = next((lic_key_to_idx[k] for k in keys if k in lic_key_to_idx), None)
+    # Prefer exact keys first, fall back to initial (~) keys
+    exact_keys   = {k for k in keys if not k.startswith("~") and not "|~" in k}
+    initial_keys = {k for k in keys if "|~" in k}
+    found_idx    = next((lic_key_to_idx[k] for k in exact_keys   if k in lic_key_to_idx), None)
+    match_type   = "exact"
+    if found_idx is None:
+        found_idx  = next((lic_key_to_idx[k] for k in initial_keys if k in lic_key_to_idx), None)
+        match_type = "initial_match"
 
     if found_idx is not None:
         lic_row  = lic_df.iloc[found_idx]
         lic_name = f"{lic_row[l_last]}, {lic_row[l_first]}".strip(", ")
         row2     = row.copy()
         row2["license_name_match"] = lic_name
+        row2["match_type"]         = match_type
         in_license.append(row2)
     else:
         not_in_license.append(row)
