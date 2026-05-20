@@ -90,27 +90,16 @@ def lf_keys(last: str, first: str) -> set[str]:
 
 def make_all_keys(col_a: str, col_b: str) -> set[str]:
     """
-    Generate name keys covering both possible column formats:
-      - col_a = last name,  col_b = first name  (standard)
-      - col_a = first name, col_b = full name   (mailingaddition style, col_b has a space)
-    The reversed interpretation (col_a=first, col_b=last) is intentionally omitted
-    to avoid false matches from middle initials or short values in col_b.
+    If col B has no space: col A = last name, col B = first name.
+    If col B has a space:  col B = full name (first [middle] last),
+                           col A is a repeat of the first name — ignore it.
     """
-    keys = set()
-
-    # Interpretation 1: col_a = last, col_b = first
-    keys |= lf_keys(col_a, col_b)
-
-    # Interpretation 2: col_b is a full name (has a space)
     b = clean_name(col_b)
     if " " in b:
         words = b.split()
-        # "First Last" → last=words[-1], first=words[0]
-        keys |= lf_keys(words[-1], words[0])
-        # col_a might be first name, col_b last word is last name
-        keys |= lf_keys(words[-1], col_a)
-
-    return keys
+        return lf_keys(words[-1], words[0])   # last=last word, first=first word
+    else:
+        return lf_keys(col_a, col_b)          # standard: col A=last, col B=first
 
 # ── Load master mailing list (CSV) ────────────────────────────────────────────
 print(f"\nLoading Round 3 mailing list: {MASTER_FILE.name}")

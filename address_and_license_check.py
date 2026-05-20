@@ -110,14 +110,17 @@ def lf_keys(last: str, first: str) -> set[str]:
     return keys
 
 def make_all_keys(col_a: str, col_b: str) -> set[str]:
-    keys = set()
-    keys |= lf_keys(col_a, col_b)
+    """
+    If col B has no space: col A = last name, col B = first name.
+    If col B has a space:  col B = full name (first [middle] last),
+                           col A is a repeat of the first name — ignore it.
+    """
     b = clean_name(col_b)
     if " " in b:
         words = b.split()
-        keys |= lf_keys(words[-1], words[0])
-        keys |= lf_keys(words[-1], col_a)
-    return keys
+        return lf_keys(words[-1], words[0])   # last=last word, first=first word
+    else:
+        return lf_keys(col_a, col_b)          # standard: col A=last, col B=first
 
 # ── Load matched.csv ──────────────────────────────────────────────────────────
 print(f"\nLoading matched file: {MATCHED_FILE.name}")
