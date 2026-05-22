@@ -184,6 +184,7 @@ print(f"\nMatching {after} manual search providers against master list ...")
 
 matched_flags  = []
 matched_names  = []
+match_quality  = []   # "exact", "initial_match", or "suspect_middle"
 
 for _, row in manual.iterrows():
     keys      = make_all_keys(row[s_last], row[s_first] if s_first else "")
@@ -197,23 +198,34 @@ for _, row in manual.iterrows():
         m_m     = m_row[m_mid]   if m_mid   else ""
         m_name  = f"{m_l}, {m_f} {m_m}".strip().strip(",").strip()
         matched_names.append(m_name)
+
+        # Middle initial check: if both sides have one and they disagree → suspect
+        s_mi  = norm(row[s_mid])[0]  if s_mid  and norm(row[s_mid])  else ""
+        m_mi  = norm(m_m)[0]         if m_m                           else ""
+        if s_mi and m_mi and s_mi != m_mi:
+            match_quality.append("suspect_middle")
+        else:
+            match_quality.append("exact")
     else:
         matched_flags.append(False)
         matched_names.append("")
+        match_quality.append("")
 
 manual["_in_master"]         = matched_flags
 manual["_master_name_match"] = matched_names
+manual["_match_quality"]     = match_quality
 manual["_manual_middle"]     = manual[s_mid].apply(norm) if s_mid else ""
 
 n_matched   = sum(matched_flags)
+n_suspect   = match_quality.count("suspect_middle")
 n_not_found = after - n_matched
-print(f"  Matched to master list : {n_matched}")
+print(f"  Matched to master list : {n_matched}  (of which {n_suspect} have suspect middle initial)")
 print(f"  NOT in master list     : {n_not_found}")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
     manual[~manual["_in_master"]]
-    .drop(columns=["_in_master", "_master_name_match", "_manual_middle", "_norm_key"])
+    .drop(columns=["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"])
     .reset_index(drop=True)
 )
 
@@ -222,6 +234,7 @@ matched_df = (
     .rename(columns={
         "_master_name_match": "master_name_match",
         "_manual_middle":     "manual_middle_initial",
+        "_match_quality":     "match_quality",
     })
     .drop(columns=["_in_master", "_norm_key"])
     .reset_index(drop=True)
