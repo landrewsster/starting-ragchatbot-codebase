@@ -41,7 +41,7 @@ import pandas as pd
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 MASTER_FILE  = BASE / "MailingList_Round3_20260519.xlsx"
-MANUAL_FILE  = BASE / "ManualSearch_05172026.xlsx"
+MANUAL_FILE  = BASE / "clean_manual_list_NS.xlsx"
 OUTPUT_FILE  = BASE / "provider_round3_crossref.xlsx"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
