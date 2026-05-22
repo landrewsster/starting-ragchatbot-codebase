@@ -199,13 +199,16 @@ for _, row in manual.iterrows():
         m_name  = f"{m_l}, {m_f} {m_m}".strip().strip(",").strip()
         matched_names.append(m_name)
 
-        # Middle initial check: if both sides have one and they disagree → suspect
-        s_mi  = norm(row[s_mid])[0]  if s_mid  and norm(row[s_mid])  else ""
-        m_mi  = norm(m_m)[0]         if m_m                           else ""
-        if s_mi and m_mi and s_mi != m_mi:
-            match_quality.append("suspect_middle")
+        # Middle initial check
+        s_mi = norm(row[s_mid])[0] if s_mid and norm(row[s_mid]) else ""
+        m_mi = norm(m_m)[0]        if m_m                        else ""
+        if s_mi and m_mi:
+            quality = "exact" if s_mi == m_mi else "suspect_middle"
+        elif not s_mi and not m_mi:
+            quality = "no_middle_either_side"
         else:
-            match_quality.append("exact")
+            quality = "one_side_missing_middle"
+        match_quality.append(quality)
     else:
         matched_flags.append(False)
         matched_names.append("")
@@ -217,10 +220,13 @@ manual["_match_quality"]     = match_quality
 manual["_manual_middle"]     = manual[s_mid].apply(norm) if s_mid else ""
 
 n_matched   = sum(matched_flags)
-n_suspect   = match_quality.count("suspect_middle")
 n_not_found = after - n_matched
-print(f"  Matched to master list : {n_matched}  (of which {n_suspect} have suspect middle initial)")
-print(f"  NOT in master list     : {n_not_found}")
+print(f"  Matched to master list    : {n_matched}")
+print(f"    exact                   : {match_quality.count('exact')}")
+print(f"    no_middle_either_side   : {match_quality.count('no_middle_either_side')}")
+print(f"    one_side_missing_middle : {match_quality.count('one_side_missing_middle')}")
+print(f"    suspect_middle          : {match_quality.count('suspect_middle')}")
+print(f"  NOT in master list        : {n_not_found}")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
