@@ -167,17 +167,41 @@ s_mid = find_col(manual, ["middle_name", "middle", "MiddleName", "Middle Name", 
 if not s_mid and len(manual.columns) >= 2:
     s_mid = manual.columns[1]   # col B = middle initial in manual search
     print(f"  Using column B ({s_mid!r}) as middle initial")
+s_addr = find_col(manual, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
+s_city = find_col(manual, ["primary_city", "Clinic_City", "city", "City"])
+s_zip  = find_col(manual, ["zip5", "Clinic_Zip", "zip", "Zip"])
 print(f"  last={s_last!r}  first={s_first!r}  middle={s_mid!r}")
+print(f"  addr={s_addr!r}  city={s_city!r}  zip={s_zip!r}")
 
-# ── Deduplicate manual search file by name ────────────────────────────────────
+# ── Reshape to wide: one row per provider, multiple address columns ────────────
 manual["_norm_key"] = manual.apply(
     lambda row: make_key(row[s_last], row[s_first] if s_first else ""), axis=1
 )
 before = len(manual)
-dups_removed = manual[manual.duplicated(subset=["_norm_key"], keep="first")].copy()
-manual = manual.drop_duplicates(subset=["_norm_key"]).reset_index(drop=True)
+
+addr_cols_to_skip = {c for c in [s_addr, s_city, s_zip] if c}
+non_addr_cols     = [c for c in manual.columns if c not in addr_cols_to_skip]
+
+wide_rows = []
+for key, group in manual.groupby("_norm_key", sort=False):
+    base = group.iloc[0][non_addr_cols].to_dict()
+    seen = []
+    for _, r in group.iterrows():
+        a = norm(r[s_addr]) if s_addr else ""
+        c = norm(r[s_city]) if s_city else ""
+        z = zip5(r[s_zip])  if s_zip  else ""
+        raw = (r[s_addr] if s_addr else "", r[s_city] if s_city else "", r[s_zip] if s_zip else "")
+        if a and (a, c, z) not in seen:
+            seen.append((a, c, z))
+            n = len(seen)
+            base[f"address_{n}"] = raw[0]
+            base[f"city_{n}"]    = raw[1]
+            base[f"zip_{n}"]     = raw[2]
+    wide_rows.append(base)
+
+manual = pd.DataFrame(wide_rows).reset_index(drop=True)
 after  = len(manual)
-print(f"  Duplicates removed: {before - after}  ({after} unique providers remain)")
+print(f"  Unique providers   : {after}  (from {before} rows, wide format with up to {max((len(r) for r in wide_rows), default=0)} addr cols)")
 
 # ── Match manual search providers against master list ─────────────────────────
 print(f"\nMatching {after} manual search providers against master list ...")
@@ -257,15 +281,11 @@ for _, row in not_in_master.iterrows():
     print(f"  {row[s_last]}, {row[s_first]}  |  {sys_val}  |  {city_val}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-dups_out = dups_removed.drop(columns=["_norm_key"], errors="ignore").reset_index(drop=True)
-
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    not_in_master.to_excel(writer, sheet_name="not_in_master",     index=False)
-    matched_df.to_excel(   writer, sheet_name="matched",            index=False)
-    dups_out.to_excel(     writer, sheet_name="removed_duplicates", index=False)
-    print(f"  not_in_master      : {len(not_in_master)} providers")
-    print(f"  matched            : {len(matched_df)} providers")
-    print(f"  removed_duplicates : {len(dups_out)} providers")
+    not_in_master.to_excel(writer, sheet_name="not_in_master", index=False)
+    matched_df.to_excel(   writer, sheet_name="matched",        index=False)
+    print(f"  not_in_master : {len(not_in_master)} providers")
+    print(f"  matched       : {len(matched_df)} providers")
 
 print("\nDone.")

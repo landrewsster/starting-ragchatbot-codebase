@@ -141,11 +141,29 @@ print(f"  {len(matched)} rows | columns: {list(matched.columns)}")
 m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
 m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
 m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_middle_initial"])
-m_addr  = find_col(matched, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
-m_city  = find_col(matched, ["primary_city", "Clinic_City", "city", "City"])
-m_zip   = find_col(matched, ["zip5", "Clinic_Zip", "zip", "Zip"])
+
+# Detect wide-format address columns (address_1, city_1, zip_1, address_2, ...)
+m_addr_sets = []
+i = 1
+while True:
+    a = find_col(matched, [f"address_{i}", f"primary_address_{i}"])
+    c = find_col(matched, [f"city_{i}"])
+    z = find_col(matched, [f"zip_{i}"])
+    if a:
+        m_addr_sets.append((a, c, z))
+        i += 1
+    else:
+        break
+# Fall back to single address columns if no wide format found
+if not m_addr_sets:
+    a = find_col(matched, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
+    c = find_col(matched, ["primary_city", "Clinic_City", "city", "City"])
+    z = find_col(matched, ["zip5", "Clinic_Zip", "zip", "Zip"])
+    if a:
+        m_addr_sets.append((a, c, z))
+
 print(f"  last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
-print(f"  addr={m_addr!r}  city={m_city!r}  zip={m_zip!r}")
+print(f"  address column sets found: {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
 
 # ── Load not_in_master.csv ────────────────────────────────────────────────────
 print(f"\nLoading not-in-master file: {NOTMATCH_FILE.name}")
@@ -194,9 +212,14 @@ for _, row in matched.iterrows():
     if m_mid and row.get(m_mid, ""):
         manual_name += f" {row[m_mid]}"
 
-    m_addr_raw = row[m_addr] if m_addr else ""
-    m_city_raw = row[m_city] if m_city else ""
-    m_zip_raw  = row[m_zip]  if m_zip  else ""
+    # Collect all manual addresses (wide format: address_1, address_2, ...)
+    manual_addrs = []
+    for a_col, c_col, z_col in m_addr_sets:
+        a = row.get(a_col, "") if a_col else ""
+        c = row.get(c_col, "") if c_col else ""
+        z = row.get(z_col, "") if z_col else ""
+        if norm(a):
+            manual_addrs.append((a, c, z))
 
     if found_idx is not None:
         r3_row      = r3.iloc[found_idx]
@@ -204,34 +227,30 @@ for _, row in matched.iterrows():
         r3_addr_raw = r3_row[r3_addr] if r3_addr else ""
         r3_city_raw = r3_row[r3_city] if r3_city else ""
         r3_zip_raw  = r3_row[r3_zip]  if r3_zip  else ""
+        r3_norm     = f"{norm_addr(r3_addr_raw)}|{norm(r3_city_raw)}|{zip5(r3_zip_raw)}"
 
-        m_norm  = f"{norm_addr(m_addr_raw)}|{norm(m_city_raw)}|{zip5(m_zip_raw)}"
-        r3_norm = f"{norm_addr(r3_addr_raw)}|{norm(r3_city_raw)}|{zip5(r3_zip_raw)}"
-        same    = (m_norm == r3_norm)
+        # Match if ANY manual address matches the Round 3 address
+        same = any(
+            f"{norm_addr(a)}|{norm(c)}|{zip5(z)}" == r3_norm
+            for a, c, z in manual_addrs
+        )
 
-        addr_rows.append({
-            "manual_name":   manual_name,
-            "r3_name":       r3_name,
-            "address_match": "same" if same else "different",
-            "manual_address": m_addr_raw,
-            "manual_city":    m_city_raw,
-            "manual_zip":     m_zip_raw,
-            "r3_address":     r3_addr_raw,
-            "r3_city":        r3_city_raw,
-            "r3_zip":         r3_zip_raw,
-        })
+        out = {"manual_name": manual_name, "r3_name": r3_name,
+               "address_match": "same" if same else "different",
+               "r3_address": r3_addr_raw, "r3_city": r3_city_raw, "r3_zip": r3_zip_raw}
+        for i, (a, c, z) in enumerate(manual_addrs, start=1):
+            out[f"manual_address_{i}"] = a
+            out[f"manual_city_{i}"]    = c
+            out[f"manual_zip_{i}"]     = z
+        addr_rows.append(out)
     else:
-        addr_rows.append({
-            "manual_name":   manual_name,
-            "r3_name":       "(not found in Round 3)",
-            "address_match": "not_found",
-            "manual_address": m_addr_raw,
-            "manual_city":    m_city_raw,
-            "manual_zip":     m_zip_raw,
-            "r3_address":     "",
-            "r3_city":        "",
-            "r3_zip":         "",
-        })
+        out = {"manual_name": manual_name, "r3_name": "(not found in Round 3)",
+               "address_match": "not_found", "r3_address": "", "r3_city": "", "r3_zip": ""}
+        for i, (a, c, z) in enumerate(manual_addrs, start=1):
+            out[f"manual_address_{i}"] = a
+            out[f"manual_city_{i}"]    = c
+            out[f"manual_zip_{i}"]     = z
+        addr_rows.append(out)
 
 addr_df = pd.DataFrame(addr_rows)
 n_same  = (addr_df["address_match"] == "same").sum()
@@ -275,9 +294,14 @@ for _, row in matched.iterrows():
     if m_mid and row.get(m_mid, ""):
         manual_name += f" {row[m_mid]}"
 
-    m_addr_raw = row[m_addr] if m_addr else ""
-    m_city_raw = row[m_city] if m_city else ""
-    m_zip_raw  = row[m_zip]  if m_zip  else ""
+    # Collect all manual addresses (wide format: address_1, address_2, ...)
+    manual_addrs = []
+    for a_col, c_col, z_col in m_addr_sets:
+        a = row.get(a_col, "") if a_col else ""
+        c = row.get(c_col, "") if c_col else ""
+        z = row.get(z_col, "") if z_col else ""
+        if norm(a):
+            manual_addrs.append((a, c, z))
 
     if found_idx is not None:
         ma_row      = multi.iloc[found_idx]
@@ -286,33 +310,28 @@ for _, row in matched.iterrows():
         ma_city_raw = ma_row[ma_city] if ma_city else ""
         ma_zip_raw  = ma_row[ma_zip]  if ma_zip  else ""
 
-        m_norm  = f"{norm_addr(m_addr_raw)}|{norm(m_city_raw)}|{zip5(m_zip_raw)}"
         ma_norm = f"{norm_addr(ma_addr_raw)}|{norm(ma_city_raw)}|{zip5(ma_zip_raw)}"
-        same    = (m_norm == ma_norm)
+        same    = any(
+            f"{norm_addr(a)}|{norm(c)}|{zip5(z)}" == ma_norm
+            for a, c, z in manual_addrs
+        )
 
-        multi_addr_rows.append({
-            "manual_name":    manual_name,
-            "multi_name":     ma_name,
-            "address_match":  "same" if same else "different",
-            "manual_address": m_addr_raw,
-            "manual_city":    m_city_raw,
-            "manual_zip":     m_zip_raw,
-            "multi_address":  ma_addr_raw,
-            "multi_city":     ma_city_raw,
-            "multi_zip":      ma_zip_raw,
-        })
+        out = {"manual_name": manual_name, "multi_name": ma_name,
+               "address_match": "same" if same else "different",
+               "multi_address": ma_addr_raw, "multi_city": ma_city_raw, "multi_zip": ma_zip_raw}
+        for i, (a, c, z) in enumerate(manual_addrs, start=1):
+            out[f"manual_address_{i}"] = a
+            out[f"manual_city_{i}"]    = c
+            out[f"manual_zip_{i}"]     = z
+        multi_addr_rows.append(out)
     else:
-        multi_addr_rows.append({
-            "manual_name":    manual_name,
-            "multi_name":     "(not found in multiple_addresses)",
-            "address_match":  "not_found",
-            "manual_address": m_addr_raw,
-            "manual_city":    m_city_raw,
-            "manual_zip":     m_zip_raw,
-            "multi_address":  "",
-            "multi_city":     "",
-            "multi_zip":      "",
-        })
+        out = {"manual_name": manual_name, "multi_name": "(not found in multiple_addresses)",
+               "address_match": "not_found", "multi_address": "", "multi_city": "", "multi_zip": ""}
+        for i, (a, c, z) in enumerate(manual_addrs, start=1):
+            out[f"manual_address_{i}"] = a
+            out[f"manual_city_{i}"]    = c
+            out[f"manual_zip_{i}"]     = z
+        multi_addr_rows.append(out)
 
 multi_df   = pd.DataFrame(multi_addr_rows)
 mn_same    = (multi_df["address_match"] == "same").sum()
