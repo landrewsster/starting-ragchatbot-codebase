@@ -69,6 +69,15 @@ ADDR_ABBREVS = [
     (r"\beast\b", "e"), (r"\bwest\b", "w"),
     (r"[,\.]", " "),
 ]
+# Ordinal words → numeric form so "First" == "1st", "Second" == "2nd", etc.
+ORDINAL_MAP = [
+    (r"\bfirst\b",    "1st"),  (r"\bsecond\b",  "2nd"),
+    (r"\bthird\b",    "3rd"),  (r"\bfourth\b",  "4th"),
+    (r"\bfifth\b",    "5th"),  (r"\bsixth\b",   "6th"),
+    (r"\bseventh\b",  "7th"),  (r"\beighth\b",  "8th"),
+    (r"\bninth\b",    "9th"),  (r"\btenth\b",   "10th"),
+    (r"\beleventh\b", "11th"), (r"\btwelfth\b", "12th"),
+]
 
 def norm(s) -> str:
     if s is None or (isinstance(s, float) and pd.isna(s)):
@@ -77,6 +86,8 @@ def norm(s) -> str:
 
 def norm_addr(s) -> str:
     s = norm(s)
+    for pattern, repl in ORDINAL_MAP:   # "First" → "1st" etc. before other subs
+        s = re.sub(pattern, repl, s)
     for pattern, repl in ADDR_ABBREVS:
         s = re.sub(pattern, repl, s)
     s = re.sub(r"[.,#\-]", " ", s)      # strip punctuation that causes false mismatches
