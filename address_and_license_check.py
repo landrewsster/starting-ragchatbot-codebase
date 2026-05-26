@@ -315,13 +315,16 @@ for _, row in matched.iterrows():
 
         match = compare_address(manual_addrs, r3_addr_raw, r3_city_raw, r3_zip_raw)
 
+        r3_norm_key = f"{norm_addr(r3_addr_raw)}|{norm_city(r3_city_raw)}|{zip5(r3_zip_raw)}"
         out = {"manual_name": manual_name, "r3_name": r3_name,
                "address_match": match,
-               "r3_address": r3_addr_raw, "r3_city": r3_city_raw, "r3_zip": r3_zip_raw}
+               "r3_address": r3_addr_raw, "r3_city": r3_city_raw, "r3_zip": r3_zip_raw,
+               "_debug_r3_norm": r3_norm_key}
         for i, (a, c, z) in enumerate(manual_addrs, start=1):
             out[f"manual_address_{i}"] = a
             out[f"manual_city_{i}"]    = c
             out[f"manual_zip_{i}"]     = z
+            out[f"_debug_manual_norm_{i}"] = f"{norm_addr(a)}|{norm_city(c)}|{zip5(z)}"
         addr_rows.append(out)
     else:
         out = {"manual_name": manual_name, "r3_name": "(not found in Round 3)",
