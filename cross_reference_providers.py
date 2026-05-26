@@ -328,9 +328,9 @@ print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     not_in_master.to_excel(       writer, sheet_name="not_in_master",       index=False)
     matched_df.to_excel(          writer, sheet_name="matched",             index=False)
-    multi_addr_providers.to_excel(writer, sheet_name="multiple_addresses",  index=False)
-    print(f"  not_in_master      : {len(not_in_master)} providers")
-    print(f"  matched            : {len(matched_df)} providers")
-    print(f"  multiple_addresses : {len(multi_addr_providers)} providers with 2+ addresses")
+    multi_addr_providers.to_excel(writer, sheet_name="multiple_address_rows",  index=False)
+    print(f"  not_in_master         : {len(not_in_master)} providers")
+    print(f"  matched               : {len(matched_df)} providers")
+    print(f"  multiple_address_rows : {len(multi_addr_providers)} providers with 2+ addresses")
 
 print("\nDone.")
