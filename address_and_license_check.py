@@ -310,18 +310,27 @@ print(f"  {len(multi)} rows | columns: {list(multi.columns)}")
 
 ma_last  = find_col(multi, ["last_name", "LastName", "Last Name"]) or multi.columns[0]
 ma_first = find_col(multi, ["first_name", "FirstName", "First Name"]) or multi.columns[1]
-# Address may appear across several columns — collect all candidates, use first non-empty at runtime
-ma_addr_cols = [c for c in [
-    find_col(multi, ["primary_address_1", "address_line1", "mail_address"]),
-    find_col(multi, ["primary_address_2", "address_line2", "mail_address.1"]),
-    find_col(multi, ["address_line3",     "mail_address.2"]),
-    find_col(multi, ["addr_2"]),
-    find_col(multi, ["addr_3"]),
+# Address 1: multiple line components (cols C-F), single city/zip
+ma_addr1_lines = [c for c in [
+    find_col(multi, ["mail_address"]),
+    find_col(multi, ["mail_address.1"]),
+    find_col(multi, ["mail_address.2"]),
+    find_col(multi, ["mail_address.3"]),
 ] if c]
-ma_city  = find_col(multi, ["primary_city", "City", "city", "mail_city"])
-ma_zip   = find_col(multi, ["zip5", "zip", "Zip", "mail_zip"])
+ma_city1 = find_col(multi, ["mail_city", "primary_city", "City", "city"])
+ma_zip1  = find_col(multi, ["mail_zip", "zip5", "zip", "Zip"])
+# Address 2: col I with its own city/zip
+ma_addr2 = find_col(multi, ["addr_2"])
+ma_city2 = find_col(multi, ["city_2"])
+ma_zip2  = find_col(multi, ["zip_2"])
+# Address 3: col L with its own city/zip
+ma_addr3 = find_col(multi, ["addr_3"])
+ma_city3 = find_col(multi, ["city_3"])
+ma_zip3  = find_col(multi, ["zip_3"])
 print(f"  last={ma_last!r}  first={ma_first!r}")
-print(f"  addr_cols={ma_addr_cols}  city={ma_city!r}  zip={ma_zip!r}")
+print(f"  addr1_lines={ma_addr1_lines}  city1={ma_city1!r}  zip1={ma_zip1!r}")
+print(f"  addr2={ma_addr2!r}  city2={ma_city2!r}  zip2={ma_zip2!r}")
+print(f"  addr3={ma_addr3!r}  city3={ma_city3!r}  zip3={ma_zip3!r}")
 
 multi_key_to_idx: dict[str, int] = {}
 for idx, row in multi.iterrows():
@@ -351,28 +360,48 @@ for _, row in matched.iterrows():
             manual_addrs.append((a, c, z))
 
     if found_idx is not None:
-        ma_row      = multi.iloc[found_idx]
-        ma_name     = f"{ma_row[ma_last]}, {ma_row[ma_first]}"
-        ma_city_raw = ma_row[ma_city] if ma_city else ""
-        ma_zip_raw  = ma_row[ma_zip]  if ma_zip  else ""
-        # Use first non-empty address column
-        ma_addr_raw = next(
-            (ma_row[c] for c in ma_addr_cols if norm(ma_row[c])), ""
-        )
+        ma_row  = multi.iloc[found_idx]
+        ma_name = f"{ma_row[ma_last]}, {ma_row[ma_first]}"
 
-        match = compare_address(manual_addrs, ma_addr_raw, ma_city_raw, ma_zip_raw)
+        # Build all reference addresses for this provider
+        ref_addrs = []
+        a1 = next((ma_row[c] for c in ma_addr1_lines if norm(ma_row[c])), "")
+        if a1:
+            ref_addrs.append((a1,
+                              ma_row[ma_city1] if ma_city1 else "",
+                              ma_row[ma_zip1]  if ma_zip1  else ""))
+        if ma_addr2 and norm(ma_row[ma_addr2]):
+            ref_addrs.append((ma_row[ma_addr2],
+                              ma_row[ma_city2] if ma_city2 else "",
+                              ma_row[ma_zip2]  if ma_zip2  else ""))
+        if ma_addr3 and norm(ma_row[ma_addr3]):
+            ref_addrs.append((ma_row[ma_addr3],
+                              ma_row[ma_city3] if ma_city3 else "",
+                              ma_row[ma_zip3]  if ma_zip3  else ""))
 
-        out = {"manual_name": manual_name, "multi_name": ma_name,
-               "address_match": match,
-               "multi_address": ma_addr_raw, "multi_city": ma_city_raw, "multi_zip": ma_zip_raw}
+        # Compare manual addresses against ALL reference addresses, take best result
+        match = "different"
+        for ref_a, ref_c, ref_z in ref_addrs:
+            result = compare_address(manual_addrs, ref_a, ref_c, ref_z)
+            if result == "same":
+                match = "same"
+                break
+            if result == "possible_match":
+                match = "possible_match"
+
+        out = {"manual_name": manual_name, "multi_name": ma_name, "address_match": match}
         for i, (a, c, z) in enumerate(manual_addrs, start=1):
             out[f"manual_address_{i}"] = a
             out[f"manual_city_{i}"]    = c
             out[f"manual_zip_{i}"]     = z
+        for i, (a, c, z) in enumerate(ref_addrs, start=1):
+            out[f"multi_address_{i}"] = a
+            out[f"multi_city_{i}"]    = c
+            out[f"multi_zip_{i}"]     = z
         multi_addr_rows.append(out)
     else:
         out = {"manual_name": manual_name, "multi_name": "(not found in multiple_addresses)",
-               "address_match": "not_found", "multi_address": "", "multi_city": "", "multi_zip": ""}
+               "address_match": "not_found"}
         for i, (a, c, z) in enumerate(manual_addrs, start=1):
             out[f"manual_address_{i}"] = a
             out[f"manual_city_{i}"]    = c
