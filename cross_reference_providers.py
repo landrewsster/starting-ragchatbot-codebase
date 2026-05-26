@@ -201,29 +201,51 @@ before = len(manual)
 addr_cols_to_skip = {c for c in [s_addr, s_city, s_zip] if c}
 non_addr_cols     = [c for c in manual.columns if c not in addr_cols_to_skip]
 
-wide_rows = []
+wide_rows        = []
+dropped_dup_addr  = []   # same provider, same address repeated
+dropped_no_addr   = []   # same provider, row has no address
+
 for key, group in manual.groupby("_norm_key", sort=False):
-    base = group.iloc[0][non_addr_cols].to_dict()
-    seen = []
+    base       = group.iloc[0][non_addr_cols].to_dict()
+    seen       = []
+    first_row  = True
     for _, r in group.iterrows():
         a = norm(r[s_addr]) if s_addr else ""
         c = norm(r[s_city]) if s_city else ""
         z = zip5(r[s_zip])  if s_zip  else ""
         raw = (r[s_addr] if s_addr else "", r[s_city] if s_city else "", r[s_zip] if s_zip else "")
-        if a and (a, c, z) not in seen:
+        if not a:
+            if not first_row:   # first row with no address is fine; extra ones are dropped
+                dropped_no_addr.append({s_last: r[s_last], s_first: r[s_first],
+                                        "note": "extra row had no address"})
+        elif (a, c, z) in seen:
+            dropped_dup_addr.append({s_last: r[s_last], s_first: r[s_first],
+                                     "dup_address": raw[0], "dup_city": raw[1], "dup_zip": raw[2]})
+        else:
             seen.append((a, c, z))
             n = len(seen)
             base[f"address_{n}"] = raw[0]
             base[f"city_{n}"]    = raw[1]
             base[f"zip_{n}"]     = raw[2]
+        first_row = False
     base["num_addresses"] = len(seen) if seen else 1
     wide_rows.append(base)
 
 manual = pd.DataFrame(wide_rows).reset_index(drop=True)
-after       = len(manual)
-collapsed   = before - after
+after     = len(manual)
+collapsed = before - after
 print(f"  Unique providers   : {after}  (from {before} rows)")
-print(f"  Multi-address rows collapsed: {collapsed}  ({after} unique + {collapsed} extra = {before} total)")
+print(f"  Rows collapsed     : {collapsed}")
+if dropped_dup_addr:
+    print(f"    {len(dropped_dup_addr)} dropped — duplicate address for same provider:")
+    for d in dropped_dup_addr:
+        print(f"      {d[s_last]}, {d[s_first]}  |  {d['dup_address']}, {d['dup_city']} {d['dup_zip']}")
+if dropped_no_addr:
+    print(f"    {len(dropped_no_addr)} dropped — extra row with no address for same provider:")
+    for d in dropped_no_addr:
+        print(f"      {d[s_last]}, {d[s_first]}")
+if not dropped_dup_addr and not dropped_no_addr and collapsed > 0:
+    print(f"    (all {collapsed} collapses produced new address slots → see address_N columns)")
 
 # ── Match manual search providers against master list ─────────────────────────
 print(f"\nMatching {after} manual search providers against master list ...")
@@ -275,32 +297,6 @@ print(f"    suspect_middle          : {match_quality.count('suspect_middle')}")
 print(f"  NOT in master list        : {n_not_found}")
 print(f"\nRow count check: {n_matched} matched + {n_not_found} not matched = {n_matched + n_not_found} unique providers")
 
-# Detailed address-count breakdown to reconcile original row total
-def _nonempty(col, df):
-    return df[col].apply(lambda x: pd.notna(x) and str(x).strip() not in ("", "nan")).sum() if col in df.columns else 0
-
-# Cumulative counts: _aN = "has at least N addresses"
-_has2 = _nonempty("address_2", manual)
-_has3 = _nonempty("address_3", manual)
-_has4 = _nonempty("address_4", manual)
-_has5 = _nonempty("address_5", manual)
-# Exact counts per tier
-_exactly2 = _has2 - _has3
-_exactly3 = _has3 - _has4
-_exactly4 = _has4 - _has5
-_exactly5p = _has5
-# Extra rows = 1 per addr-2 provider + 2 per addr-3 + 3 per addr-4 + ...
-_extra = _exactly2 * 1 + _exactly3 * 2 + _exactly4 * 3 + _exactly5p * 4
-_total = after + _extra
-print(f"\nAddress count breakdown (num_addresses column in output):")
-if _exactly2: print(f"  {_exactly2} provider(s) with exactly 2 addresses  → +{_exactly2 * 1} extra row(s)")
-if _exactly3: print(f"  {_exactly3} provider(s) with exactly 3 addresses  → +{_exactly3 * 2} extra row(s)")
-if _exactly4: print(f"  {_exactly4} provider(s) with exactly 4 addresses  → +{_exactly4 * 3} extra row(s)")
-if _exactly5p:print(f"  {_exactly5p} provider(s) with 5+ addresses         → +{_exactly5p * 4} extra row(s)")
-if not (_has2):
-    print(f"  All providers have exactly 1 address")
-print(f"  Total: {after} unique providers + {_extra} extra rows = {_total} original rows in manual file")
-
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
     manual[~manual["_in_master"]]
@@ -350,13 +346,57 @@ else:
     multi_addr_providers = pd.DataFrame(columns=[s_last, s_first])
     print(f"  No address_2 column found — no providers with 2+ addresses")
 
+dropped_df = pd.DataFrame(dropped_dup_addr + [
+    {s_last: d[s_last], s_first: d[s_first],
+     "dup_address": "", "dup_city": "", "dup_zip": "", "note": d["note"]}
+    for d in dropped_no_addr
+])
+
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    not_in_master.to_excel(       writer, sheet_name="not_in_master",       index=False)
-    matched_df.to_excel(          writer, sheet_name="matched",             index=False)
-    multi_addr_providers.to_excel(writer, sheet_name="multiple_address_rows",  index=False)
+    not_in_master.to_excel(       writer, sheet_name="not_in_master",        index=False)
+    matched_df.to_excel(          writer, sheet_name="matched",              index=False)
+    multi_addr_providers.to_excel(writer, sheet_name="multiple_address_rows", index=False)
+    if not dropped_df.empty:
+        dropped_df.to_excel(      writer, sheet_name="dropped_rows",         index=False)
     print(f"  not_in_master         : {len(not_in_master)} providers")
     print(f"  matched               : {len(matched_df)} providers")
     print(f"  multiple_address_rows : {len(multi_addr_providers)} providers with 2+ addresses")
+    if not dropped_df.empty:
+        print(f"  dropped_rows          : {len(dropped_df)} rows collapsed (dup or empty address)")
+
+# ── Row count summary (at end for easy reference) ─────────────────────────────
+def _nonempty(col, df):
+    return df[col].apply(lambda x: pd.notna(x) and str(x).strip() not in ("", "nan")).sum() if col in df.columns else 0
+
+_has2 = _nonempty("address_2", manual)
+_has3 = _nonempty("address_3", manual)
+_has4 = _nonempty("address_4", manual)
+_has5 = _nonempty("address_5", manual)
+_exactly2  = _has2 - _has3
+_exactly3  = _has3 - _has4
+_exactly4  = _has4 - _has5
+_exactly5p = _has5
+_extra_multi = _exactly2 * 1 + _exactly3 * 2 + _exactly4 * 3 + _exactly5p * 4
+_extra_drop  = len(dropped_dup_addr) + len(dropped_no_addr)
+_total       = after + _extra_multi + _extra_drop
+
+print(f"""
+══ Row count reconciliation ══════════════════════════════════════
+  {after} unique providers in output
+  + {_extra_multi} extra rows from multi-address providers:""")
+if _exactly2:  print(f"      {_exactly2} provider(s) with exactly 2 addresses → +{_exactly2} row(s)")
+if _exactly3:  print(f"      {_exactly3} provider(s) with exactly 3 addresses → +{_exactly3 * 2} row(s)")
+if _exactly4:  print(f"      {_exactly4} provider(s) with exactly 4 addresses → +{_exactly4 * 3} row(s)")
+if _exactly5p: print(f"      {_exactly5p} provider(s) with 5+ addresses        → +{_exactly5p * 4} row(s)")
+if not _has2:  print(f"      (none)")
+print(f"  + {_extra_drop} dropped rows (duplicate or empty address) → see 'dropped_rows' sheet")
+print(f"  ─────────────────────────────────────────────────────────────")
+print(f"  Total accounted for: {_total}  (manual file rows: {before})")
+if _total == before:
+    print(f"  ✓ Counts reconcile perfectly")
+else:
+    print(f"  ✗ Still {abs(before - _total)} row(s) unaccounted for — check terminal output above")
+print(f"═════════════════════════════════════════════════════════════════")
 
 print("\nDone.")
