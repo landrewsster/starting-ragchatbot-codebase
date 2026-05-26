@@ -96,6 +96,19 @@ def norm_addr(s) -> str:
 def zip5(s) -> str:
     return re.sub(r"\D", "", norm(s))[:5]
 
+CITY_MAP = [
+    (r"\bsaint\b", "st"),   # Saint Paul → St Paul
+    (r"\bmount\b", "mt"),   # Mount Pleasant → Mt Pleasant
+    (r"\bfort\b",  "ft"),   # Fort Snelling → Ft Snelling
+]
+
+def norm_city(s) -> str:
+    s = norm(s)
+    s = re.sub(r"\.", "", s)          # strip periods: "St." → "St"
+    for pattern, repl in CITY_MAP:
+        s = re.sub(pattern, repl, s)
+    return re.sub(r"\s+", " ", s).strip()
+
 FUZZY_THRESHOLD = 0.82   # similarity ratio to flag as "possible_match"
 
 def addr_similarity(a1: str, a2: str) -> float:
@@ -110,10 +123,10 @@ def compare_address(manual_addrs: list, r3_addr: str, r3_city: str, r3_zip: str)
     """
     if not r3_addr:
         return "different"
-    r3_norm = f"{norm_addr(r3_addr)}|{norm(r3_city)}|{zip5(r3_zip)}"
+    r3_norm = f"{norm_addr(r3_addr)}|{norm_city(r3_city)}|{zip5(r3_zip)}"
     best_sim = 0.0
     for a, c, z in manual_addrs:
-        m_norm = f"{norm_addr(a)}|{norm(c)}|{zip5(z)}"
+        m_norm = f"{norm_addr(a)}|{norm_city(c)}|{zip5(z)}"
         if m_norm == r3_norm:
             return "same"
         sim = addr_similarity(m_norm, r3_norm)
