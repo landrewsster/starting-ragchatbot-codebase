@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # ── Self-update ───────────────────────────────────────────────────────────────
-import os, sys, urllib.request
+import os, sys, urllib.request, ssl
 _URL = ("https://raw.githubusercontent.com/landrewsster/"
         "starting-ragchatbot-codebase/claude/clean-sort-merge-npi-GngZZ/"
         "address_and_license_check.py")
 try:
-    _new = urllib.request.urlopen(_URL, timeout=10).read()
+    _ctx = ssl._create_unverified_context()
+    _new = urllib.request.urlopen(_URL, timeout=10, context=_ctx).read()
     _old = open(__file__, "rb").read()
     if _new != _old:
         open(__file__, "wb").write(_new)
