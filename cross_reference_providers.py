@@ -302,11 +302,22 @@ for _, row in not_in_master.iterrows():
     print(f"  {row[s_last]}, {row[s_first]}  |  {sys_val}  |  {city_val}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
+# Providers with more than one address (address_2 column is populated)
+multi_addr_providers = manual[manual.get("address_2", pd.Series(dtype=str)).apply(
+    lambda x: bool(norm(x)) if isinstance(x, str) else False
+)].copy() if "address_2" in manual.columns else pd.DataFrame()
+
+# Drop internal columns before writing
+drop_cols = [c for c in ["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"] if c in manual.columns]
+multi_addr_providers = multi_addr_providers.drop(columns=drop_cols, errors="ignore").reset_index(drop=True)
+
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    not_in_master.to_excel(writer, sheet_name="not_in_master", index=False)
-    matched_df.to_excel(   writer, sheet_name="matched",        index=False)
-    print(f"  not_in_master : {len(not_in_master)} providers")
-    print(f"  matched       : {len(matched_df)} providers")
+    not_in_master.to_excel(writer, sheet_name="not_in_master",       index=False)
+    matched_df.to_excel(   writer, sheet_name="matched",             index=False)
+    multi_addr_providers.to_excel(writer, sheet_name="multiple_addresses", index=False)
+    print(f"  not_in_master      : {len(not_in_master)} providers")
+    print(f"  matched            : {len(matched_df)} providers")
+    print(f"  multiple_addresses : {len(multi_addr_providers)} providers with 2+ addresses")
 
 print("\nDone.")
