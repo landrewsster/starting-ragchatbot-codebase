@@ -84,6 +84,13 @@ def norm(s) -> str:
         return ""
     return re.sub(r"\s+", " ", str(s).lower().strip())
 
+# Matches a house number followed immediately by a directional, then street name:
+# e.g. "1026 w 7th st" → group(1)="1026" group(2)="w" group(3)="7th st"
+# Reorder to post-directional form: "1026 7th st w"
+_PRE_DIR_RE = re.compile(
+    r'^(\d+\w*)\s+(n|s|e|w|ne|nw|se|sw)\s+(.+)$'
+)
+
 def norm_addr(s) -> str:
     s = norm(s)
     for pattern, repl in ORDINAL_MAP:   # "First" → "1st" etc. before other subs
@@ -91,7 +98,13 @@ def norm_addr(s) -> str:
     for pattern, repl in ADDR_ABBREVS:
         s = re.sub(pattern, repl, s)
     s = re.sub(r"[.,#\-]", " ", s)      # strip punctuation that causes false mismatches
-    return re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    # Normalize pre-directional to post-directional:
+    # "1026 W 7th St" and "1804 SW Trott Ave" → "1026 7th st w" / "1804 trott ave sw"
+    m = _PRE_DIR_RE.match(s)
+    if m:
+        s = f"{m.group(1)} {m.group(3)} {m.group(2)}"
+    return s
 
 def zip5(s) -> str:
     return re.sub(r"\D", "", norm(s))[:5]
