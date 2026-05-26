@@ -310,12 +310,18 @@ print(f"  {len(multi)} rows | columns: {list(multi.columns)}")
 
 ma_last  = find_col(multi, ["last_name", "LastName", "Last Name"]) or multi.columns[0]
 ma_first = find_col(multi, ["first_name", "FirstName", "First Name"]) or multi.columns[1]
-ma_addr  = find_col(multi, ["primary_address_1", "Delivery Address", "address_line1",
-                            "mail_address", "address", "Address"])
+# Address may appear across several columns — collect all candidates, use first non-empty at runtime
+ma_addr_cols = [c for c in [
+    find_col(multi, ["primary_address_1", "address_line1", "mail_address"]),
+    find_col(multi, ["primary_address_2", "address_line2", "mail_address.1"]),
+    find_col(multi, ["address_line3",     "mail_address.2"]),
+    find_col(multi, ["addr_2"]),
+    find_col(multi, ["addr_3"]),
+] if c]
 ma_city  = find_col(multi, ["primary_city", "City", "city", "mail_city"])
 ma_zip   = find_col(multi, ["zip5", "zip", "Zip", "mail_zip"])
 print(f"  last={ma_last!r}  first={ma_first!r}")
-print(f"  addr={ma_addr!r}  city={ma_city!r}  zip={ma_zip!r}")
+print(f"  addr_cols={ma_addr_cols}  city={ma_city!r}  zip={ma_zip!r}")
 
 multi_key_to_idx: dict[str, int] = {}
 for idx, row in multi.iterrows():
@@ -347,18 +353,17 @@ for _, row in matched.iterrows():
     if found_idx is not None:
         ma_row      = multi.iloc[found_idx]
         ma_name     = f"{ma_row[ma_last]}, {ma_row[ma_first]}"
-        ma_addr_raw = ma_row[ma_addr] if ma_addr else ""
         ma_city_raw = ma_row[ma_city] if ma_city else ""
         ma_zip_raw  = ma_row[ma_zip]  if ma_zip  else ""
-
-        ma_norm = f"{norm_addr(ma_addr_raw)}|{norm(ma_city_raw)}|{zip5(ma_zip_raw)}"
-        same    = any(
-            f"{norm_addr(a)}|{norm(c)}|{zip5(z)}" == ma_norm
-            for a, c, z in manual_addrs
+        # Use first non-empty address column
+        ma_addr_raw = next(
+            (ma_row[c] for c in ma_addr_cols if norm(ma_row[c])), ""
         )
 
+        match = compare_address(manual_addrs, ma_addr_raw, ma_city_raw, ma_zip_raw)
+
         out = {"manual_name": manual_name, "multi_name": ma_name,
-               "address_match": "same" if same else "different",
+               "address_match": match,
                "multi_address": ma_addr_raw, "multi_city": ma_city_raw, "multi_zip": ma_zip_raw}
         for i, (a, c, z) in enumerate(manual_addrs, start=1):
             out[f"manual_address_{i}"] = a
@@ -374,11 +379,13 @@ for _, row in matched.iterrows():
             out[f"manual_zip_{i}"]     = z
         multi_addr_rows.append(out)
 
-multi_df   = pd.DataFrame(multi_addr_rows)
-mn_same    = (multi_df["address_match"] == "same").sum()
-mn_diff    = (multi_df["address_match"] == "different").sum()
-mn_nf      = (multi_df["address_match"] == "not_found").sum()
+multi_df    = pd.DataFrame(multi_addr_rows)
+mn_same     = (multi_df["address_match"] == "same").sum()
+mn_possible = (multi_df["address_match"] == "possible_match").sum()
+mn_diff     = (multi_df["address_match"] == "different").sum()
+mn_nf       = (multi_df["address_match"] == "not_found").sum()
 print(f"  Same address             : {mn_same}")
+print(f"  Possible match           : {mn_possible}  (similar but not identical — review manually)")
 print(f"  Different address        : {mn_diff}")
 print(f"  Not found in multi-addr  : {mn_nf}")
 
@@ -469,26 +476,29 @@ for _, row in in_lic_df.iterrows():
     print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-r3_same     = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
-r3_possible = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
-r3_diff     = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
-multi_same  = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
-multi_diff  = multi_df[multi_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+r3_same       = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
+r3_possible   = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
+r3_diff       = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+multi_same    = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
+multi_possible= multi_df[multi_df["address_match"] == "possible_match"].reset_index(drop=True)
+multi_diff    = multi_df[multi_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    r3_same.to_excel(      writer, sheet_name="r3_addr_same",         index=False)
-    r3_possible.to_excel(  writer, sheet_name="r3_addr_possible",     index=False)
-    r3_diff.to_excel(      writer, sheet_name="r3_addr_different",    index=False)
-    multi_same.to_excel(   writer, sheet_name="multi_addr_same",      index=False)
-    multi_diff.to_excel(   writer, sheet_name="multi_addr_different", index=False)
-    in_lic_df.to_excel(    writer, sheet_name="in_license_board",     index=False)
-    not_in_lic_df.to_excel(writer, sheet_name="not_in_license",       index=False)
-    print(f"  r3_addr_same        : {len(r3_same)}")
-    print(f"  r3_addr_possible    : {len(r3_possible)}  ← review manually")
-    print(f"  r3_addr_different   : {len(r3_diff)}")
-    print(f"  multi_addr_same     : {len(multi_same)}")
-    print(f"  multi_addr_different: {len(multi_diff)}")
+    r3_same.to_excel(        writer, sheet_name="r3_addr_same",          index=False)
+    r3_possible.to_excel(    writer, sheet_name="r3_addr_possible",      index=False)
+    r3_diff.to_excel(        writer, sheet_name="r3_addr_different",     index=False)
+    multi_same.to_excel(     writer, sheet_name="multi_addr_same",       index=False)
+    multi_possible.to_excel( writer, sheet_name="multi_addr_possible",   index=False)
+    multi_diff.to_excel(     writer, sheet_name="multi_addr_different",  index=False)
+    in_lic_df.to_excel(      writer, sheet_name="in_license_board",      index=False)
+    not_in_lic_df.to_excel(  writer, sheet_name="not_in_license",        index=False)
+    print(f"  r3_addr_same         : {len(r3_same)}")
+    print(f"  r3_addr_possible     : {len(r3_possible)}  ← review manually")
+    print(f"  r3_addr_different    : {len(r3_diff)}")
+    print(f"  multi_addr_same      : {len(multi_same)}")
+    print(f"  multi_addr_possible  : {len(multi_possible)}  ← review manually")
+    print(f"  multi_addr_different : {len(multi_diff)}")
     print(f"  in_license_board    : {len(in_lic_df)}")
     print(f"  not_in_license      : {len(not_in_lic_df)}")
 
