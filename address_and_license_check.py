@@ -79,6 +79,7 @@ def norm_addr(s) -> str:
     s = norm(s)
     for pattern, repl in ADDR_ABBREVS:
         s = re.sub(pattern, repl, s)
+    s = re.sub(r"[.,#\-]", " ", s)      # strip punctuation that causes false mismatches
     return re.sub(r"\s+", " ", s).strip()
 
 def zip5(s) -> str:
