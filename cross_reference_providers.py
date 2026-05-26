@@ -216,6 +216,7 @@ for key, group in manual.groupby("_norm_key", sort=False):
             base[f"address_{n}"] = raw[0]
             base[f"city_{n}"]    = raw[1]
             base[f"zip_{n}"]     = raw[2]
+    base["num_addresses"] = len(seen) if seen else 1
     wide_rows.append(base)
 
 manual = pd.DataFrame(wide_rows).reset_index(drop=True)
@@ -278,15 +279,27 @@ print(f"\nRow count check: {n_matched} matched + {n_not_found} not matched = {n_
 def _nonempty(col, df):
     return df[col].apply(lambda x: pd.notna(x) and str(x).strip() not in ("", "nan")).sum() if col in df.columns else 0
 
-_a2 = _nonempty("address_2", manual)
-_a3 = _nonempty("address_3", manual)
-_a4 = _nonempty("address_4", manual)
-_extra = _a2 + _a3 + _a4
+# Cumulative counts: _aN = "has at least N addresses"
+_has2 = _nonempty("address_2", manual)
+_has3 = _nonempty("address_3", manual)
+_has4 = _nonempty("address_4", manual)
+_has5 = _nonempty("address_5", manual)
+# Exact counts per tier
+_exactly2 = _has2 - _has3
+_exactly3 = _has3 - _has4
+_exactly4 = _has4 - _has5
+_exactly5p = _has5
+# Extra rows = 1 per addr-2 provider + 2 per addr-3 + 3 per addr-4 + ...
+_extra = _exactly2 * 1 + _exactly3 * 2 + _exactly4 * 3 + _exactly5p * 4
 _total = after + _extra
-print(f"  Providers with 2 addresses : {_a2}  → +{_a2} extra row(s)")
-print(f"  Providers with 3 addresses : {_a3}  → +{_a3} extra row(s)")
-print(f"  Providers with 4 addresses : {_a4}  → +{_a4} extra row(s)")
-print(f"  Total: {after} unique + {_extra} extra = {_total} original rows in manual file")
+print(f"\nAddress count breakdown (num_addresses column in output):")
+if _exactly2: print(f"  {_exactly2} provider(s) with exactly 2 addresses  → +{_exactly2 * 1} extra row(s)")
+if _exactly3: print(f"  {_exactly3} provider(s) with exactly 3 addresses  → +{_exactly3 * 2} extra row(s)")
+if _exactly4: print(f"  {_exactly4} provider(s) with exactly 4 addresses  → +{_exactly4 * 3} extra row(s)")
+if _exactly5p:print(f"  {_exactly5p} provider(s) with 5+ addresses         → +{_exactly5p * 4} extra row(s)")
+if not (_has2):
+    print(f"  All providers have exactly 1 address")
+print(f"  Total: {after} unique providers + {_extra} extra rows = {_total} original rows in manual file")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
