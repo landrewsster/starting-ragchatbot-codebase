@@ -55,6 +55,11 @@ def norm(s) -> str:
         return ""
     return re.sub(r"\s+", " ", str(s).lower().strip())
 
+def zip5(s) -> str:
+    """Return the first 5 digits of a ZIP code, or empty string."""
+    z = re.sub(r"\D", "", norm(s))
+    return z[:5] if z else ""
+
 def clean_name(s) -> str:
     s = norm(s)
     s = STRIP_SUFFIXES.sub("", s).strip()
