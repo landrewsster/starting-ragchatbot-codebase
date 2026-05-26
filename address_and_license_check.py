@@ -511,29 +511,27 @@ _debug_baker_lic_rows  = lic_df[lic_df[l_last].str.lower().str.contains("baker",
                                 | lic_df[l_first].str.lower().str.contains("baker", na=False)]
 _debug_baker_nm_keys   = []
 
-# ── Match ALL providers against licensing board ───────────────────────────────
-# Both matched and not_in_master providers are checked so the output covers
-# every clinician in the manual search file.
-total_for_license = len(matched) + len(not_matched)
-print(f"\nChecking ALL {total_for_license} providers against license board "
-      f"({len(matched)} matched + {len(not_matched)} not_in_master) ...")
+# ── Match not_in_master against licensing board ───────────────────────────────
+print(f"\nChecking {len(not_matched)} not-in-master providers against license board ...")
 
 in_license     = []
 not_in_license = []
 
-def _check_one_against_license(row, last_col, first_col, third_col=None, source=""):
-    """Look up a single provider row in the license board. Returns (found_idx, match_type)."""
-    keys = make_all_keys(row[last_col], row[first_col])
-    if third_col and third_col in row.index:
-        keys |= make_all_keys(row[last_col],  row[third_col])
-        keys |= make_all_keys(row[third_col], row[last_col])
-        keys |= make_all_keys(row[third_col], row[first_col])
+for _, row in not_matched.iterrows():
+    # Try col_a + col_b and also col_a + col_c, since col_b may be a middle
+    # initial and col_c the actual first or last name (mixed format)
+    keys = make_all_keys(row[nm_last], row[nm_first])
+    if nm_third:
+        keys |= make_all_keys(row[nm_last],  row[nm_third])
+        keys |= make_all_keys(row[nm_third], row[nm_last])
+        keys |= make_all_keys(row[nm_third], row[nm_first])
 
     # Collect Baker debug info
-    if "baker" in norm(row[last_col]) or "baker" in norm(row[first_col]) or \
-       (third_col and third_col in row.index and "baker" in norm(row[third_col])):
+    if "baker" in norm(row[nm_last]) or "baker" in norm(row[nm_first]) or \
+       (nm_third and "baker" in norm(row[nm_third])):
         _debug_baker_nm_keys.append(sorted(keys))
 
+    # Prefer exact keys first, fall back to initial (~) keys
     exact_keys   = {k for k in keys if "|~" not in k}
     initial_keys = {k for k in keys if "|~" in k}
     found_idx    = next((lic_key_to_idx[k] for k in exact_keys   if k in lic_key_to_idx), None)
@@ -542,30 +540,21 @@ def _check_one_against_license(row, last_col, first_col, third_col=None, source=
         found_idx  = next((lic_key_to_idx[k] for k in initial_keys if k in lic_key_to_idx), None)
         match_type = "initial_match"
 
-    row2 = row.copy()
-    row2["crossref_source"] = source
     if found_idx is not None:
         lic_row  = lic_df.iloc[found_idx]
         lic_name = f"{lic_row[l_last]}, {lic_row[l_first]}".strip(", ")
+        row2     = row.copy()
         row2["license_name_match"] = lic_name
         row2["match_type"]         = match_type
         in_license.append(row2)
     else:
-        not_in_license.append(row2)
-
-# Check matched providers
-for _, row in matched.iterrows():
-    _check_one_against_license(row, m_last, m_first, source="matched")
-
-# Check not_in_master providers (also try third column for mixed name formats)
-for _, row in not_matched.iterrows():
-    _check_one_against_license(row, nm_last, nm_first, nm_third, source="not_in_master")
+        not_in_license.append(row)
 
 in_lic_df     = pd.DataFrame(in_license).reset_index(drop=True)
 not_in_lic_df = pd.DataFrame(not_in_license).reset_index(drop=True)
 print(f"  Found in license board : {len(in_lic_df)}")
 print(f"  Not in license board   : {len(not_in_lic_df)}")
-print(f"  Total covered          : {len(in_lic_df) + len(not_in_lic_df)}  (should equal {total_for_license})")
+print(f"  Total covered          : {len(in_lic_df) + len(not_in_lic_df)}  (should equal {len(not_matched)})")
 
 # ── Terminal summary ──────────────────────────────────────────────────────────
 print(f"\nProviders with POSSIBLE address match ({n_possible}) — review manually:")
@@ -577,12 +566,9 @@ for _, row in addr_df[addr_df["address_match"] == "possible_match"].iterrows():
         i += 1
     print(f"    Round3 : {row['r3_address']}, {row['r3_city']} {row['r3_zip']}")
 
-print(f"\nProviders found in license board ({len(in_lic_df)}):")
+print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
 for _, row in in_lic_df.iterrows():
-    src  = row.get("crossref_source", "")
-    last = row.get(m_last, row.get(nm_last, ""))
-    frst = row.get(m_first, row.get(nm_first, ""))
-    print(f"  [{src}] {last}, {frst}  →  {row['license_name_match']}")
+    print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 r3_same        = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
@@ -614,23 +600,25 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  in_license_board     : {len(in_lic_df)}")
     print(f"  not_in_license       : {len(not_in_lic_df)}")
 
-n_matched_provs  = len(r3_same) + len(r3_possible) + len(r3_diff)
-n_multi_checked  = len(multi_same) + len(multi_possible) + len(multi_diff) + len(multi_notfound)
-n_confirmed_same = len(r3_same) + len(multi_same)
-n_lic_total      = len(in_lic_df) + len(not_in_lic_df)
+n_matched_provs   = len(r3_same) + len(r3_possible) + len(r3_diff)
+n_multi_checked   = len(multi_same) + len(multi_possible) + len(multi_diff) + len(multi_notfound)
+n_unmatched_provs = len(in_lic_df) + len(not_in_lic_df)
+n_confirmed_same  = len(r3_same) + len(multi_same)
 print(f"""
 Row count summary:
-  {n_matched_provs} matched providers vs R3 address:
+  {n_matched_provs} matched providers vs R3:
     {len(r3_same)} same  |  {len(r3_possible)} possible  |  {len(r3_diff)} different/not_found
 
-  Of those {len(r3_possible) + len(r3_diff)} non-same, {n_multi_checked} checked vs multiple_addresses.csv:
+  Of those {len(r3_possible) + len(r3_diff)} non-same, {n_multi_checked} were found in multiple_addresses.csv:
     {len(multi_same)} same  |  {len(multi_possible)} possible  |  {len(multi_diff)} different  |  {len(multi_notfound)} not in file
 
   Address confirmed same (R3 or multi): {len(r3_same)} + {len(multi_same)} = {n_confirmed_same}
+  Still different after both checks   : {len(r3_diff) + len(r3_possible) - n_multi_checked + len(multi_diff) + len(multi_possible)}
 
-  License board check (ALL {n_lic_total} providers):
-    {len(in_lic_df)} found in license board  (crossref_source column shows matched vs not_in_master)
-    {len(not_in_lic_df)} not found in license board
+  {n_unmatched_provs} not-matched providers vs MN license board:
+    {len(in_lic_df)} found  |  {len(not_in_lic_df)} not found
+
+  Unique providers total: {n_matched_provs} matched + {n_unmatched_provs} not matched = {n_matched_provs + n_unmatched_provs}
 """)
 
 print("Done.")
