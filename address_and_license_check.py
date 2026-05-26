@@ -109,27 +109,45 @@ def norm_city(s) -> str:
         s = re.sub(pattern, repl, s)
     return re.sub(r"\s+", " ", s).strip()
 
+_UNIT_RE = re.compile(r"\b(ste|apt|unit|fl|bldg)\b.*$")
+
+def strip_unit(s: str) -> str:
+    """Remove suite/unit/floor suffix from an already-normalised address string."""
+    return _UNIT_RE.sub("", s).strip()
+
 FUZZY_THRESHOLD = 0.82   # similarity ratio to flag as "possible_match"
 
 def addr_similarity(a1: str, a2: str) -> float:
     """Return 0–1 similarity between two normalised address strings."""
     return SequenceMatcher(None, norm_addr(a1), norm_addr(a2)).ratio()
 
-def compare_address(manual_addrs: list, r3_addr: str, r3_city: str, r3_zip: str) -> str:
+def compare_address(manual_addrs: list, ref_addr: str, ref_city: str, ref_zip: str) -> str:
     """
     Compare a list of (addr, city, zip) tuples against a single reference address.
     Returns: 'same', 'possible_match', or 'different'.
-    'possible_match' means addresses are similar but not identical — flag for manual review.
+
+    Matching logic (in order):
+      1. Exact match after full normalisation (case, punctuation, abbreviations, ordinals, city aliases)
+      2. Base-address match: strip suite/unit from both sides — handles one file
+         omitting suite info (e.g. '2635 University Ave W' == '2635 University Ave W Ste 160')
+      3. Fuzzy similarity >= FUZZY_THRESHOLD → 'possible_match' for manual review
     """
-    if not r3_addr:
+    if not ref_addr:
         return "different"
-    r3_norm = f"{norm_addr(r3_addr)}|{norm_city(r3_city)}|{zip5(r3_zip)}"
+    ref_norm = f"{norm_addr(ref_addr)}|{norm_city(ref_city)}|{zip5(ref_zip)}"
+    ref_base = f"{strip_unit(norm_addr(ref_addr))}|{norm_city(ref_city)}|{zip5(ref_zip)}"
     best_sim = 0.0
     for a, c, z in manual_addrs:
         m_norm = f"{norm_addr(a)}|{norm_city(c)}|{zip5(z)}"
-        if m_norm == r3_norm:
+        # 1. Exact match
+        if m_norm == ref_norm:
             return "same"
-        sim = addr_similarity(m_norm, r3_norm)
+        # 2. Base-address match (ignore suite/unit differences)
+        m_base = f"{strip_unit(norm_addr(a))}|{norm_city(c)}|{zip5(z)}"
+        if m_base == ref_base and ref_base != "||":
+            return "same"
+        # 3. Fuzzy
+        sim = addr_similarity(m_norm, ref_norm)
         if sim > best_sim:
             best_sim = sim
     if best_sim >= FUZZY_THRESHOLD:
