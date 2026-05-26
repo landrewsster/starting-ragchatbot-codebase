@@ -164,7 +164,9 @@ print(f"  Unique name keys in master list: {len(master_key_to_idx)}")
 print(f"\nLoading manual search file: {MANUAL_FILE.name}")
 xl = pd.ExcelFile(MANUAL_FILE)
 print(f"  Sheets: {xl.sheet_names}")
-sheet = "ProviderList_COMBINED" if "ProviderList_COMBINED" in xl.sheet_names else xl.sheet_names[0]
+# Case-insensitive sheet match for "ProviderList_Combined" / "ProviderList_COMBINED"
+_sheet_lower = {s.lower(): s for s in xl.sheet_names}
+sheet = _sheet_lower.get("providerlist_combined", xl.sheet_names[0])
 print(f"  Using sheet: {sheet!r}")
 manual = xl.parse(sheet, dtype=str).fillna("")
 print(f"  {len(manual)} rows")
@@ -305,17 +307,22 @@ for _, row in not_in_master.iterrows():
 internal_cols = ["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"]
 
 # Providers with more than one address (address_2 column is populated)
+print(f"\n  address_2 column present: {'address_2' in manual.columns}")
+print(f"  columns in reshaped manual: {[c for c in manual.columns if c.startswith('address_') or c.startswith('city_') or c.startswith('zip_')]}")
+
 if "address_2" in manual.columns:
-    has_second_addr = manual["address_2"].apply(lambda x: bool(norm(str(x))) if pd.notna(x) and str(x).strip() != "" else False)
+    has_second_addr = manual["address_2"].apply(
+        lambda x: pd.notna(x) and str(x).strip() not in ("", "nan")
+    )
     multi_addr_providers = (
         manual[has_second_addr]
         .drop(columns=[c for c in internal_cols if c in manual.columns], errors="ignore")
         .reset_index(drop=True)
     )
+    print(f"  Providers with 2+ addresses: {len(multi_addr_providers)}")
 else:
-    multi_addr_providers = pd.DataFrame()
-
-print(f"  Providers with 2+ addresses: {len(multi_addr_providers)}")
+    multi_addr_providers = pd.DataFrame(columns=[s_last, s_first])
+    print(f"  No address_2 column found — no providers with 2+ addresses")
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
