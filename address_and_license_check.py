@@ -41,6 +41,7 @@ Usage:
 """
 
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import pandas as pd
@@ -82,6 +83,33 @@ def norm_addr(s) -> str:
 
 def zip5(s) -> str:
     return re.sub(r"\D", "", norm(s))[:5]
+
+FUZZY_THRESHOLD = 0.82   # similarity ratio to flag as "possible_match"
+
+def addr_similarity(a1: str, a2: str) -> float:
+    """Return 0–1 similarity between two normalised address strings."""
+    return SequenceMatcher(None, norm_addr(a1), norm_addr(a2)).ratio()
+
+def compare_address(manual_addrs: list, r3_addr: str, r3_city: str, r3_zip: str) -> str:
+    """
+    Compare a list of (addr, city, zip) tuples against a single reference address.
+    Returns: 'same', 'possible_match', or 'different'.
+    'possible_match' means addresses are similar but not identical — flag for manual review.
+    """
+    if not r3_addr:
+        return "different"
+    r3_norm = f"{norm_addr(r3_addr)}|{norm(r3_city)}|{zip5(r3_zip)}"
+    best_sim = 0.0
+    for a, c, z in manual_addrs:
+        m_norm = f"{norm_addr(a)}|{norm(c)}|{zip5(z)}"
+        if m_norm == r3_norm:
+            return "same"
+        sim = addr_similarity(m_norm, r3_norm)
+        if sim > best_sim:
+            best_sim = sim
+    if best_sim >= FUZZY_THRESHOLD:
+        return "possible_match"
+    return "different"
 
 def clean_name(s) -> str:
     s = norm(s)
@@ -194,11 +222,16 @@ print(f"  {len(r3)} rows | columns: {list(r3.columns)}")
 
 r3_last  = find_col(r3, ["last_name", "LastName", "Last Name"]) or r3.columns[0]
 r3_first = find_col(r3, ["first_name", "FirstName", "First Name"]) or r3.columns[1]
-r3_addr  = find_col(r3, ["primary_address_1", "Delivery Address", "address_line1"])
+# Address may appear in any of columns D/E/F — collect all three, use first non-empty at runtime
+r3_addr_cols = [c for c in [
+    find_col(r3, ["primary_address_1", "address_line1"]),
+    find_col(r3, ["primary_address_2", "address_line2"]),
+    find_col(r3, ["address_line3", "address_line_3"]),
+] if c]
 r3_city  = find_col(r3, ["primary_city", "City", "city"])
 r3_zip   = find_col(r3, ["zip5", "ZIP+4", "zip", "Zip"])
 print(f"  last={r3_last!r}  first={r3_first!r}")
-print(f"  addr={r3_addr!r}  city={r3_city!r}  zip={r3_zip!r}")
+print(f"  addr_cols={r3_addr_cols}  city={r3_city!r}  zip={r3_zip!r}")
 
 r3_key_to_idx: dict[str, int] = {}
 for idx, row in r3.iterrows():
@@ -228,21 +261,20 @@ for _, row in matched.iterrows():
             manual_addrs.append((a, c, z))
 
     if found_idx is not None:
-        r3_row      = r3.iloc[found_idx]
-        r3_name     = f"{r3_row[r3_last]}, {r3_row[r3_first]}"
-        r3_addr_raw = r3_row[r3_addr] if r3_addr else ""
+        r3_row  = r3.iloc[found_idx]
+        r3_name = f"{r3_row[r3_last]}, {r3_row[r3_first]}"
         r3_city_raw = r3_row[r3_city] if r3_city else ""
         r3_zip_raw  = r3_row[r3_zip]  if r3_zip  else ""
-        r3_norm     = f"{norm_addr(r3_addr_raw)}|{norm(r3_city_raw)}|{zip5(r3_zip_raw)}"
 
-        # Match if ANY manual address matches the Round 3 address
-        same = any(
-            f"{norm_addr(a)}|{norm(c)}|{zip5(z)}" == r3_norm
-            for a, c, z in manual_addrs
+        # Use first non-empty address column from D/E/F
+        r3_addr_raw = next(
+            (r3_row[c] for c in r3_addr_cols if norm(r3_row[c])), ""
         )
 
+        match = compare_address(manual_addrs, r3_addr_raw, r3_city_raw, r3_zip_raw)
+
         out = {"manual_name": manual_name, "r3_name": r3_name,
-               "address_match": "same" if same else "different",
+               "address_match": match,
                "r3_address": r3_addr_raw, "r3_city": r3_city_raw, "r3_zip": r3_zip_raw}
         for i, (a, c, z) in enumerate(manual_addrs, start=1):
             out[f"manual_address_{i}"] = a
@@ -259,10 +291,12 @@ for _, row in matched.iterrows():
         addr_rows.append(out)
 
 addr_df = pd.DataFrame(addr_rows)
-n_same  = (addr_df["address_match"] == "same").sum()
-n_diff  = (addr_df["address_match"] == "different").sum()
-n_nf    = (addr_df["address_match"] == "not_found").sum()
+n_same    = (addr_df["address_match"] == "same").sum()
+n_possible= (addr_df["address_match"] == "possible_match").sum()
+n_diff    = (addr_df["address_match"] == "different").sum()
+n_nf      = (addr_df["address_match"] == "not_found").sum()
 print(f"  Same address        : {n_same}")
+print(f"  Possible match      : {n_possible}  (similar but not identical — review manually)")
 print(f"  Different address   : {n_diff}")
 print(f"  Not found in Round 3: {n_nf}")
 
@@ -421,12 +455,11 @@ print(f"  Found in license board : {len(in_lic_df)}")
 print(f"  Not in license board   : {len(not_in_lic_df)}")
 
 # ── Terminal summary ──────────────────────────────────────────────────────────
-print(f"\nProviders with DIFFERENT addresses ({n_diff}):")
-for _, row in addr_df[addr_df["address_match"] == "different"].iterrows():
+print(f"\nProviders with POSSIBLE address match ({n_possible}) — review manually:")
+for _, row in addr_df[addr_df["address_match"] == "possible_match"].iterrows():
     print(f"  {row['manual_name']}")
-    # Print all manual address sets present in this row
     i = 1
-    while f"manual_address_{i}" in row and row[f"manual_address_{i}"]:
+    while f"manual_address_{i}" in row.index and row[f"manual_address_{i}"]:
         print(f"    Manual{i}: {row[f'manual_address_{i}']}, {row.get(f'manual_city_{i}','')} {row.get(f'manual_zip_{i}','')}")
         i += 1
     print(f"    Round3 : {row['r3_address']}, {row['r3_city']} {row['r3_zip']}")
@@ -436,20 +469,23 @@ for _, row in in_lic_df.iterrows():
     print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-r3_same    = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
-r3_diff    = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
-multi_same = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
-multi_diff = multi_df[multi_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+r3_same     = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
+r3_possible = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
+r3_diff     = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+multi_same  = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
+multi_diff  = multi_df[multi_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    r3_same.to_excel(      writer, sheet_name="r3_addr_same",        index=False)
+    r3_same.to_excel(      writer, sheet_name="r3_addr_same",         index=False)
+    r3_possible.to_excel(  writer, sheet_name="r3_addr_possible",     index=False)
     r3_diff.to_excel(      writer, sheet_name="r3_addr_different",    index=False)
     multi_same.to_excel(   writer, sheet_name="multi_addr_same",      index=False)
     multi_diff.to_excel(   writer, sheet_name="multi_addr_different", index=False)
     in_lic_df.to_excel(    writer, sheet_name="in_license_board",     index=False)
     not_in_lic_df.to_excel(writer, sheet_name="not_in_license",       index=False)
     print(f"  r3_addr_same        : {len(r3_same)}")
+    print(f"  r3_addr_possible    : {len(r3_possible)}  ← review manually")
     print(f"  r3_addr_different   : {len(r3_diff)}")
     print(f"  multi_addr_same     : {len(multi_same)}")
     print(f"  multi_addr_different: {len(multi_diff)}")
