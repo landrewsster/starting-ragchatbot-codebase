@@ -383,17 +383,26 @@ for idx, row in multi.iterrows():
         multi_key_to_idx.setdefault(key, idx)
 print(f"  Unique name keys: {len(multi_key_to_idx)}")
 
-# ── Compare addresses for matched providers (manual vs multiple_addresses) ─────
-print(f"\nComparing addresses against multiple_addresses file ...")
+# ── Compare addresses against multiple_addresses (secondary check for R3 non-matches) ──
+# Only run on providers whose R3 address was not confirmed same —
+# avoids double-counting and uses multi file as a second source to resolve R3 discrepancies.
+r3_non_same_names = set(
+    addr_df[addr_df["address_match"] != "same"]["manual_name"]
+)
+print(f"\nComparing R3 non-same providers ({len(r3_non_same_names)}) against multiple_addresses file ...")
 
 multi_addr_rows = []
 for _, row in matched.iterrows():
-    keys      = make_all_keys(row[m_last], row[m_first])
-    found_idx = next((multi_key_to_idx[k] for k in keys if k in multi_key_to_idx), None)
-
     manual_name = f"{row[m_last]}, {row[m_first]}"
     if m_mid and row.get(m_mid, ""):
         manual_name += f" {row[m_mid]}"
+
+    # Skip providers already confirmed same in R3
+    if manual_name not in r3_non_same_names:
+        continue
+
+    keys      = make_all_keys(row[m_last], row[m_first])
+    found_idx = next((multi_key_to_idx[k] for k in keys if k in multi_key_to_idx), None)
 
     # Collect all manual addresses (wide format: address_1, address_2, ...)
     manual_addrs = []
@@ -550,12 +559,13 @@ for _, row in in_lic_df.iterrows():
     print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
-r3_same       = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
-r3_possible   = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
-r3_diff       = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
-multi_same    = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
-multi_possible= multi_df[multi_df["address_match"] == "possible_match"].reset_index(drop=True)
-multi_diff    = multi_df[multi_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+r3_same        = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
+r3_possible    = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
+r3_diff        = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
+multi_same     = multi_df[multi_df["address_match"] == "same"].reset_index(drop=True)
+multi_possible = multi_df[multi_df["address_match"] == "possible_match"].reset_index(drop=True)
+multi_diff     = multi_df[multi_df["address_match"] == "different"].reset_index(drop=True)
+multi_notfound = multi_df[multi_df["address_match"] == "not_found"].reset_index(drop=True)
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
@@ -565,6 +575,7 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     multi_same.to_excel(     writer, sheet_name="multi_addr_same",       index=False)
     multi_possible.to_excel( writer, sheet_name="multi_addr_possible",   index=False)
     multi_diff.to_excel(     writer, sheet_name="multi_addr_different",  index=False)
+    multi_notfound.to_excel( writer, sheet_name="multi_addr_not_found",  index=False)
     in_lic_df.to_excel(      writer, sheet_name="in_license_board",      index=False)
     not_in_lic_df.to_excel(  writer, sheet_name="not_in_license",        index=False)
     print(f"  r3_addr_same         : {len(r3_same)}")
@@ -572,20 +583,30 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  r3_addr_different    : {len(r3_diff)}")
     print(f"  multi_addr_same      : {len(multi_same)}")
     print(f"  multi_addr_possible  : {len(multi_possible)}  ← review manually")
-    print(f"  multi_addr_different : {len(multi_diff)}")
+    print(f"  multi_addr_different : {len(multi_diff)}  ← found in multi file but address differs")
+    print(f"  multi_addr_not_found : {len(multi_notfound)}  ← not in multiple_addresses file at all")
     print(f"  in_license_board     : {len(in_lic_df)}")
     print(f"  not_in_license       : {len(not_in_lic_df)}")
 
 n_matched_provs   = len(r3_same) + len(r3_possible) + len(r3_diff)
+n_multi_checked   = len(multi_same) + len(multi_possible) + len(multi_diff) + len(multi_notfound)
 n_unmatched_provs = len(in_lic_df) + len(not_in_lic_df)
+n_confirmed_same  = len(r3_same) + len(multi_same)
 print(f"""
 Row count summary:
-  R3 comparison  (matched providers) : {len(r3_same)} same + {len(r3_possible)} possible + {len(r3_diff)} different = {n_matched_provs}
-  Multi comparison (same providers)  : {len(multi_same)} same + {len(multi_possible)} possible + {len(multi_diff)} different = {len(multi_same)+len(multi_possible)+len(multi_diff)}
-  License check  (not-matched provs) : {len(in_lic_df)} found + {len(not_in_lic_df)} not found = {n_unmatched_provs}
-  ──────────────────────────────────────────────────────
-  Unique providers: {n_matched_provs} matched + {n_unmatched_provs} not matched = {n_matched_provs + n_unmatched_provs}
-  (R3 and multi comparisons cover the same {n_matched_provs} matched providers — not additive)
+  {n_matched_provs} matched providers vs R3:
+    {len(r3_same)} same  |  {len(r3_possible)} possible  |  {len(r3_diff)} different/not_found
+
+  Of those {len(r3_possible) + len(r3_diff)} non-same, {n_multi_checked} were found in multiple_addresses.csv:
+    {len(multi_same)} same  |  {len(multi_possible)} possible  |  {len(multi_diff)} different  |  {len(multi_notfound)} not in file
+
+  Address confirmed same (R3 or multi): {len(r3_same)} + {len(multi_same)} = {n_confirmed_same}
+  Still different after both checks   : {len(r3_diff) + len(r3_possible) - n_multi_checked + len(multi_diff) + len(multi_possible)}
+
+  {n_unmatched_provs} not-matched providers vs MN license board:
+    {len(in_lic_df)} found  |  {len(not_in_lic_df)} not found
+
+  Unique providers total: {n_matched_provs} matched + {n_unmatched_provs} not matched = {n_matched_provs + n_unmatched_provs}
 """)
 
 print("Done.")
