@@ -206,8 +206,10 @@ for key, group in manual.groupby("_norm_key", sort=False):
     wide_rows.append(base)
 
 manual = pd.DataFrame(wide_rows).reset_index(drop=True)
-after  = len(manual)
-print(f"  Unique providers   : {after}  (from {before} rows, wide format with up to {max((len(r) for r in wide_rows), default=0)} addr cols)")
+after       = len(manual)
+collapsed   = before - after
+print(f"  Unique providers   : {after}  (from {before} rows)")
+print(f"  Multi-address rows collapsed: {collapsed}  ({after} unique + {collapsed} extra = {before} total)")
 
 # ── Match manual search providers against master list ─────────────────────────
 print(f"\nMatching {after} manual search providers against master list ...")
@@ -257,6 +259,8 @@ print(f"    no_middle_either_side   : {match_quality.count('no_middle_either_sid
 print(f"    one_side_missing_middle : {match_quality.count('one_side_missing_middle')}")
 print(f"    suspect_middle          : {match_quality.count('suspect_middle')}")
 print(f"  NOT in master list        : {n_not_found}")
+print(f"\nRow count check: {n_matched} matched + {n_not_found} not matched = {n_matched + n_not_found} unique providers")
+print(f"  + {collapsed} multi-address rows collapsed = {n_matched + n_not_found + collapsed} total rows in manual file")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
