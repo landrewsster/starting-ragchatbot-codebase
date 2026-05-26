@@ -21,19 +21,20 @@ address_and_license_check.py
 
 Two tasks:
 
-1. ADDRESS COMPARISON (matched.csv)
-   For each provider in matched.csv, look them up in the master mailing
-   list by name and compare addresses side-by-side.
+1. ADDRESS COMPARISON (matched sheet from provider_round3_crossref.xlsx)
+   For each provider in the matched sheet, look them up in the Round 3
+   mailing list and multiple_addresses.csv and compare addresses.
 
-2. LICENSE BOARD CHECK (not_in_master.csv)
-   Name-match providers in not_in_master.csv against the MN Physician
-   and PA list (MN State Licensing Board).
+2. LICENSE BOARD CHECK (not_in_master sheet from provider_round3_crossref.xlsx)
+   Name-match providers against the MN Physician and PA list.
 
 Output: address_and_license_check.xlsx
-  address_same       — matched providers with the same address
-  address_different  — matched providers with differing addresses
-  in_license_board   — not-in-master providers found in MN license file
-  not_in_license     — not-in-master providers not found in license file
+  r3_addr_same        — matched providers with same address as Round 3
+  r3_addr_different   — matched providers with different address from Round 3
+  multi_addr_same     — matched providers with same address as multiple_addresses
+  multi_addr_different— matched providers with different address from multiple_addresses
+  in_license_board    — not-in-master providers found in MN license file
+  not_in_license      — not-in-master providers not found in license file
 
 Usage:
     python3 address_and_license_check.py
@@ -45,13 +46,12 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE          = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-MATCHED_FILE  = BASE / "matched.csv"
-NOTMATCH_FILE = BASE / "not_in_master.csv"
-ROUND3_FILE   = BASE / "MailingList_Round3_20260519.xlsx"
+BASE            = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
+CROSSREF_FILE   = BASE / "provider_round3_crossref.xlsx"   # source: both matched + not_in_master sheets
+ROUND3_FILE     = BASE / "MailingList_Round3_20260519.xlsx"
 MULTI_ADDR_FILE = BASE / "multiple_addresses.csv"
-LICENSE_FILE  = BASE / "MN State Licensing Board" / "MN Physician and PA list March 2026.xlsx"
-OUTPUT_FILE   = BASE / "address_and_license_check.xlsx"
+LICENSE_FILE    = BASE / "MN State Licensing Board" / "MN Physician and PA list March 2026.xlsx"
+OUTPUT_FILE     = BASE / "address_and_license_check.xlsx"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(
@@ -131,13 +131,18 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     else:
         return lf_keys(col_a, col_b)                 # standard: col A=last, col B=first
 
-# ── Load matched.csv ──────────────────────────────────────────────────────────
-print(f"\nLoading matched file: {MATCHED_FILE.name}")
+# ── Load matched + not_in_master from provider_round3_crossref.xlsx ───────────
+print(f"\nLoading cross-reference file: {CROSSREF_FILE.name}")
 try:
-    matched = pd.read_csv(MATCHED_FILE, dtype=str).fillna("")
+    _xl = pd.ExcelFile(CROSSREF_FILE)
 except FileNotFoundError:
-    raise SystemExit(f"ERROR: {MATCHED_FILE} not found")
-print(f"  {len(matched)} rows | columns: {list(matched.columns)}")
+    raise SystemExit(f"ERROR: {CROSSREF_FILE} not found — run cross_reference_providers.py first")
+print(f"  Sheets: {_xl.sheet_names}")
+
+if "matched" not in _xl.sheet_names:
+    raise SystemExit("ERROR: 'matched' sheet not found in cross-reference file")
+matched = _xl.parse("matched", dtype=str).fillna("")
+print(f"  matched      : {len(matched)} rows | columns: {list(matched.columns)}")
 
 m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
 m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
@@ -166,13 +171,11 @@ if not m_addr_sets:
 print(f"  last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
 print(f"  address column sets found: {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
 
-# ── Load not_in_master.csv ────────────────────────────────────────────────────
-print(f"\nLoading not-in-master file: {NOTMATCH_FILE.name}")
-try:
-    not_matched = pd.read_csv(NOTMATCH_FILE, dtype=str).fillna("")
-except FileNotFoundError:
-    raise SystemExit(f"ERROR: {NOTMATCH_FILE} not found")
-print(f"  {len(not_matched)} rows | columns: {list(not_matched.columns)}")
+# ── Load not_in_master sheet ──────────────────────────────────────────────────
+if "not_in_master" not in _xl.sheet_names:
+    raise SystemExit("ERROR: 'not_in_master' sheet not found in cross-reference file")
+not_matched = _xl.parse("not_in_master", dtype=str).fillna("")
+print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.columns)}")
 
 nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
 nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
