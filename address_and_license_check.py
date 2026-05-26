@@ -179,7 +179,9 @@ print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.co
 
 nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
 nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
-nm_third = not_matched.columns[2] if len(not_matched.columns) > 2 else None
+_nm_col2 = not_matched.columns[2] if len(not_matched.columns) > 2 else None
+# Only use col C as "third" if it's not already assigned as last or first
+nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
 print(f"  last={nm_last!r}  first={nm_first!r}  third={nm_third!r}")
 
 # ── Load Round 3 for address lookup ──────────────────────────────────────────
@@ -274,9 +276,10 @@ print(f"  {len(multi)} rows | columns: {list(multi.columns)}")
 
 ma_last  = find_col(multi, ["last_name", "LastName", "Last Name"]) or multi.columns[0]
 ma_first = find_col(multi, ["first_name", "FirstName", "First Name"]) or multi.columns[1]
-ma_addr  = find_col(multi, ["primary_address_1", "Delivery Address", "address_line1"])
-ma_city  = find_col(multi, ["primary_city", "City", "city"])
-ma_zip   = find_col(multi, ["zip5", "zip", "Zip"])
+ma_addr  = find_col(multi, ["primary_address_1", "Delivery Address", "address_line1",
+                            "mail_address", "address", "Address"])
+ma_city  = find_col(multi, ["primary_city", "City", "city", "mail_city"])
+ma_zip   = find_col(multi, ["zip5", "zip", "Zip", "mail_zip"])
 print(f"  last={ma_last!r}  first={ma_first!r}")
 print(f"  addr={ma_addr!r}  city={ma_city!r}  zip={ma_zip!r}")
 
@@ -421,7 +424,11 @@ print(f"  Not in license board   : {len(not_in_lic_df)}")
 print(f"\nProviders with DIFFERENT addresses ({n_diff}):")
 for _, row in addr_df[addr_df["address_match"] == "different"].iterrows():
     print(f"  {row['manual_name']}")
-    print(f"    Manual : {row['manual_address']}, {row['manual_city']} {row['manual_zip']}")
+    # Print all manual address sets present in this row
+    i = 1
+    while f"manual_address_{i}" in row and row[f"manual_address_{i}"]:
+        print(f"    Manual{i}: {row[f'manual_address_{i}']}, {row.get(f'manual_city_{i}','')} {row.get(f'manual_zip_{i}','')}")
+        i += 1
     print(f"    Round3 : {row['r3_address']}, {row['r3_city']} {row['r3_zip']}")
 
 print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
