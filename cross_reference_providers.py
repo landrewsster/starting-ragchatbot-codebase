@@ -273,7 +273,20 @@ print(f"    one_side_missing_middle : {match_quality.count('one_side_missing_mid
 print(f"    suspect_middle          : {match_quality.count('suspect_middle')}")
 print(f"  NOT in master list        : {n_not_found}")
 print(f"\nRow count check: {n_matched} matched + {n_not_found} not matched = {n_matched + n_not_found} unique providers")
-print(f"  + {collapsed} multi-address rows collapsed = {n_matched + n_not_found + collapsed} total rows in manual file")
+
+# Detailed address-count breakdown to reconcile original row total
+def _nonempty(col, df):
+    return df[col].apply(lambda x: pd.notna(x) and str(x).strip() not in ("", "nan")).sum() if col in df.columns else 0
+
+_a2 = _nonempty("address_2", manual)
+_a3 = _nonempty("address_3", manual)
+_a4 = _nonempty("address_4", manual)
+_extra = _a2 + _a3 + _a4
+_total = after + _extra
+print(f"  Providers with 2 addresses : {_a2}  → +{_a2} extra row(s)")
+print(f"  Providers with 3 addresses : {_a3}  → +{_a3} extra row(s)")
+print(f"  Providers with 4 addresses : {_a4}  → +{_a4} extra row(s)")
+print(f"  Total: {after} unique + {_extra} extra = {_total} original rows in manual file")
 
 # ── Build output dataframes ───────────────────────────────────────────────────
 not_in_master = (
@@ -307,8 +320,8 @@ for _, row in not_in_master.iterrows():
 internal_cols = ["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"]
 
 # Providers with more than one address (address_2 column is populated)
-print(f"\n  address_2 column present: {'address_2' in manual.columns}")
-print(f"  columns in reshaped manual: {[c for c in manual.columns if c.startswith('address_') or c.startswith('city_') or c.startswith('zip_')]}")
+addr_cols_present = [c for c in manual.columns if c.startswith("address_") or c.startswith("city_") or c.startswith("zip_")]
+print(f"\n  address columns present: {addr_cols_present}")
 
 if "address_2" in manual.columns:
     has_second_addr = manual["address_2"].apply(
