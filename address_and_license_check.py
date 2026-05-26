@@ -573,10 +573,22 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  multi_addr_same      : {len(multi_same)}")
     print(f"  multi_addr_possible  : {len(multi_possible)}  ← review manually")
     print(f"  multi_addr_different : {len(multi_diff)}")
-    print(f"  in_license_board    : {len(in_lic_df)}")
-    print(f"  not_in_license      : {len(not_in_lic_df)}")
+    print(f"  in_license_board     : {len(in_lic_df)}")
+    print(f"  not_in_license       : {len(not_in_lic_df)}")
 
-print("\nDone.")
+n_matched_provs   = len(r3_same) + len(r3_possible) + len(r3_diff)
+n_unmatched_provs = len(in_lic_df) + len(not_in_lic_df)
+print(f"""
+Row count summary:
+  R3 comparison  (matched providers) : {len(r3_same)} same + {len(r3_possible)} possible + {len(r3_diff)} different = {n_matched_provs}
+  Multi comparison (same providers)  : {len(multi_same)} same + {len(multi_possible)} possible + {len(multi_diff)} different = {len(multi_same)+len(multi_possible)+len(multi_diff)}
+  License check  (not-matched provs) : {len(in_lic_df)} found + {len(not_in_lic_df)} not found = {n_unmatched_provs}
+  ──────────────────────────────────────────────────────
+  Unique providers: {n_matched_provs} matched + {n_unmatched_provs} not matched = {n_matched_provs + n_unmatched_provs}
+  (R3 and multi comparisons cover the same {n_matched_provs} matched providers — not additive)
+""")
+
+print("Done.")
 
 # ── DEBUG: Baker name matching ────────────────────────────────────────────────
 print("\n── DEBUG: Baker ──────────────────────────────────────────────────────")
