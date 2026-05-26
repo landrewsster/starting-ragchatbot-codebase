@@ -42,8 +42,19 @@ import pandas as pd
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 MASTER_FILE  = BASE / "MailingList_Round3_20260519.xlsx"
-MANUAL_FILE  = BASE / "clean_manual_list_NS.xlsx"
-OUTPUT_FILE  = BASE / "provider_round3_crossref.xlsx"
+
+# Optional command-line arg: manual file name (just the filename, not full path)
+# Usage: python3 cross_reference_providers.py ManualSearch_Part2_05212026.xlsx
+if len(sys.argv) > 1:
+    MANUAL_FILE = BASE / sys.argv[1]
+    stem        = Path(sys.argv[1]).stem
+    OUTPUT_FILE = BASE / f"provider_round3_crossref_{stem}.xlsx"
+else:
+    MANUAL_FILE = BASE / "clean_manual_list_NS.xlsx"
+    OUTPUT_FILE = BASE / "provider_round3_crossref.xlsx"
+
+print(f"Manual file : {MANUAL_FILE.name}")
+print(f"Output file : {OUTPUT_FILE.name}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(

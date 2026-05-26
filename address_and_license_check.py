@@ -48,11 +48,22 @@ import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE            = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
-CROSSREF_FILE   = BASE / "provider_round3_crossref.xlsx"   # source: both matched + not_in_master sheets
 ROUND3_FILE     = BASE / "MailingList_Round3_20260519.xlsx"
 MULTI_ADDR_FILE = BASE / "multiple_addresses.csv"
 LICENSE_FILE    = BASE / "MN State Licensing Board" / "MN Physician and PA list March 2026.xlsx"
-OUTPUT_FILE     = BASE / "address_and_license_check.xlsx"
+
+# Optional command-line arg: crossref file name (just the filename, not full path)
+# Usage: python3 address_and_license_check.py provider_round3_crossref_ManualSearch_Part2_05212026.xlsx
+if len(sys.argv) > 1:
+    CROSSREF_FILE = BASE / sys.argv[1]
+    stem          = Path(sys.argv[1]).stem
+    OUTPUT_FILE   = BASE / f"address_and_license_check_{stem}.xlsx"
+else:
+    CROSSREF_FILE = BASE / "provider_round3_crossref.xlsx"
+    OUTPUT_FILE   = BASE / "address_and_license_check.xlsx"
+
+print(f"Crossref file: {CROSSREF_FILE.name}")
+print(f"Output file  : {OUTPUT_FILE.name}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(
