@@ -135,18 +135,32 @@ def compare_address(manual_addrs: list, ref_addr: str, ref_city: str, ref_zip: s
 
     Matching logic (in order):
       1. Exact match after full normalisation (case, punctuation, abbreviations, ordinals, city aliases)
-         Suite/unit numbers must match exactly — missing or different suite → not same.
-      2. Fuzzy similarity >= FUZZY_THRESHOLD → 'possible_match' for manual review
+      2. City + zip match exactly AND address similarity >= 0.90 → 'same'
+         (handles minor typos in street name when city/zip confirm it's the same location)
+      3. Full string fuzzy >= FUZZY_THRESHOLD → 'possible_match' for manual review
     """
     if not ref_addr:
         return "different"
-    ref_norm = f"{norm_addr(ref_addr)}|{norm_city(ref_city)}|{zip5(ref_zip)}"
+    ref_addr_norm = norm_addr(ref_addr)
+    ref_city_norm = norm_city(ref_city)
+    ref_zip_norm  = zip5(ref_zip)
+    ref_norm = f"{ref_addr_norm}|{ref_city_norm}|{ref_zip_norm}"
     best_sim = 0.0
     for a, c, z in manual_addrs:
-        m_norm = f"{norm_addr(a)}|{norm_city(c)}|{zip5(z)}"
+        m_addr_norm = norm_addr(a)
+        m_city_norm = norm_city(c)
+        m_zip_norm  = zip5(z)
+        m_norm = f"{m_addr_norm}|{m_city_norm}|{m_zip_norm}"
+        # 1. Exact match
         if m_norm == ref_norm:
             return "same"
-        sim = addr_similarity(m_norm, ref_norm)
+        # 2. City + zip match exactly, street address very similar (≥ 0.90) — typo in street name
+        if m_city_norm == ref_city_norm and m_zip_norm == ref_zip_norm:
+            addr_sim = SequenceMatcher(None, m_addr_norm, ref_addr_norm).ratio()
+            if addr_sim >= 0.90:
+                return "same"
+        # 3. Fuzzy on full composite string
+        sim = SequenceMatcher(None, m_norm, ref_norm).ratio()
         if sim > best_sim:
             best_sim = sim
     if best_sim >= FUZZY_THRESHOLD:
