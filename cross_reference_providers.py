@@ -202,32 +202,28 @@ addr_cols_to_skip = {c for c in [s_addr, s_city, s_zip] if c}
 non_addr_cols     = [c for c in manual.columns if c not in addr_cols_to_skip]
 
 wide_rows        = []
-dropped_dup_addr  = []   # same provider, same address repeated
-dropped_no_addr   = []   # same provider, row has no address
+dropped_dup_addr = []   # same provider, exact same non-empty address repeated
 
 for key, group in manual.groupby("_norm_key", sort=False):
-    base       = group.iloc[0][non_addr_cols].to_dict()
-    seen       = []
-    first_row  = True
+    base = group.iloc[0][non_addr_cols].to_dict()
+    seen = []
     for _, r in group.iterrows():
         a = norm(r[s_addr]) if s_addr else ""
         c = norm(r[s_city]) if s_city else ""
         z = zip5(r[s_zip])  if s_zip  else ""
         raw = (r[s_addr] if s_addr else "", r[s_city] if s_city else "", r[s_zip] if s_zip else "")
-        if not a:
-            if not first_row:   # first row with no address is fine; extra ones are dropped
-                dropped_no_addr.append({s_last: r[s_last], s_first: r[s_first],
-                                        "note": "extra row had no address"})
-        elif (a, c, z) in seen:
+        if a and (a, c, z) in seen:
+            # Exact duplicate non-empty address — log and skip
             dropped_dup_addr.append({s_last: r[s_last], s_first: r[s_first],
                                      "dup_address": raw[0], "dup_city": raw[1], "dup_zip": raw[2]})
-        else:
+        elif (a, c, z) not in seen:
+            # New address slot (including empty-address rows — kept so they're visible)
             seen.append((a, c, z))
             n = len(seen)
             base[f"address_{n}"] = raw[0]
             base[f"city_{n}"]    = raw[1]
             base[f"zip_{n}"]     = raw[2]
-        first_row = False
+        # else: duplicate empty address (provider listed N times all with no address) — skip silently
     base["num_addresses"] = len(seen) if seen else 1
     wide_rows.append(base)
 
@@ -240,11 +236,7 @@ if dropped_dup_addr:
     print(f"    {len(dropped_dup_addr)} dropped — duplicate address for same provider:")
     for d in dropped_dup_addr:
         print(f"      {d[s_last]}, {d[s_first]}  |  {d['dup_address']}, {d['dup_city']} {d['dup_zip']}")
-if dropped_no_addr:
-    print(f"    {len(dropped_no_addr)} dropped — extra row with no address for same provider:")
-    for d in dropped_no_addr:
-        print(f"      {d[s_last]}, {d[s_first]}")
-if not dropped_dup_addr and not dropped_no_addr and collapsed > 0:
+if not dropped_dup_addr and collapsed > 0:
     print(f"    (all {collapsed} collapses produced new address slots → see address_N columns)")
 
 # ── Match manual search providers against master list ─────────────────────────
@@ -346,11 +338,7 @@ else:
     multi_addr_providers = pd.DataFrame(columns=[s_last, s_first])
     print(f"  No address_2 column found — no providers with 2+ addresses")
 
-dropped_df = pd.DataFrame(dropped_dup_addr + [
-    {s_last: d[s_last], s_first: d[s_first],
-     "dup_address": "", "dup_city": "", "dup_zip": "", "note": d["note"]}
-    for d in dropped_no_addr
-])
+dropped_df = pd.DataFrame(dropped_dup_addr) if dropped_dup_addr else pd.DataFrame()
 
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
@@ -378,7 +366,7 @@ _exactly3  = _has3 - _has4
 _exactly4  = _has4 - _has5
 _exactly5p = _has5
 _extra_multi = _exactly2 * 1 + _exactly3 * 2 + _exactly4 * 3 + _exactly5p * 4
-_extra_drop  = len(dropped_dup_addr) + len(dropped_no_addr)
+_extra_drop  = len(dropped_dup_addr)
 _total       = after + _extra_multi + _extra_drop
 
 print(f"""
@@ -390,7 +378,8 @@ if _exactly3:  print(f"      {_exactly3} provider(s) with exactly 3 addresses �
 if _exactly4:  print(f"      {_exactly4} provider(s) with exactly 4 addresses → +{_exactly4 * 3} row(s)")
 if _exactly5p: print(f"      {_exactly5p} provider(s) with 5+ addresses        → +{_exactly5p * 4} row(s)")
 if not _has2:  print(f"      (none)")
-print(f"  + {_extra_drop} dropped rows (duplicate or empty address) → see 'dropped_rows' sheet")
+if _extra_drop:
+    print(f"  + {_extra_drop} dropped rows (exact duplicate address) → see 'dropped_rows' sheet")
 print(f"  ─────────────────────────────────────────────────────────────")
 print(f"  Total accounted for: {_total}  (manual file rows: {before})")
 if _total == before:
