@@ -170,12 +170,15 @@ def clean_name(s) -> str:
     return re.sub(r"[,.]", "", s).strip()
 
 def find_col(df, candidates):
-    low = {c.lower(): c for c in df.columns}
+    low      = {c.lower(): c for c in df.columns}
+    low_norm = {c.lower().replace(" ", "_"): c for c in df.columns}  # spaces → underscores
     for c in candidates:
         if c in df.columns:
             return c
         if c.lower() in low:
             return low[c.lower()]
+        if c.lower().replace(" ", "_") in low_norm:   # e.g. "Clinic_Address" finds "Clinic Address"
+            return low_norm[c.lower().replace(" ", "_")]
     return None
 
 def lf_keys(last: str, first: str) -> set[str]:
