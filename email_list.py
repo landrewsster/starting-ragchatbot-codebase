@@ -235,12 +235,17 @@ print(f"  Found in license board with email   : {len(with_email_df)}")
 print(f"  Found in license board, no email    : {len(no_email_df)}")
 print(f"  Not found in license board          : {len(combined) - len(with_email_df) - len(no_email_df)}")
 
-# Clean sorted email list — all providers with email, alphabetical, no duplicates.
-# Part1/Part2 matched providers are already in Round 3 so they are not double-counted;
-# only Part1/Part2 not_in_master providers add net-new rows beyond Round 3.
-email_clean = (
-    with_email_df[["last_name", "first_name", "email", "specialty_boards", "certification",
-                   "specialty_boards_missing", "certification_missing"]]
+_clean_cols = ["last_name", "first_name", "email", "specialty_boards", "certification",
+               "specialty_boards_missing", "certification_missing"]
+
+with_email_clean = (
+    with_email_df[_clean_cols]
+    .sort_values(["last_name", "first_name"], key=lambda s: s.str.lower())
+    .reset_index(drop=True)
+)
+
+no_email_clean = (
+    no_email_df[_clean_cols]
     .sort_values(["last_name", "first_name"], key=lambda s: s.str.lower())
     .reset_index(drop=True)
 )
@@ -248,11 +253,13 @@ email_clean = (
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
-    with_email_df.to_excel(writer, sheet_name="with_email",       index=False)
-    no_email_df.to_excel(  writer, sheet_name="no_email",         index=False)
-    email_clean.to_excel(  writer, sheet_name="email_clean_list", index=False)
-    print(f"  with_email       : {len(with_email_df)} providers (with source & match detail)")
-    print(f"  no_email         : {len(no_email_df)} providers")
-    print(f"  email_clean_list : {len(email_clean)} providers (sorted, no duplicates, no source col)")
+    with_email_df.to_excel(   writer, sheet_name="with_email",             index=False)
+    with_email_clean.to_excel(writer, sheet_name="with_email_noduplicates",index=False)
+    no_email_df.to_excel(     writer, sheet_name="no_email",               index=False)
+    no_email_clean.to_excel(  writer, sheet_name="no_email_noduplicates",  index=False)
+    print(f"  with_email             : {len(with_email_df)} providers (with source & match detail)")
+    print(f"  with_email_noduplicates: {len(with_email_clean)} providers (sorted, clean)")
+    print(f"  no_email               : {len(no_email_df)} providers (with source & match detail)")
+    print(f"  no_email_noduplicates  : {len(no_email_clean)} providers (sorted, clean)")
 
 print("\nDone.")
