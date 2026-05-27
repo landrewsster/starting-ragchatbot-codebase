@@ -140,7 +140,10 @@ r3_first = find_col(r3, ["first_name", "FirstName", "First Name"]) or r3.columns
 n = _add_providers(r3, r3_last, r3_first, "Round3")
 print(f"  {len(r3)} rows — added {n} unique providers")
 
-# 2 & 3. Both crossref files (matched + not_in_master sheets)
+# 2 & 3. Both crossref files — only not_in_master providers.
+# Matched providers are already in Round 3 by definition; loading them
+# separately would cause duplicates because the manual file may spell
+# the same name differently (e.g. "Liz" vs "Elizabeth").
 for xref_path, part_label in [
     (CROSSREF1_FILE, "Part1"),
     (CROSSREF2_FILE, "Part2"),
@@ -150,14 +153,14 @@ for xref_path, part_label in [
         print(f"  WARNING: {xref_path.name} not found — skipping")
         continue
     xl = pd.ExcelFile(xref_path)
-    for sheet, sublabel in [("matched", "matched"), ("not_in_master", "not_in_master")]:
-        if sheet not in xl.sheet_names:
-            continue
-        df = xl.parse(sheet, dtype=str).fillna("")
-        last_col  = find_col(df, ["Last_Name", "last_name", "LastName", "Last Name"])
-        first_col = find_col(df, ["First_Name", "first_name", "FirstName", "First Name"])
-        n = _add_providers(df, last_col, first_col, f"{part_label}_{sublabel}")
-        print(f"  {sheet}: {len(df)} rows — {n} new unique providers added")
+    if "not_in_master" not in xl.sheet_names:
+        print(f"  WARNING: 'not_in_master' sheet not found — skipping")
+        continue
+    df = xl.parse("not_in_master", dtype=str).fillna("")
+    last_col  = find_col(df, ["Last_Name", "last_name", "LastName", "Last Name"])
+    first_col = find_col(df, ["First_Name", "first_name", "FirstName", "First Name"])
+    n = _add_providers(df, last_col, first_col, f"{part_label}_not_in_master")
+    print(f"  not_in_master: {len(df)} rows — {n} new unique providers added")
 
 combined = pd.DataFrame(all_providers)
 print(f"\nTotal unique providers across all sources: {len(combined)}")
