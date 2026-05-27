@@ -501,9 +501,11 @@ l_first     = find_col(lic_df, ["first_name", "FirstName", "First Name"]) or lic
 # Specialty boards = col J (index 9), Certification = col K (index 10)
 l_specialty = lic_df.columns[9]  if len(lic_df.columns) > 9  else None
 l_cert      = lic_df.columns[10] if len(lic_df.columns) > 10 else None
+l_email     = lic_df.columns[11] if len(lic_df.columns) > 11 else None
 print(f"  last={l_last!r}  first={l_first!r}")
 print(f"  specialty_boards col (J): {l_specialty!r}")
 print(f"  certification col    (K): {l_cert!r}")
+print(f"  email col            (L): {l_email!r}")
 print(f"  sample last values : {lic_df[l_last].dropna().head(3).tolist()}")
 print(f"  sample first values: {lic_df[l_first].dropna().head(3).tolist()}")
 
@@ -553,11 +555,13 @@ for _, row in not_matched.iterrows():
         lic_name  = f"{lic_row[l_last]}, {lic_row[l_first]}".strip(", ")
         specialty = lic_row[l_specialty] if l_specialty else ""
         cert      = lic_row[l_cert]      if l_cert      else ""
+        email     = lic_row[l_email]     if l_email     else ""
         row2      = row.copy()
         row2["license_name_match"]       = lic_name
         row2["match_type"]               = match_type
         row2["specialty_boards"]         = specialty
         row2["certification"]            = cert
+        row2["email"]                    = email
         row2["specialty_boards_missing"] = "missing" if not norm(specialty) else ""
         row2["certification_missing"]    = "missing" if not norm(cert)      else ""
         in_license.append(row2)
@@ -565,6 +569,7 @@ for _, row in not_matched.iterrows():
         row2 = row.copy()
         row2["specialty_boards"]         = ""
         row2["certification"]            = ""
+        row2["email"]                    = ""
         row2["specialty_boards_missing"] = ""
         row2["certification_missing"]    = ""
         not_in_license.append(row2)
