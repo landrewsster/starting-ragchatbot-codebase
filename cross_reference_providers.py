@@ -215,7 +215,9 @@ for key, group in manual.groupby("_norm_key", sort=False):
         if a and (a, c, z) in seen:
             # Exact duplicate non-empty address — log and skip
             dropped_dup_addr.append({s_last: r[s_last], s_first: r[s_first],
-                                     "dup_address": raw[0], "dup_city": raw[1], "dup_zip": raw[2]})
+                                     "dup_address": raw[0], "dup_city": raw[1], "dup_zip": raw[2],
+                                     "norm_addr": a, "norm_city": c, "norm_zip": z,
+                                     "all_seen": " || ".join(f"{s[0]}|{s[1]}|{s[2]}" for s in seen)})
         elif (a, c, z) not in seen:
             # New address slot (including empty-address rows — kept so they're visible)
             seen.append((a, c, z))
