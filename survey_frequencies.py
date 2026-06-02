@@ -382,65 +382,45 @@ free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame(
 print(f"  Free-text responses collected: {len(free_text_rows)}")
 
 # ── Build county sheet ────────────────────────────────────────────────────────
-# Find ALL columns matching the county pattern and pick the one with the most
-# non-empty values (handles cases where REDCap duplicates the question per arm)
+# County is a free-text field and REDCap may duplicate it across arms.
+# Collect individual responses from ALL matching columns across both groups.
 county_pattern = r'what is the county of your practice'
-county_candidates = [c for c in df.columns if re.search(county_pattern, c, re.IGNORECASE)]
-print(f"\nCounty column candidates: {county_candidates}")
-
-county_col = None
-if county_candidates:
-    county_col = max(
-        county_candidates,
-        key=lambda c: df[c].str.strip().ne("").sum()
-    )
-    print(f"  Using: '{county_col[:80]}'")
-    print(f"  Non-empty values — eligible: {eligible[county_col].str.strip().ne('').sum()}, "
-          f"ineligible: {ineligible[county_col].str.strip().ne('').sum()}")
+county_candidates = [
+    c for c in df.columns
+    if re.search(county_pattern, c, re.IGNORECASE)
+    and "(choice=" not in c
+]
+print(f"\nCounty columns found: {len(county_candidates)}")
 
 county_df = pd.DataFrame()
-if county_col:
-    def _county_counts(grp_df):
-        vals = grp_df[county_col].str.strip()
-        vals = vals[vals != ""]
-        counts = vals.value_counts()
-        n_total = len(vals)
-        return counts, n_total
+if county_candidates:
+    county_rows = []
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        # Collect one response per respondent — use the first non-empty county
+        # column for each row (handles arm-specific duplicates)
+        for _, row in grp_df.iterrows():
+            val = ""
+            for col in county_candidates:
+                if col in grp_df.columns:
+                    v = str(row[col]).strip()
+                    if v and v.lower() not in ("nan", ""):
+                        val = v
+                        break
+            if val:
+                rec = {"group": grp_name, "county": val, "recode": ""}
+                if record_id_col and record_id_col in grp_df.columns:
+                    rec = {"record_id": row[record_id_col], **rec}
+                county_rows.append(rec)
 
-    elig_counts,   elig_n   = _county_counts(eligible)
-    inelig_counts, inelig_n = _county_counts(ineligible)
-
-    all_counties = sorted(set(elig_counts.index) | set(inelig_counts.index))
-
-    rows = []
-    for county in all_counties:
-        e_n = int(elig_counts.get(county, 0))
-        i_n = int(inelig_counts.get(county, 0))
-        rows.append({
-            "County":          county,
-            "Eligible n":      e_n,
-            "Eligible %":      round(e_n / elig_n * 100, 1) if elig_n else None,
-            "Ineligible n":    i_n,
-            "Ineligible %":    round(i_n / inelig_n * 100, 1) if inelig_n else None,
-            "Total n":         e_n + i_n,
-        })
-
-    county_df = (
-        pd.DataFrame(rows)
-        .sort_values("Total n", ascending=False)
-        .reset_index(drop=True)
-    )
-    # Append totals row
-    totals = pd.DataFrame([{
-        "County":       "TOTAL",
-        "Eligible n":   int(elig_counts.sum()),
-        "Eligible %":   100.0 if elig_n else None,
-        "Ineligible n": int(inelig_counts.sum()),
-        "Ineligible %": 100.0 if inelig_n else None,
-        "Total n":      int(elig_counts.sum()) + int(inelig_counts.sum()),
-    }])
-    county_df = pd.concat([county_df, totals], ignore_index=True)
-    print(f"  County: {len(county_df) - 1} counties + totals row")
+    if county_rows:
+        county_df = (
+            pd.DataFrame(county_rows)
+            .sort_values(["group", "county"], key=lambda s: s.str.lower())
+            .reset_index(drop=True)
+        )
+        print(f"  County responses: {len(county_df)} "
+              f"(eligible: {(county_df['group']=='eligible').sum()}, "
+              f"ineligible: {(county_df['group']=='ineligible').sum()})")
 else:
     print("  County column not found — skipping county sheet")
 
