@@ -56,7 +56,7 @@ SCREENER_LABELS <- c(
   "In an average week, how many days do you see patients?"
 )
 
-is_complete_q  <- function(q) str_detect(q, regex("Complete\\?", ignore_case = TRUE))
+is_complete_q  <- function(q) str_detect(q, regex("Complete\\??\\s*$|_complete\\s*$|Complete\\?", ignore_case = TRUE))
 is_screener_q  <- function(q) sapply(q, function(x) any(str_detect(str_to_lower(x), SCREENER_PATTERNS)))
 is_demo_q      <- function(q) sapply(q, function(x) any(str_detect(str_to_lower(x), DEMO_PATTERNS)))
 is_main_q      <- function(q) !is_complete_q(q) & !is_screener_q(q) & !is_demo_q(q)

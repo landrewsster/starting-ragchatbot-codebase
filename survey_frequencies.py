@@ -118,17 +118,25 @@ free_text_cols = {
 
 # Detect timestamp columns before building skip set
 def _looks_like_timestamps(series):
-    """True if >50% of non-empty values parse as datetimes."""
+    """True if >50% of non-empty values parse as datetimes (ISO or US M/D/YY format)."""
     non_empty = series[series.str.strip().ne("")].head(20)
     if len(non_empty) < 3:
         return False
-    hits = non_empty.str.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}').sum()
-    return hits / len(non_empty) > 0.5
+    iso = non_empty.str.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}').sum()
+    us  = non_empty.str.match(r'^\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2}').sum()
+    return (iso + us) / len(non_empty) > 0.5
+
+TIMESTAMP_COL_PATTERNS = [
+    r'^screener_start$', r'^screener_end$',
+    r'^survey_start$',   r'^survey_end$',
+    r'^inel_demo_start$', r'^inel_demo_end$',
+]
 
 timestamp_cols = [
     c for c in df.columns
     if re.match(r'^Unnamed:\s*\d+$', c.strip())
     or _looks_like_timestamps(df[c].astype(str))
+    or any(re.search(p, c.strip(), re.IGNORECASE) for p in TIMESTAMP_COL_PATTERNS)
 ]
 
 # System / admin columns — skip (Record ID, empty, and all timestamp columns)
@@ -139,9 +147,11 @@ system_cols = {
 
 # Find completion status column(s) — REDCap names them "<Form> Complete?"
 # Label each by the last substantive question before it so the section is clear.
+COMPLETE_RE = re.compile(r'complete\??\s*$|_complete\s*$', re.IGNORECASE)
+
 complete_cols = [
     c for c in df.columns
-    if re.search(r'complete\??\s*$', c.strip(), re.IGNORECASE)
+    if COMPLETE_RE.search(c.strip())
     and c.strip() not in ("Record ID", "")
 ]
 
@@ -151,7 +161,7 @@ def _complete_col_label(col):
     for i in range(idx - 1, -1, -1):
         prev = df.columns[i]
         if (prev not in system_cols and prev not in timestamp_cols
-                and not re.search(r'complete\??\s*$', prev.strip(), re.IGNORECASE)
+                and not COMPLETE_RE.search(prev.strip())
                 and prev.strip()):
             return f"Complete? [after: {short_q(prev, 60)}]"
     return f"Complete? [col {idx}]"
@@ -236,9 +246,9 @@ else:
 def _find_col(columns, pattern):
     return next((c for c in columns if re.search(pattern, c, re.IGNORECASE)), None)
 
-start_col      = _find_col(df.columns, r'screener_start_time') or ("Unnamed: 1"   if "Unnamed: 1"   in df.columns else None)
-end_elig_col   = _find_col(df.columns, r'survey_end_time')     or ("Unnamed: 249" if "Unnamed: 249" in df.columns else None)
-end_inelig_col = _find_col(df.columns, r'dem_end_time_2')      or ("Unnamed: 222" if "Unnamed: 222" in df.columns else None)
+start_col      = _find_col(df.columns, r'^screener_start$')
+end_elig_col   = _find_col(df.columns, r'^survey_end$')
+end_inelig_col = _find_col(df.columns, r'^inel_demo_end$')
 
 print(f"\nCompletion time columns:")
 print(f"  Start       : {start_col or 'NOT FOUND'}")
