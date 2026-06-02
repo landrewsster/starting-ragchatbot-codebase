@@ -317,12 +317,45 @@ if len(timestamp_cols) >= 2:
 
 completion_time_df = pd.DataFrame(completion_time_rows) if completion_time_rows else pd.DataFrame()
 
+# ── Build free-text sheet ─────────────────────────────────────────────────────
+# Find Record ID column if present
+record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
+
+# Collect non-empty free-text responses from both groups in survey column order
+free_text_rows = []
+seen_ft_cols = set()
+for col in df.columns:
+    if col not in free_text_cols or col in seen_ft_cols:
+        continue
+    if col in timestamp_cols or col in system_cols:
+        continue
+    seen_ft_cols.add(col)
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        if col not in grp_df.columns:
+            continue
+        for _, row in grp_df.iterrows():
+            val = str(row[col]).strip()
+            if val and val.lower() not in ("nan", ""):
+                rec = {
+                    "group":    grp_name,
+                    "question": short_q(col),
+                    "response": val,
+                    "recode":   "",   # blank column for manual recoding
+                }
+                if record_id_col and record_id_col in grp_df.columns:
+                    rec = {"record_id": row[record_id_col], **rec}
+                free_text_rows.append(rec)
+
+free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame()
+print(f"  Free-text responses collected: {len(free_text_rows)}")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
     "eligible":        elig_freqs,
     "ineligible":      inelig_freqs,
+    "free_text":       free_text_df,
     "completion_time": completion_time_df,
 }
 
