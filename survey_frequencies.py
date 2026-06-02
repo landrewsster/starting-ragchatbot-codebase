@@ -458,7 +458,12 @@ def normalize_county(val):
     val = re.sub(r'\s+', ' ', val)
     val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)  # St. → St
     val = val.title()
-    return val
+    # Specific recodes
+    RECODES = {
+        "Mille Lacs Health": "Mille Lacs",
+        "Usa":               "",           # invalid entry — exclude
+    }
+    return RECODES.get(val, val)
 
 county_df = pd.DataFrame()
 county_freq_df = pd.DataFrame()
@@ -475,10 +480,13 @@ if county_candidates:
                         raw = v
                         break
             if raw:
+                normed = normalize_county(raw)
+                if not normed:   # skip entries recoded to blank (e.g. "Usa")
+                    continue
                 rec = {
                     "group":             grp_name,
                     "county_raw":        raw,
-                    "county_normalized": normalize_county(raw),
+                    "county_normalized": normed,
                 }
                 if record_id_col and record_id_col in grp_df.columns:
                     rec = {"record_id": row[record_id_col], **rec}
