@@ -46,7 +46,6 @@ make_table <- function(df) {
     fontsize(size = 10, part = "all") %>%
     font(fontname = "Calibri", part = "all") %>%
     align(j = c("n", "%", "N"), align = "right", part = "all") %>%
-    set_column_labels(n = "n", `%` = "%", N = "N") %>%
     width(j = "Response", width = 3.5) %>%
     width(j = c("n", "%", "N"), width = 0.7)
 
