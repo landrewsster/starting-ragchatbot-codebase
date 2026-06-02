@@ -83,11 +83,20 @@ free_text_cols = {
     or c.strip() == "Specify"
 }
 
-# System / admin columns — skip
+# System / admin columns — skip (includes unnamed columns and timestamp columns)
+def _looks_like_timestamps(series):
+    sample = series.dropna().astype(str).str.strip()
+    sample = sample[sample != ""]
+    if len(sample) < 3:
+        return False
+    return sample.str.match(r'^\d{1,2}/\d{1,2}/\d{2,4}').mean() > 0.7
+
 system_cols = {
     c for c in df.columns
     if c.strip() in ("Record ID", "Complete?", "")
     or re.match(r'complete\??\s*$', c.strip(), re.IGNORECASE)
+    or re.match(r'Unnamed:\s*\d+', c.strip())
+    or _looks_like_timestamps(df[c])
 }
 
 skip = set(checkbox_cols) | free_text_cols | system_cols
@@ -158,7 +167,8 @@ def freq_single(series, question_text, ordered=None):
         counts = counts.reindex(idx).dropna()
     pct = (counts / n_total * 100).round(1)
     out = pd.DataFrame({"Response": counts.index, "n": counts.values, "%": pct.values})
-    out.insert(0, "Question", short_q(question_text))
+    out.insert(0, "Question", re.sub(r'\s+', ' ', str(question_text)).strip())
+    out.insert(1, "Type", "Single choice")
     out["N (answered)"] = n_total
     return out
 
@@ -175,7 +185,8 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
     for col in child_cols:
         n_checked = df_sub.loc[has_response, col].apply(is_checked).sum()
         rows.append({
-            "Question":        short_q(parent_q),
+            "Question":        re.sub(r'\s+', ' ', str(parent_q)).strip(),
+            "Type":            "Select all that apply",
             "Response":        choice_label(col),
             "n":               int(n_checked),
             "%":               round(n_checked / n_denom * 100, 1),
