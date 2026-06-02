@@ -245,6 +245,12 @@ print(f"  Start       : {start_col or 'NOT FOUND'}")
 print(f"  End eligible: {end_elig_col or 'NOT FOUND'}")
 print(f"  End inelig. : {end_inelig_col or 'NOT FOUND'}")
 
+time_cols = [c for c in df.columns if re.search(r'time|start|end', c, re.IGNORECASE)]
+if time_cols:
+    print(f"\n  All time-related columns in data:")
+    for c in time_cols:
+        print(f"    {c}")
+
 completion_rows = []
 
 for grp_name, grp_df, end_col in [
