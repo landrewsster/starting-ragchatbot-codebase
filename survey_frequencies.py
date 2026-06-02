@@ -76,7 +76,27 @@ for c in checkbox_cols:
     p = parent_question(c)
     checkbox_groups.setdefault(p, []).append(c)
 
-# Free-text / specify columns — skip by name pattern or high cardinality
+# Demographic column patterns — questions shown to ALL respondents
+# Defined early so free-text detection can exclude these columns from cardinality check.
+DEMO_PATTERNS = [
+    r"what is your profession",
+    r"do you primarily see pregnant",
+    r"how long have you been practicing",
+    r"what is your primary specialty",
+    r"what is your secondary or sub.specialty",
+    r"which of the following best describes your primary practice setting",
+    r"how would you describe the insurance status",
+    r"what is the county of your practice",
+    r"what is your gender",
+    r"what is your age",
+    r"what is your race/ethnicity",
+]
+
+def is_demo_col(col):
+    return any(re.search(p, col, re.IGNORECASE) for p in DEMO_PATTERNS)
+
+# Free-text / specify columns — skip by name pattern or high cardinality.
+# Demographic columns are always categorical regardless of cardinality (e.g. county).
 def _looks_like_free_text(series):
     """True if the column reads as open-ended: nearly all non-empty values are unique."""
     non_empty = series[series.str.strip().ne("")]
@@ -87,7 +107,8 @@ def _looks_like_free_text(series):
 
 free_text_cols = {
     c for c in df.columns
-    if c not in checkbox_cols  # never treat binary checkbox columns as free text
+    if c not in checkbox_cols    # never treat binary checkbox columns as free text
+    and not is_demo_col(c)       # demographic columns are always categorical
     and (
         re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
         or c.strip() == "Specify"
@@ -109,24 +130,6 @@ timestamp_cols = [
     if re.match(r'^Unnamed:\s*\d+$', c.strip())
     or _looks_like_timestamps(df[c].astype(str))
 ]
-
-# Demographic column patterns — questions shown to ALL respondents
-DEMO_PATTERNS = [
-    r"what is your profession",
-    r"do you primarily see pregnant",
-    r"how long have you been practicing",
-    r"what is your primary specialty",
-    r"what is your secondary or sub.specialty",
-    r"which of the following best describes your primary practice setting",
-    r"how would you describe the insurance status",
-    r"what is the county of your practice",
-    r"what is your gender",
-    r"what is your age",
-    r"what is your race/ethnicity",
-]
-
-def is_demo_col(col):
-    return any(re.search(p, col, re.IGNORECASE) for p in DEMO_PATTERNS)
 
 # System / admin columns — skip (Record ID, empty, and all timestamp columns)
 system_cols = {
