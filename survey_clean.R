@@ -17,7 +17,7 @@ library(dplyr)
 library(stringr)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE <- file.path(path.expand("~"), "Downloads", "CRC MDH Project")
+BASE <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
 
 FREQ_FILE    <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-01_1832_frequencies.xlsx")
 OUTPUT_FILE  <- sub("\\.xlsx$", "_cleaned.xlsx", FREQ_FILE)
