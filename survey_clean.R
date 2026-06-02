@@ -38,15 +38,14 @@ county_raw %>%
 # Right side = standardized name to use
 county_recoded <- county_raw %>%
   mutate(
-    county_clean = case_when(
-      # ── Add your rules below ────────────────────────────────────────────────
-      # str_detect(str_to_lower(county_raw), "hennepin")          ~ "Hennepin",
-      # str_detect(str_to_lower(county_raw), "ramsey")            ~ "Ramsey",
-      # str_detect(str_to_lower(county_raw), "st\\.?\\s*louis")   ~ "St Louis",
-      # str_detect(str_to_lower(county_raw), "dakota")            ~ "Dakota",
-      # ── Fallback: use the normalized value from Python ──────────────────────
-      .default = county_normalized
-    )
+    # Add recode rules as case_when() conditions once you've reviewed the raw values.
+    # Example (uncomment and customise):
+    # county_clean = case_when(
+    #   str_detect(str_to_lower(county_raw), "hennepin")        ~ "Hennepin",
+    #   str_detect(str_to_lower(county_raw), "st\\.?\\s*louis") ~ "St Louis",
+    #   .default = county_normalized
+    # ),
+    county_clean = county_normalized
   )
 
 # Summary of cleaned county counts by eligibility
