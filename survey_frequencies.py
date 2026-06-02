@@ -83,9 +83,7 @@ free_text_cols = {
     or c.strip() == "Specify"
 }
 
-# System / admin columns — skip
-# Includes unnamed columns (REDCap timestamp/metadata with no label) and
-# columns whose values look like timestamps (survey start/end times)
+# Detect timestamp columns before building skip set
 def _looks_like_timestamps(series):
     """True if >50% of non-empty values parse as datetimes."""
     non_empty = series[series.str.strip().ne("")].head(20)
@@ -94,12 +92,17 @@ def _looks_like_timestamps(series):
     hits = non_empty.str.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}').sum()
     return hits / len(non_empty) > 0.5
 
+timestamp_cols = [
+    c for c in df.columns
+    if re.match(r'^Unnamed:\s*\d+$', c.strip())
+    or _looks_like_timestamps(df[c].astype(str))
+]
+
+# System / admin columns — skip (Record ID, empty, and all timestamp columns)
 system_cols = {
     c for c in df.columns
     if c.strip() in ("Record ID", "")
-    or re.match(r'^Unnamed:\s*\d+$', c.strip())
-    or _looks_like_timestamps(df[c].astype(str))
-}
+} | set(timestamp_cols)
 
 # Find completion status column(s) — REDCap names them "<Form> Complete?"
 complete_cols = [
@@ -173,6 +176,35 @@ if complete_cols:
                 print(f"    {str(val):<30} {n}")
 else:
     print("\nNo 'Complete?' column found in data")
+
+# ── Completion time ───────────────────────────────────────────────────────────
+completion_time_df = pd.DataFrame()
+
+print(f"\nTimestamp columns detected: {timestamp_cols if timestamp_cols else 'none'}")
+
+if len(timestamp_cols) >= 2:
+    # Assume first = start, second = end (REDCap order)
+    start_col, end_col = timestamp_cols[0], timestamp_cols[1]
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        if grp_df.empty:
+            continue
+        starts = pd.to_datetime(grp_df[start_col], errors="coerce")
+        ends   = pd.to_datetime(grp_df[end_col],   errors="coerce")
+        mins   = (ends - starts).dt.total_seconds() / 60
+        valid  = mins.dropna()
+        valid  = valid[valid >= 0]  # drop negative (data errors)
+        if not valid.empty:
+            print(f"\n  Completion time — {grp_name} (n={len(valid)} with both timestamps):")
+            print(f"    Mean   : {valid.mean():.1f} min")
+            print(f"    Median : {valid.median():.1f} min")
+            print(f"    Min    : {valid.min():.1f} min")
+            print(f"    Max    : {valid.max():.1f} min")
+elif len(timestamp_cols) == 1:
+    # Only one timestamp — report it as survey date distribution
+    ts_col = timestamp_cols[0]
+    parsed = pd.to_datetime(eligible[ts_col], errors="coerce")
+    print(f"\n  Single timestamp column found ('{ts_col}') — cannot compute duration.")
+    print(f"  Survey dates range: {parsed.min()} to {parsed.max()}")
 
 # ── Frequency functions ───────────────────────────────────────────────────────
 def freq_single(series, question_text, ordered=None):
@@ -254,12 +286,35 @@ print("\nBuilding frequency tables ...")
 elig_freqs   = build_all_frequencies(eligible)
 inelig_freqs = build_all_frequencies(ineligible)
 
+# ── Build completion time sheet ───────────────────────────────────────────────
+completion_time_rows = []
+
+if len(timestamp_cols) >= 2:
+    start_col, end_col = timestamp_cols[0], timestamp_cols[1]
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        if grp_df.empty:
+            continue
+        starts = pd.to_datetime(grp_df[start_col], errors="coerce")
+        ends   = pd.to_datetime(grp_df[end_col],   errors="coerce")
+        mins   = (ends - starts).dt.total_seconds() / 60
+        # Attach per-record completion times
+        for i, (m, s, e) in enumerate(zip(mins, starts, ends)):
+            completion_time_rows.append({
+                "group":       grp_name,
+                "start_time":  str(s) if pd.notna(s) else "",
+                "end_time":    str(e) if pd.notna(e) else "",
+                "minutes":     round(m, 1) if pd.notna(m) and m >= 0 else None,
+            })
+
+completion_time_df = pd.DataFrame(completion_time_rows) if completion_time_rows else pd.DataFrame()
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
-    "eligible":   elig_freqs,
-    "ineligible": inelig_freqs,
+    "eligible":        elig_freqs,
+    "ineligible":      inelig_freqs,
+    "completion_time": completion_time_df,
 }
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
