@@ -274,7 +274,7 @@ n_elig_screener <- if (!is.null(eligible) && nrow(eligible) > 0) {
 doc <- doc %>%
   body_add_par("Summary", style = "heading 2") %>%
   body_add_par(
-    sprintf("Eligible respondents (completed full survey): n = %s",
+    sprintf("Eligible respondents (full survey): n = %s",
             ifelse(is.na(n_elig_screener), "—", n_elig_screener)),
     style = "Normal") %>%
   body_add_par(
