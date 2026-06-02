@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE = Path.home() / "Downloads" / "CRC MDH Project"
+BASE = Path.home() / "Downloads" / "CRC MDH Project" / "MDH analysis"
 
 if len(sys.argv) > 1:
     INPUT_FILE = BASE / sys.argv[1]
