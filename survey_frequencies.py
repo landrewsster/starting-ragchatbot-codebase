@@ -83,10 +83,22 @@ free_text_cols = {
     or c.strip() == "Specify"
 }
 
-# System / admin columns — skip (Record ID only; Complete? is included in analysis)
+# System / admin columns — skip
+# Includes unnamed columns (REDCap timestamp/metadata with no label) and
+# columns whose values look like timestamps (survey start/end times)
+def _looks_like_timestamps(series):
+    """True if >50% of non-empty values parse as datetimes."""
+    non_empty = series[series.str.strip().ne("")].head(20)
+    if len(non_empty) < 3:
+        return False
+    hits = non_empty.str.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}').sum()
+    return hits / len(non_empty) > 0.5
+
 system_cols = {
     c for c in df.columns
     if c.strip() in ("Record ID", "")
+    or re.match(r'^Unnamed:\s*\d+$', c.strip())
+    or _looks_like_timestamps(df[c].astype(str))
 }
 
 # Find completion status column(s) — REDCap names them "<Form> Complete?"
