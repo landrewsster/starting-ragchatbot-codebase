@@ -134,7 +134,8 @@ side_by_side <- function(elig_df, inelig_df, pattern = NULL, exact_q = NULL) {
     }
     if (nrow(rows) == 0) return(NULL)
     n_col <- intersect(c("N (answered)", "N (denominator)"), names(rows))
-    n_val <- if (length(n_col) > 0) max(rows[[n_col[1]]], na.rm = TRUE) else NA
+    n_vals <- if (length(n_col) > 0) suppressWarnings(as.numeric(rows[[n_col[1]]])) else NA
+    n_val  <- if (length(n_col) > 0 && any(!is.na(n_vals))) max(n_vals, na.rm = TRUE) else NA
     # Normalize whitespace in Response before aggregating to prevent spurious duplicates
     out <- rows %>%
       mutate(Response = str_squish(Response)) %>%
