@@ -278,7 +278,7 @@ def freq_single(series, question_text, ordered=None):
         counts = counts.reindex(idx).dropna()
     pct = (counts / n_total * 100).round(1)
     out = pd.DataFrame({"Response": counts.index, "n": counts.values, "%": pct.values})
-    out.insert(0, "Question", short_q(question_text))
+    out.insert(0, "Question", re.sub(r'\s+', ' ', str(question_text)).strip())
     out.insert(1, "Type", "Single choice")
     out["N (answered)"] = n_total
     return out
@@ -296,7 +296,7 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
     for col in child_cols:
         n_checked = df_sub.loc[has_response, col].apply(is_checked).sum()
         rows.append({
-            "Question":        short_q(parent_q),
+            "Question":        re.sub(r'\s+', ' ', str(parent_q)).strip(),
             "Type":            "Select all that apply",
             "Response":        choice_label(col),
             "n":               int(n_checked),
