@@ -453,17 +453,43 @@ county_candidates = [
 print(f"\nCounty columns found: {len(county_candidates)}")
 
 def normalize_county(val):
-    """Standardize county name: strip, collapse spaces, normalize St./St, title case."""
+    """Basic standardization: strip, collapse spaces, St. → St, title case."""
     val = val.strip()
     val = re.sub(r'\s+', ' ', val)
-    val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)  # St. → St
+    val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)
     val = val.title()
-    # Specific recodes
-    RECODES = {
-        "Mille Lacs Health": "Mille Lacs",
-        "Usa":               "",           # invalid entry — exclude
-    }
-    return RECODES.get(val, val)
+    return val
+
+# ── County recode rules ───────────────────────────────────────────────────────
+# Applied after normalize_county (which title-cases everything).
+# Comparisons are case-insensitive (keys stored lower-case).
+# "" (blank)  = invalid entry, excluded from county frequency table.
+# "N/A"       = respondent does not practice in a Minnesota county
+#               (out-of-state, ineligible practice type, or non-specific response).
+COUNTY_RECODES = {
+    # Invalid / uninterpretable entries
+    "usa":                  "",      # not a county name
+
+    # Health system name entered instead of county
+    "mille lacs health":    "Mille Lacs",
+
+    # "County" suffix — standardize to county name only
+    "pima county":          "Pima",
+
+    # Out-of-state responses
+    "la crosse, wisconsin": "N/A",   # La Crosse County, WI
+    "washburn wi":          "N/A",   # Washburn County, WI
+    "st croix wi":          "N/A",   # St. Croix County, WI
+
+    # Respondent does not serve pregnant/breastfeeding patients
+    "don't care for pregnant or breastfeeding patients":                        "N/A",
+    "unlikely to care for pregnant or breastfeeding patients in hospice":       "N/A",
+    "none":                 "N/A",
+}
+
+def recode_county(normalized):
+    """Apply specific recodes after normalization. Returns recoded value."""
+    return COUNTY_RECODES.get(normalized.lower(), normalized)
 
 county_df = pd.DataFrame()
 county_freq_df = pd.DataFrame()
@@ -480,13 +506,13 @@ if county_candidates:
                         raw = v
                         break
             if raw:
-                normed = normalize_county(raw)
-                if not normed:   # skip entries recoded to blank (e.g. "Usa")
-                    continue
+                normed  = normalize_county(raw)
+                recoded = recode_county(normed)
                 rec = {
                     "group":             grp_name,
                     "county_raw":        raw,
                     "county_normalized": normed,
+                    "county_recoded":    recoded,
                 }
                 if record_id_col and record_id_col in grp_df.columns:
                     rec = {"record_id": row[record_id_col], **rec}
@@ -495,18 +521,19 @@ if county_candidates:
     if county_rows:
         county_df = (
             pd.DataFrame(county_rows)
-            .sort_values(["group", "county_normalized"], key=lambda s: s.str.lower())
+            .sort_values(["group", "county_recoded"], key=lambda s: s.str.lower())
             .reset_index(drop=True)
         )
         print(f"  County responses: {len(county_df)} "
               f"(eligible: {(county_df['group']=='eligible').sum()}, "
               f"ineligible: {(county_df['group']=='ineligible').sum()})")
 
-        # Frequency table by normalized county and eligibility group
-        elig_counts   = county_df[county_df["group"]=="eligible"]["county_normalized"].value_counts()
-        inelig_counts = county_df[county_df["group"]=="ineligible"]["county_normalized"].value_counts()
-        elig_n   = len(county_df[county_df["group"]=="eligible"])
-        inelig_n = len(county_df[county_df["group"]=="ineligible"])
+        # Frequency table uses county_recoded; blanks excluded, N/A included
+        freq_data     = county_df[county_df["county_recoded"].str.strip().ne("")]
+        elig_counts   = freq_data[freq_data["group"]=="eligible"]["county_recoded"].value_counts()
+        inelig_counts = freq_data[freq_data["group"]=="ineligible"]["county_recoded"].value_counts()
+        elig_n   = len(freq_data[freq_data["group"]=="eligible"])
+        inelig_n = len(freq_data[freq_data["group"]=="ineligible"])
 
         all_counties = sorted(set(elig_counts.index) | set(inelig_counts.index))
         freq_rows = []
