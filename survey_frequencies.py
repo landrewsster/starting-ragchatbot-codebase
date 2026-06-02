@@ -236,26 +236,23 @@ else:
 def _find_col(columns, pattern):
     return next((c for c in columns if re.search(pattern, c, re.IGNORECASE)), None)
 
-start_col      = _find_col(df.columns, r'screener_start_time')
-end_elig_col   = _find_col(df.columns, r'survey_end_time')
-end_inelig_col = _find_col(df.columns, r'dem_end_time_2')
+start_col      = _find_col(df.columns, r'screener_start_time') or ("Unnamed: 1"   if "Unnamed: 1"   in df.columns else None)
+end_elig_col   = _find_col(df.columns, r'survey_end_time')     or ("Unnamed: 249" if "Unnamed: 249" in df.columns else None)
+end_inelig_col = _find_col(df.columns, r'dem_end_time_2')      or ("Unnamed: 222" if "Unnamed: 222" in df.columns else None)
 
 print(f"\nCompletion time columns:")
 print(f"  Start       : {start_col or 'NOT FOUND'}")
 print(f"  End eligible: {end_elig_col or 'NOT FOUND'}")
 print(f"  End inelig. : {end_inelig_col or 'NOT FOUND'}")
 
-print(f"\n  Timestamp columns detected in data:")
-if timestamp_cols:
-    for c in timestamp_cols:
-        sample = df[c].dropna().iloc[0] if df[c].dropna().shape[0] > 0 else ""
-        print(f"    {c!r}  (e.g. {sample!r})")
-else:
-    print("    (none detected)")
-print(f"\n  All column names containing 'time','start','end','survey','screen','dem':")
-matches = [c for c in df.columns if re.search(r'time|start|end|survey|screen|dem', c, re.IGNORECASE)]
-for c in matches:
-    print(f"    {c!r}")
+# Verify mapping: show how many eligible vs ineligible have values in each col
+for label, col in [("start", start_col), ("end_elig", end_elig_col), ("end_inelig", end_inelig_col)]:
+    if col and col in df.columns:
+        n_elig   = eligible[col].astype(str).str.strip().ne("").sum()   if col in eligible.columns   else 0
+        n_inelig = ineligible[col].astype(str).str.strip().ne("").sum() if col in ineligible.columns else 0
+        sample   = df[col].dropna().astype(str).str.strip()
+        sample   = sample[sample != ""].iloc[0] if not sample[sample != ""].empty else ""
+        print(f"    {label} ({col}): eligible={n_elig}, ineligible={n_inelig}, e.g. '{sample}'")
 
 completion_rows = []
 
