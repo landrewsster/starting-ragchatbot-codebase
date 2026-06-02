@@ -126,32 +126,34 @@ make_county_table <- function(df) {
 # ── Build side-by-side table for one question ─────────────────────────────────
 side_by_side <- function(elig_df, inelig_df, pattern = NULL, exact_q = NULL) {
   pull <- function(df, suffix) {
-    if (is.null(df) || nrow(df) == 0) return(data.frame())
+    if (is.null(df) || nrow(df) == 0) return(NULL)
     rows <- if (!is.null(exact_q)) {
       df %>% filter(norm_q(Question) == norm_q(exact_q))
     } else {
       df %>% filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
     }
-    if (nrow(rows) == 0) return(data.frame())
-    n_col  <- intersect(c("N (answered)", "N (denominator)"), names(rows))
-    n_val  <- if (length(n_col) > 0) unique(rows[[n_col[1]]])[1] else NA
-    attr(rows, "n_val") <- n_val
-    rows %>% select(Response, n, `%`) %>%
+    if (nrow(rows) == 0) return(NULL)
+    n_col <- intersect(c("N (answered)", "N (denominator)"), names(rows))
+    n_val <- if (length(n_col) > 0) unique(rows[[n_col[1]]])[1] else NA
+    out <- rows %>% select(Response, n, `%`) %>%
       rename(!!paste0(suffix, " n") := n, !!paste0(suffix, " %") := `%`)
+    attr(out, "n_val") <- n_val
+    out
   }
 
   eq <- pull(elig_df,   "Eligible")
   iq <- pull(inelig_df, "Ineligible")
 
-  if (nrow(eq) == 0 && nrow(iq) == 0) return(NULL)
+  if (is.null(eq) && is.null(iq)) return(NULL)
 
   all_resp <- unique(c(eq$Response, iq$Response))
-  tbl <- data.frame(Response = all_resp, stringsAsFactors = FALSE) %>%
-    left_join(eq, by = "Response") %>%
-    left_join(iq, by = "Response") %>%
-    mutate(across(where(is.numeric), ~ replace_na(., 0)))
+  tbl <- data.frame(Response = all_resp, stringsAsFactors = FALSE)
+  if (!is.null(eq)) tbl <- left_join(tbl, eq, by = "Response")
+  if (!is.null(iq)) tbl <- left_join(tbl, iq, by = "Response")
+  tbl <- tbl %>% mutate(across(where(is.numeric), ~ replace_na(., 0)))
 
-  en <- attr(eq, "n_val"); in_ <- attr(iq, "n_val")
+  en  <- if (!is.null(eq)) attr(eq, "n_val") else NA
+  in_ <- if (!is.null(iq)) attr(iq, "n_val") else NA
   parts <- c(
     if (!is.na(en))  paste0("Eligible N = ", en),
     if (!is.na(in_)) paste0("Ineligible N = ", in_)
