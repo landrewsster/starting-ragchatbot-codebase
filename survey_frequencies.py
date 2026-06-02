@@ -317,7 +317,7 @@ def build_all_frequencies(df_sub):
     emitted_checkbox_parents = set()
 
     for col in df_sub.columns:
-        if col in skip:
+        if col in free_text_cols or col in system_cols:
             continue
 
         if col in checkbox_cols:
