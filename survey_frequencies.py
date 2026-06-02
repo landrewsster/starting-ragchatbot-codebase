@@ -110,6 +110,24 @@ timestamp_cols = [
     or _looks_like_timestamps(df[c].astype(str))
 ]
 
+# Demographic column patterns — questions shown to ALL respondents
+DEMO_PATTERNS = [
+    r"what is your profession",
+    r"do you primarily see pregnant",
+    r"how long have you been practicing",
+    r"what is your primary specialty",
+    r"what is your secondary or sub.specialty",
+    r"which of the following best describes your primary practice setting",
+    r"how would you describe the insurance status",
+    r"what is the county of your practice",
+    r"what is your gender",
+    r"what is your age",
+    r"what is your race/ethnicity",
+]
+
+def is_demo_col(col):
+    return any(re.search(p, col, re.IGNORECASE) for p in DEMO_PATTERNS)
+
 # System / admin columns — skip (Record ID, empty, and all timestamp columns)
 system_cols = {
     c for c in df.columns
@@ -324,7 +342,8 @@ completion_time_df = pd.DataFrame(completion_time_rows) if completion_time_rows 
 # Find Record ID column if present
 record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
 
-# Collect non-empty free-text responses from both groups in survey column order
+# Collect non-empty free-text responses in survey column order.
+# Demographic free-text: include both groups. Main survey free-text: eligible only.
 free_text_rows = []
 seen_ft_cols = set()
 for col in df.columns:
@@ -333,7 +352,12 @@ for col in df.columns:
     if col in timestamp_cols or col in system_cols:
         continue
     seen_ft_cols.add(col)
-    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+    groups = (
+        [("eligible", eligible), ("ineligible", ineligible)]
+        if is_demo_col(col)
+        else [("eligible", eligible)]
+    )
+    for grp_name, grp_df in groups:
         if col not in grp_df.columns:
             continue
         for _, row in grp_df.iterrows():
@@ -343,7 +367,7 @@ for col in df.columns:
                     "group":    grp_name,
                     "question": short_q(col),
                     "response": val,
-                    "recode":   "",   # blank column for manual recoding
+                    "recode":   "",
                 }
                 if record_id_col and record_id_col in grp_df.columns:
                     rec = {"record_id": row[record_id_col], **rec}
