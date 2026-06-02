@@ -134,8 +134,12 @@ side_by_side <- function(elig_df, inelig_df, pattern = NULL, exact_q = NULL) {
     }
     if (nrow(rows) == 0) return(NULL)
     n_col <- intersect(c("N (answered)", "N (denominator)"), names(rows))
-    n_val <- if (length(n_col) > 0) unique(rows[[n_col[1]]])[1] else NA
-    out <- rows %>% select(Response, n, `%`) %>%
+    n_val <- if (length(n_col) > 0) max(rows[[n_col[1]]], na.rm = TRUE) else NA
+    # Aggregate duplicate responses caused by REDCap arm duplication
+    out <- rows %>%
+      group_by(Response) %>%
+      summarise(n = sum(n, na.rm = TRUE), .groups = "drop") %>%
+      mutate(`%` = round(n / n_val * 100, 1)) %>%
       rename(!!paste0(suffix, " n") := n, !!paste0(suffix, " %") := `%`)
     attr(out, "n_val") <- n_val
     out
