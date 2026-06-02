@@ -185,15 +185,48 @@ add_complete_summary <- function(doc, elig_df, inelig_df) {
     body_add_par("", style = "Normal")
 }
 
-# Screener questions side by side
+# Screener questions — combined across all respondents (no eligibility stratification)
 add_screener_section <- function(doc, elig_df, inelig_df) {
   doc <- body_add_par(doc, "Screener Questions", style = "heading 2")
+
+  combine_screener <- function(elig_df, inelig_df, pattern) {
+    get_rows <- function(df) {
+      if (is.null(df) || nrow(df) == 0) return(NULL)
+      df %>% filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
+    }
+    eq <- get_rows(elig_df)
+    iq <- get_rows(inelig_df)
+    if (is.null(eq) && is.null(iq)) return(NULL)
+
+    combined <- bind_rows(eq, iq) %>%
+      group_by(Response) %>%
+      summarise(n = sum(n, na.rm = TRUE), .groups = "drop")
+    total_n <- sum(combined$n)
+    combined %>%
+      mutate(`%` = round(n / total_n * 100, 1)) %>%
+      arrange(desc(n))
+  }
+
   for (i in seq_along(SCREENER_PATTERNS)) {
-    res <- side_by_side(elig_df, inelig_df, pattern = SCREENER_PATTERNS[i])
-    if (!is.null(res)) {
+    tbl <- combine_screener(elig_df, inelig_df, SCREENER_PATTERNS[i])
+    if (!is.null(tbl)) {
+      total_n <- sum(tbl$n)
+      ft <- flextable(tbl) %>%
+        theme_booktabs() %>%
+        bold(part = "header") %>%
+        fontsize(size = 10, part = "all") %>%
+        font(fontname = "Calibri", part = "all") %>%
+        align(j = c("n", "%"), align = "right", part = "all") %>%
+        width(j = "Response", width = 3.5) %>%
+        width(j = c("n", "%"), width = 0.7) %>%
+        add_footer_lines(paste0("N (answered) = ", total_n)) %>%
+        fontsize(size = 9, part = "footer") %>%
+        italic(part = "footer") %>%
+        align(align = "left", part = "footer")
+
       doc <- doc %>%
         body_add_par(SCREENER_LABELS[i], style = "heading 3") %>%
-        body_add_flextable(make_wide_table(res$tbl, res$footer)) %>%
+        body_add_flextable(ft) %>%
         body_add_par("", style = "Normal")
     }
   }
@@ -280,7 +313,7 @@ doc <- doc %>%
             ifelse(is.na(n_elig_screener), "—", n_elig_screener)),
     style = "Normal") %>%
   body_add_par(
-    sprintf("Ineligible respondents (screener + demographics only): n = %s",
+    sprintf("Ineligible respondents (screener + demographics only): n = %s (note: some may not have answered all screener questions)",
             ifelse(is.null(ineligible), "—", max(ineligible$`N (answered)`, na.rm = TRUE))),
     style = "Normal") %>%
   body_add_par("Note: N varies by question due to optional or skipped items.", style = "Normal") %>%
