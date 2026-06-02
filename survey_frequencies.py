@@ -228,41 +228,80 @@ if complete_cols:
 else:
     print("\nNo 'Complete?' column found in data")
 
-# ── Survey date distribution (from first timestamp column) ────────────────────
-# REDCap standard exports do not include a survey start time, so completion
-# duration cannot be computed. Instead, summarise when surveys were submitted.
-completion_time_df = pd.DataFrame()
+# ── Completion time ───────────────────────────────────────────────────────────
+# Start:            screener_start_time  (all respondents)
+# End (eligible):   survey_end_time
+# End (ineligible): dem_end_time_2
 
-if timestamp_cols:
-    ts_col = timestamp_cols[0]
-    print(f"\nTimestamp column: '{ts_col}'")
-    rows = []
-    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
-        if grp_df.empty or ts_col not in grp_df.columns:
+def _find_col(columns, pattern):
+    return next((c for c in columns if re.search(pattern, c, re.IGNORECASE)), None)
+
+start_col      = _find_col(df.columns, r'screener_start_time')
+end_elig_col   = _find_col(df.columns, r'survey_end_time')
+end_inelig_col = _find_col(df.columns, r'dem_end_time_2')
+
+print(f"\nCompletion time columns:")
+print(f"  Start       : {start_col or 'NOT FOUND'}")
+print(f"  End eligible: {end_elig_col or 'NOT FOUND'}")
+print(f"  End inelig. : {end_inelig_col or 'NOT FOUND'}")
+
+completion_rows = []
+
+for grp_name, grp_df, end_col in [
+    ("eligible",   eligible,   end_elig_col),
+    ("ineligible", ineligible, end_inelig_col),
+]:
+    if grp_df.empty:
+        continue
+    if not start_col or start_col not in grp_df.columns:
+        print(f"  WARNING: start column not found for {grp_name}")
+        continue
+    if not end_col or end_col not in grp_df.columns:
+        print(f"  WARNING: end column not found for {grp_name}")
+        continue
+
+    start    = pd.to_datetime(grp_df[start_col], errors="coerce")
+    end      = pd.to_datetime(grp_df[end_col],   errors="coerce")
+    duration = (end - start).dt.total_seconds() / 60
+
+    valid = start.notna() & end.notna() & (duration >= 0)
+    d = duration[valid]
+    print(f"\n  {grp_name} (n={valid.sum()}):")
+    if not d.empty:
+        print(f"    Mean   : {d.mean():.1f} min")
+        print(f"    Median : {d.median():.1f} min")
+        print(f"    Min    : {d.min():.1f} min")
+        print(f"    Max    : {d.max():.1f} min")
+
+    rec_ids = grp_df[record_id_col] if record_id_col else grp_df.iloc[:, 0]
+    for rid, s, e, dur in zip(rec_ids, start, end, duration):
+        if pd.isna(s) or pd.isna(e) or dur < 0:
             continue
-        parsed = pd.to_datetime(grp_df[ts_col], errors="coerce")
-        valid  = parsed.dropna()
-        if valid.empty:
-            continue
-        print(f"  {grp_name}: {len(valid)} submissions, "
-              f"{valid.min().date()} to {valid.max().date()}")
-        rec_ids = (
-            grp_df.loc[parsed.notna(), grp_df.columns[0]]
-            if record_id_col is None
-            else grp_df.loc[parsed.notna(), record_id_col]
-        )
-        for rid, ts in zip(rec_ids, valid):
-            rows.append({
-                "record_id":   rid,
-                "group":       grp_name,
-                "submitted_at": ts.strftime("%Y-%m-%d %H:%M"),
-                "date":        ts.strftime("%Y-%m-%d"),
-                "day_of_week": ts.strftime("%A"),
-                "hour":        ts.hour,
-            })
-    completion_time_df = pd.DataFrame(rows) if rows else pd.DataFrame()
-else:
-    print("\nNo timestamp column found in data")
+        completion_rows.append({
+            "record_id":        rid,
+            "group":            grp_name,
+            "start_time":       s.strftime("%Y-%m-%d %H:%M"),
+            "end_time":         e.strftime("%Y-%m-%d %H:%M"),
+            "duration_minutes": round(dur, 1),
+        })
+
+completion_time_df = pd.DataFrame(completion_rows) if completion_rows else pd.DataFrame()
+
+# Duration bucket summary
+completion_summary_df = pd.DataFrame()
+if not completion_time_df.empty:
+    bins   = [0, 5, 10, 15, 20, 30, float("inf")]
+    labels = ["<5 min", "5-9 min", "10-14 min", "15-19 min", "20-29 min", "30+ min"]
+    completion_time_df["duration_bucket"] = pd.cut(
+        completion_time_df["duration_minutes"], bins=bins, labels=labels, right=False
+    )
+    completion_summary_df = (
+        completion_time_df.groupby(["duration_bucket", "group"], observed=True)
+        .size().reset_index(name="n")
+        .pivot(index="duration_bucket", columns="group", values="n")
+        .fillna(0).astype(int).reset_index()
+        .rename(columns={"duration_bucket": "Duration"})
+    )
 
 # ── Frequency functions ───────────────────────────────────────────────────────
 def freq_single(series, question_text, ordered=None):
@@ -478,12 +517,13 @@ else:
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
-    "eligible":        elig_freqs,
-    "ineligible":      inelig_freqs,
-    "county_freq":     county_freq_df,
-    "county":          county_df,
-    "free_text":       free_text_df,
-    "completion_time": completion_time_df,
+    "eligible":           elig_freqs,
+    "ineligible":         inelig_freqs,
+    "county_freq":        county_freq_df,
+    "county":             county_df,
+    "free_text":          free_text_df,
+    "completion_time":    completion_time_df,
+    "completion_summary": completion_summary_df,
 }
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
