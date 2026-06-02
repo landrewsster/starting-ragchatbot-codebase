@@ -126,6 +126,12 @@ print(f"  Single-choice        : {len(single_cols)}")
 print(f"  Free-text (skipped)  : {len(free_text_cols)}")
 
 # ── Split eligible vs ineligible ──────────────────────────────────────────────
+# Survey routing:
+#   Q1 (prenatal/delivery/postpartum) "No"  → sent to demographics (ineligible)
+#   Q1 "Yes" + Q2 (days see patients) "0"   → sent to demographics (ineligible)
+#   Q1 "Yes" + Q2 blank (not required)      → uncertain; warn and include as eligible
+#   Q1 "Yes" + Q2 > 0                       → eligible
+
 elig_col = next(
     (c for c in df.columns
      if re.search(r'prenatal.*delivery.*postpartum', c, re.IGNORECASE)
@@ -133,12 +139,47 @@ elig_col = next(
     None
 )
 
+days_col = next(
+    (c for c in df.columns
+     if re.search(r'how many days.*see patients|average week.*how many', c, re.IGNORECASE)
+     and '(choice=' not in c),
+    None
+)
+
 if elig_col:
-    eligible   = df[df[elig_col].str.strip().str.lower() == "yes"].reset_index(drop=True)
-    ineligible = df[df[elig_col].str.strip().str.lower() != "yes"].reset_index(drop=True)
-    print(f"\nEligibility split on: {short_q(elig_col, 80)}")
-    print(f"  Eligible   (full survey) : {len(eligible)}")
-    print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
+    q1_yes = df[elig_col].str.strip().str.lower() == "yes"
+
+    if days_col:
+        q2_val = df[days_col].astype(str).str.strip()
+        q2_zero  = q2_val.str.lower().isin(["0", "0 days", "0.0"])
+        q2_blank = q2_val.isin(["", "nan", "NaN"])
+
+        # Eligible: Q1=Yes AND Q2 is not "0" (blank = uncertain, include with warning)
+        eligible   = df[ q1_yes & ~q2_zero].reset_index(drop=True)
+        ineligible = df[~q1_yes | q2_zero ].reset_index(drop=True)
+
+        n_yes       = int(q1_yes.sum())
+        n_zero      = int((q1_yes & q2_zero).sum())
+        n_blank_q2  = int((q1_yes & q2_blank).sum())
+        n_gt0       = int((q1_yes & ~q2_zero & ~q2_blank).sum())
+
+        print(f"\nEligibility split on:")
+        print(f"  Q1: {short_q(elig_col, 80)}")
+        print(f"  Q2: {short_q(days_col, 80)}")
+        print(f"\n  Q1 = Yes                : {n_yes}")
+        print(f"    Q2 > 0 days (eligible): {n_gt0}")
+        print(f"    Q2 = 0 days (inelig.) : {n_zero}")
+        print(f"    Q2 blank (uncertain)  : {n_blank_q2}  ← included as eligible; verify manually")
+        print(f"  Q1 = No  (ineligible)   : {int((~q1_yes).sum())}")
+        print(f"\n  Eligible   (full survey)          : {len(eligible)}")
+        print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
+    else:
+        # Q2 column not found — fall back to Q1 only
+        eligible   = df[ q1_yes].reset_index(drop=True)
+        ineligible = df[~q1_yes].reset_index(drop=True)
+        print(f"\nEligibility split on Q1 only (Q2 column not found): {short_q(elig_col, 80)}")
+        print(f"  Eligible   (full survey)          : {len(eligible)}")
+        print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
 else:
     eligible   = df.copy()
     ineligible = pd.DataFrame(columns=df.columns)
