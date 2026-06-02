@@ -135,11 +135,25 @@ system_cols = {
 } | set(timestamp_cols)
 
 # Find completion status column(s) — REDCap names them "<Form> Complete?"
+# Label each by the last substantive question before it so the section is clear.
 complete_cols = [
     c for c in df.columns
     if re.search(r'complete\??\s*$', c.strip(), re.IGNORECASE)
     and c.strip() not in ("Record ID", "")
 ]
+
+def _complete_col_label(col):
+    """Return 'Complete? [after: <preceding question>]' for disambiguation."""
+    idx = list(df.columns).index(col)
+    for i in range(idx - 1, -1, -1):
+        prev = df.columns[i]
+        if (prev not in system_cols and prev not in timestamp_cols
+                and not re.search(r'complete\??\s*$', prev.strip(), re.IGNORECASE)
+                and prev.strip()):
+            return f"Complete? [after: {short_q(prev, 60)}]"
+    return f"Complete? [col {idx}]"
+
+complete_col_labels = {c: _complete_col_label(c) for c in complete_cols}
 
 skip = set(checkbox_cols) | free_text_cols | system_cols
 
@@ -200,11 +214,12 @@ record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
 
 # ── Completion summary ────────────────────────────────────────────────────────
 if complete_cols:
-    print(f"\nCompletion status columns found: {complete_cols}")
+    print(f"\nCompletion status ({len(complete_cols)} form(s)):")
     for cc in complete_cols:
+        label = complete_col_labels.get(cc, cc)
         if cc in eligible.columns:
             counts = eligible[cc].str.strip().value_counts(dropna=False)
-            print(f"\n  [{cc}] — eligible respondents (n={len(eligible)}):")
+            print(f"\n  {label} — eligible (n={len(eligible)}):")
             for val, n in counts.items():
                 print(f"    {str(val):<30} {n}")
 else:
@@ -312,9 +327,10 @@ def build_all_frequencies(df_sub):
                 if t is not None:
                     parts.append(t)
         else:
-            # Single-choice
+            # Single-choice — use disambiguated label for Complete? columns
+            label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
-            t = freq_single(df_sub[col], col, ordered)
+            t = freq_single(df_sub[col], label, ordered)
             if t is not None:
                 parts.append(t)
 
