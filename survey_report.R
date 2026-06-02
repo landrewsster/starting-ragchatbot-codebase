@@ -260,8 +260,29 @@ doc <- doc %>%
   body_add_par(paste("Generated:", format(Sys.Date(), "%B %d, %Y")), style = "Normal") %>%
   body_add_par("", style = "Normal")
 
-# 1. Survey completion summary
-doc <- add_complete_summary(doc, eligible, ineligible)
+# Complete? summary — commented out until REDCap form structure is confirmed
+# add_complete_summary(doc, eligible, ineligible)
+
+# Simple top summary instead
+n_elig_screener <- if (!is.null(eligible) && nrow(eligible) > 0) {
+  sc_rows <- eligible %>%
+    filter(str_detect(str_to_lower(Question), SCREENER_PATTERNS[1])) %>%
+    filter(str_detect(str_to_lower(Response), "^yes"))
+  if (nrow(sc_rows) > 0) sc_rows$n[1] else max(eligible$`N (answered)`, na.rm = TRUE)
+} else NA
+
+doc <- doc %>%
+  body_add_par("Summary", style = "heading 2") %>%
+  body_add_par(
+    sprintf("Eligible respondents (completed full survey): n = %s",
+            ifelse(is.na(n_elig_screener), "—", n_elig_screener)),
+    style = "Normal") %>%
+  body_add_par(
+    sprintf("Ineligible respondents (screener + demographics only): n = %s",
+            ifelse(is.null(ineligible), "—", max(ineligible$`N (answered)`, na.rm = TRUE))),
+    style = "Normal") %>%
+  body_add_par("Note: N varies by question due to optional or skipped items.", style = "Normal") %>%
+  body_add_par("", style = "Normal")
 
 # 2. Screener questions (eligible + ineligible side by side)
 doc <- add_screener_section(doc, eligible, ineligible)
