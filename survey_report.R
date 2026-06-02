@@ -64,7 +64,6 @@ make_county_table <- function(df) {
 }
 
 # ── Add a frequency section to the doc ───────────────────────────────────────
-# df must have columns: Question, Response, n, %, and N (answered) or N (denominator)
 add_freq_section <- function(doc, df, heading) {
   if (is.null(df) || nrow(df) == 0) return(doc)
 
@@ -72,10 +71,16 @@ add_freq_section <- function(doc, df, heading) {
 
   questions <- unique(df$Question)
   for (q in questions) {
-    q_rows <- df %>% filter(Question == q) %>% select(-Question)
+    q_rows <- df %>% filter(Question == q)
 
-    # Truncate long question text for the heading (full text is in the table data)
-    q_heading <- if (nchar(q) > 120) paste0(substr(q, 1, 117), "...") else q
+    # Pull question type before dropping metadata columns
+    q_type <- if ("Type" %in% names(q_rows)) unique(q_rows$Type)[1] else ""
+    q_rows  <- q_rows %>% select(-Question, -any_of("Type"))
+
+    # Build heading: question text + type label
+    q_short   <- if (nchar(q) > 120) paste0(substr(q, 1, 117), "...") else q
+    type_note <- if (q_type == "Select all that apply") " (select all that apply)" else ""
+    q_heading <- paste0(q_short, type_note)
 
     doc <- doc %>%
       body_add_par(q_heading, style = "heading 3") %>%
@@ -85,24 +90,31 @@ add_freq_section <- function(doc, df, heading) {
   doc
 }
 
+# ── Completion summary helper ─────────────────────────────────────────────────
+completion_summary <- function(df, label) {
+  if (is.null(df) || nrow(df) == 0) return(paste(label, ": —"))
+  n_col <- intersect(c("N (answered)", "N (denominator)"), names(df))
+  if (length(n_col) == 0) return(paste(label, ": —"))
+  n_max <- max(df[[n_col[1]]], na.rm = TRUE)
+  n_min <- min(df[[n_col[1]]], na.rm = TRUE)
+  if (n_max == n_min) {
+    sprintf("%s: n = %d", label, n_max)
+  } else {
+    sprintf("%s: n = %d (range %d–%d across questions)", label, n_max, n_min, n_max)
+  }
+}
+
 # ── Build document ────────────────────────────────────────────────────────────
 doc <- read_docx()
 
-# Title
 doc <- doc %>%
   body_add_par("Cannabis Screening Survey: Frequency Report", style = "heading 1") %>%
   body_add_par(paste("Generated:", format(Sys.Date(), "%B %d, %Y")), style = "Normal") %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par(completion_summary(eligible,   "Eligible respondents (full survey)"),   style = "Normal") %>%
+  body_add_par(completion_summary(ineligible, "Ineligible respondents (screener + demographics)"), style = "Normal") %>%
+  body_add_par("Note: N may vary by question due to skipped or optional items.", style = "Normal") %>%
   body_add_par("", style = "Normal")
-
-# Sample summary
-n_elig   <- if (!is.null(eligible))   nrow(eligible[!duplicated(eligible$Question), ]) else 0
-n_inelig <- if (!is.null(ineligible)) nrow(ineligible[!duplicated(ineligible$Question), ]) else 0
-
-doc <- body_add_par(doc,
-  sprintf("Eligible respondents (full survey): %s  |  Ineligible respondents (screener + demographics): %s",
-          ifelse(!is.null(eligible),   max(eligible$`N (answered)`,   na.rm = TRUE), "—"),
-          ifelse(!is.null(ineligible), max(ineligible$`N (answered)`, na.rm = TRUE), "—")),
-  style = "Normal")
 doc <- body_add_par(doc, "", style = "Normal")
 
 # Eligible frequencies
