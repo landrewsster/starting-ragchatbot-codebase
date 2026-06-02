@@ -245,11 +245,17 @@ print(f"  Start       : {start_col or 'NOT FOUND'}")
 print(f"  End eligible: {end_elig_col or 'NOT FOUND'}")
 print(f"  End inelig. : {end_inelig_col or 'NOT FOUND'}")
 
-time_cols = [c for c in df.columns if re.search(r'time|start|end', c, re.IGNORECASE)]
-if time_cols:
-    print(f"\n  All time-related columns in data:")
-    for c in time_cols:
-        print(f"    {c}")
+print(f"\n  Timestamp columns detected in data:")
+if timestamp_cols:
+    for c in timestamp_cols:
+        sample = df[c].dropna().iloc[0] if df[c].dropna().shape[0] > 0 else ""
+        print(f"    {c!r}  (e.g. {sample!r})")
+else:
+    print("    (none detected)")
+print(f"\n  All column names containing 'time','start','end','survey','screen','dem':")
+matches = [c for c in df.columns if re.search(r'time|start|end|survey|screen|dem', c, re.IGNORECASE)]
+for c in matches:
+    print(f"    {c!r}")
 
 completion_rows = []
 
