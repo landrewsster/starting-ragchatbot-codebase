@@ -76,28 +76,87 @@ for c in checkbox_cols:
     p = parent_question(c)
     checkbox_groups.setdefault(p, []).append(c)
 
-# Free-text / specify columns — skip
+# Demographic column patterns — questions shown to ALL respondents
+# Defined early so free-text detection can exclude these columns from cardinality check.
+DEMO_PATTERNS = [
+    r"what is your profession",
+    r"do you primarily see pregnant",
+    r"how long have you been practicing",
+    r"what is your primary specialty",
+    r"what is your secondary or sub.specialty",
+    r"which of the following best describes your primary practice setting",
+    r"how would you describe the insurance status",
+    r"what is the county of your practice",
+    r"what is your gender",
+    r"what is your age",
+    r"what is your race/ethnicity",
+]
+
+def is_demo_col(col):
+    return any(re.search(p, col, re.IGNORECASE) for p in DEMO_PATTERNS)
+
+# Free-text / specify columns — skip by name pattern or high cardinality.
+# Demographic columns are always categorical regardless of cardinality (e.g. county).
+def _looks_like_free_text(series):
+    """True if the column reads as open-ended: nearly all non-empty values are unique."""
+    non_empty = series[series.str.strip().ne("")]
+    if len(non_empty) < 5:
+        return False
+    unique_ratio = non_empty.nunique() / len(non_empty)
+    return unique_ratio > 0.7  # >70% unique values → almost certainly free text
+
 free_text_cols = {
     c for c in df.columns
-    if re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
-    or c.strip() == "Specify"
+    if c not in checkbox_cols    # never treat binary checkbox columns as free text
+    and not is_demo_col(c)       # demographic columns are always categorical
+    and (
+        re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
+        or c.strip() == "Specify"
+        or _looks_like_free_text(df[c].astype(str))
+    )
 }
 
-# System / admin columns — skip (includes unnamed columns and timestamp columns)
+# Detect timestamp columns before building skip set
 def _looks_like_timestamps(series):
-    sample = series.dropna().astype(str).str.strip()
-    sample = sample[sample != ""]
-    if len(sample) < 3:
+    """True if >50% of non-empty values parse as datetimes."""
+    non_empty = series[series.str.strip().ne("")].head(20)
+    if len(non_empty) < 3:
         return False
-    return sample.str.match(r'^\d{1,2}/\d{1,2}/\d{2,4}').mean() > 0.7
+    hits = non_empty.str.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}').sum()
+    return hits / len(non_empty) > 0.5
 
+timestamp_cols = [
+    c for c in df.columns
+    if re.match(r'^Unnamed:\s*\d+$', c.strip())
+    or _looks_like_timestamps(df[c].astype(str))
+]
+
+# System / admin columns — skip (Record ID, empty, and all timestamp columns)
 system_cols = {
     c for c in df.columns
-    if c.strip() in ("Record ID", "Complete?", "")
-    or re.match(r'complete\??\s*$', c.strip(), re.IGNORECASE)
-    or re.match(r'Unnamed:\s*\d+', c.strip())
-    or _looks_like_timestamps(df[c])
-}
+    if c.strip() in ("Record ID", "")
+} | set(timestamp_cols)
+
+# Find completion status column(s) — REDCap names them "<Form> Complete?"
+# Label each by the last substantive question before it so the section is clear.
+complete_cols = [
+    c for c in df.columns
+    if re.search(r'complete\??\s*$', c.strip(), re.IGNORECASE)
+    and c.strip() not in ("Record ID", "")
+]
+
+def _complete_col_label(col):
+    """Return 'Complete? [after: <preceding question>]' for disambiguation."""
+    idx = list(df.columns).index(col)
+    for i in range(idx - 1, -1, -1):
+        prev = df.columns[i]
+        if (prev not in system_cols and prev not in timestamp_cols
+                and not re.search(r'complete\??\s*$', prev.strip(), re.IGNORECASE)
+                and prev.strip()):
+            return f"Complete? [after: {short_q(prev, 60)}]"
+    return f"Complete? [col {idx}]"
+
+complete_col_labels = {c: _complete_col_label(c) for c in complete_cols}
 
 skip = set(checkbox_cols) | free_text_cols | system_cols
 
@@ -146,12 +205,64 @@ if elig_col:
     eligible   = df[df[elig_col].str.strip().str.lower() == "yes"].reset_index(drop=True)
     ineligible = df[df[elig_col].str.strip().str.lower() != "yes"].reset_index(drop=True)
     print(f"\nEligibility split on: {short_q(elig_col, 80)}")
-    print(f"  Eligible   (full survey)          : {len(eligible)}")
+    print(f"  Eligible   (full survey) : {len(eligible)}")
     print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
 else:
     eligible   = df.copy()
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
+
+# Record ID column (needed in both timestamp and free-text sections)
+record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
+
+# ── Completion summary ────────────────────────────────────────────────────────
+if complete_cols:
+    print(f"\nCompletion status ({len(complete_cols)} form(s)):")
+    for cc in complete_cols:
+        label = complete_col_labels.get(cc, cc)
+        if cc in eligible.columns:
+            counts = eligible[cc].str.strip().value_counts(dropna=False)
+            print(f"\n  {label} — eligible (n={len(eligible)}):")
+            for val, n in counts.items():
+                print(f"    {str(val):<30} {n}")
+else:
+    print("\nNo 'Complete?' column found in data")
+
+# ── Survey date distribution (from first timestamp column) ────────────────────
+# REDCap standard exports do not include a survey start time, so completion
+# duration cannot be computed. Instead, summarise when surveys were submitted.
+completion_time_df = pd.DataFrame()
+
+if timestamp_cols:
+    ts_col = timestamp_cols[0]
+    print(f"\nTimestamp column: '{ts_col}'")
+    rows = []
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        if grp_df.empty or ts_col not in grp_df.columns:
+            continue
+        parsed = pd.to_datetime(grp_df[ts_col], errors="coerce")
+        valid  = parsed.dropna()
+        if valid.empty:
+            continue
+        print(f"  {grp_name}: {len(valid)} submissions, "
+              f"{valid.min().date()} to {valid.max().date()}")
+        rec_ids = (
+            grp_df.loc[parsed.notna(), grp_df.columns[0]]
+            if record_id_col is None
+            else grp_df.loc[parsed.notna(), record_id_col]
+        )
+        for rid, ts in zip(rec_ids, valid):
+            rows.append({
+                "record_id":   rid,
+                "group":       grp_name,
+                "submitted_at": ts.strftime("%Y-%m-%d %H:%M"),
+                "date":        ts.strftime("%Y-%m-%d"),
+                "day_of_week": ts.strftime("%A"),
+                "hour":        ts.hour,
+            })
+    completion_time_df = pd.DataFrame(rows) if rows else pd.DataFrame()
+else:
+    print("\nNo timestamp column found in data")
 
 # ── Frequency functions ───────────────────────────────────────────────────────
 def freq_single(series, question_text, ordered=None):
@@ -221,9 +332,10 @@ def build_all_frequencies(df_sub):
                 if t is not None:
                     parts.append(t)
         else:
-            # Single-choice
+            # Single-choice — use disambiguated label for Complete? columns
+            label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
-            t = freq_single(df_sub[col], col, ordered)
+            t = freq_single(df_sub[col], label, ordered)
             if t is not None:
                 parts.append(t)
 
@@ -235,12 +347,143 @@ print("\nBuilding frequency tables ...")
 elig_freqs   = build_all_frequencies(eligible)
 inelig_freqs = build_all_frequencies(ineligible)
 
+# ── Build free-text sheet ─────────────────────────────────────────────────────
+
+# Collect non-empty free-text responses in survey column order.
+# Demographic free-text: include both groups. Main survey free-text: eligible only.
+free_text_rows = []
+seen_ft_cols = set()
+for col in df.columns:
+    if col not in free_text_cols or col in seen_ft_cols:
+        continue
+    if col in timestamp_cols or col in system_cols:
+        continue
+    seen_ft_cols.add(col)
+    groups = (
+        [("eligible", eligible), ("ineligible", ineligible)]
+        if is_demo_col(col)
+        else [("eligible", eligible)]
+    )
+    for grp_name, grp_df in groups:
+        if col not in grp_df.columns:
+            continue
+        for _, row in grp_df.iterrows():
+            val = str(row[col]).strip()
+            if val and val.lower() not in ("nan", "", "checked", "unchecked", "0", "1"):
+                rec = {
+                    "group":    grp_name,
+                    "question": short_q(col),
+                    "response": val,
+                    "recode":   "",
+                }
+                if record_id_col and record_id_col in grp_df.columns:
+                    rec = {"record_id": row[record_id_col], **rec}
+                free_text_rows.append(rec)
+
+free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame()
+print(f"  Free-text responses collected: {len(free_text_rows)}")
+
+# ── Build county sheet ────────────────────────────────────────────────────────
+# County is a free-text field and REDCap may duplicate it across arms.
+# Collect individual responses from ALL matching columns across both groups.
+county_pattern = r'what is the county of your practice'
+county_candidates = [
+    c for c in df.columns
+    if re.search(county_pattern, c, re.IGNORECASE)
+    and "(choice=" not in c
+]
+print(f"\nCounty columns found: {len(county_candidates)}")
+
+def normalize_county(val):
+    """Standardize county name: strip, collapse spaces, normalize St./St, title case."""
+    val = val.strip()
+    val = re.sub(r'\s+', ' ', val)
+    val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)  # St. → St
+    val = val.title()
+    return val
+
+county_df = pd.DataFrame()
+county_freq_df = pd.DataFrame()
+
+if county_candidates:
+    county_rows = []
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        for _, row in grp_df.iterrows():
+            raw = ""
+            for col in county_candidates:
+                if col in grp_df.columns:
+                    v = str(row[col]).strip()
+                    if v and v.lower() not in ("nan", ""):
+                        raw = v
+                        break
+            if raw:
+                rec = {
+                    "group":             grp_name,
+                    "county_raw":        raw,
+                    "county_normalized": normalize_county(raw),
+                }
+                if record_id_col and record_id_col in grp_df.columns:
+                    rec = {"record_id": row[record_id_col], **rec}
+                county_rows.append(rec)
+
+    if county_rows:
+        county_df = (
+            pd.DataFrame(county_rows)
+            .sort_values(["group", "county_normalized"], key=lambda s: s.str.lower())
+            .reset_index(drop=True)
+        )
+        print(f"  County responses: {len(county_df)} "
+              f"(eligible: {(county_df['group']=='eligible').sum()}, "
+              f"ineligible: {(county_df['group']=='ineligible').sum()})")
+
+        # Frequency table by normalized county and eligibility group
+        elig_counts   = county_df[county_df["group"]=="eligible"]["county_normalized"].value_counts()
+        inelig_counts = county_df[county_df["group"]=="ineligible"]["county_normalized"].value_counts()
+        elig_n   = len(county_df[county_df["group"]=="eligible"])
+        inelig_n = len(county_df[county_df["group"]=="ineligible"])
+
+        all_counties = sorted(set(elig_counts.index) | set(inelig_counts.index))
+        freq_rows = []
+        for county in all_counties:
+            e_n = int(elig_counts.get(county, 0))
+            i_n = int(inelig_counts.get(county, 0))
+            freq_rows.append({
+                "County":          county,
+                "Eligible n":      e_n,
+                "Eligible %":      round(e_n / elig_n * 100, 1) if elig_n else None,
+                "Ineligible n":    i_n,
+                "Ineligible %":    round(i_n / inelig_n * 100, 1) if inelig_n else None,
+                "Total n":         e_n + i_n,
+            })
+
+        county_freq_df = (
+            pd.DataFrame(freq_rows)
+            .sort_values("Total n", ascending=False)
+            .reset_index(drop=True)
+        )
+        totals = pd.DataFrame([{
+            "County":       "TOTAL",
+            "Eligible n":   elig_n,
+            "Eligible %":   100.0 if elig_n else None,
+            "Ineligible n": inelig_n,
+            "Ineligible %": 100.0 if inelig_n else None,
+            "Total n":      elig_n + inelig_n,
+        }])
+        county_freq_df = pd.concat([county_freq_df, totals], ignore_index=True)
+        print(f"  County frequency: {len(county_freq_df)-1} unique counties")
+else:
+    print("  County column not found — skipping county sheets")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
-    "eligible":   elig_freqs,
-    "ineligible": inelig_freqs,
+    "eligible":        elig_freqs,
+    "ineligible":      inelig_freqs,
+    "county_freq":     county_freq_df,
+    "county":          county_df,
+    "free_text":       free_text_df,
+    "completion_time": completion_time_df,
 }
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
