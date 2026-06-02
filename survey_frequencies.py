@@ -76,11 +76,20 @@ for c in checkbox_cols:
     p = parent_question(c)
     checkbox_groups.setdefault(p, []).append(c)
 
-# Free-text / specify columns — skip
+# Free-text / specify columns — skip by name pattern or high cardinality
+def _looks_like_free_text(series):
+    """True if the column reads as open-ended: nearly all non-empty values are unique."""
+    non_empty = series[series.str.strip().ne("")]
+    if len(non_empty) < 5:
+        return False
+    unique_ratio = non_empty.nunique() / len(non_empty)
+    return unique_ratio > 0.7  # >70% unique values → almost certainly free text
+
 free_text_cols = {
     c for c in df.columns
     if re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
     or c.strip() == "Specify"
+    or (c not in checkbox_cols and _looks_like_free_text(df[c].astype(str)))
 }
 
 # Detect timestamp columns before building skip set
