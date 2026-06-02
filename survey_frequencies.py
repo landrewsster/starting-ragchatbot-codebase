@@ -381,12 +381,65 @@ for col in df.columns:
 free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame()
 print(f"  Free-text responses collected: {len(free_text_rows)}")
 
+# ── Build county sheet ────────────────────────────────────────────────────────
+# Find the first column matching the county pattern
+county_col = next(
+    (c for c in df.columns if re.search(r'what is the county of your practice', c, re.IGNORECASE)),
+    None
+)
+
+county_df = pd.DataFrame()
+if county_col:
+    def _county_counts(grp_df):
+        vals = grp_df[county_col].str.strip().replace("", pd.NA).dropna()
+        counts = vals.value_counts()
+        n_total = len(vals)
+        return counts, n_total
+
+    elig_counts,   elig_n   = _county_counts(eligible)
+    inelig_counts, inelig_n = _county_counts(ineligible)
+
+    all_counties = sorted(set(elig_counts.index) | set(inelig_counts.index))
+
+    rows = []
+    for county in all_counties:
+        e_n = int(elig_counts.get(county, 0))
+        i_n = int(inelig_counts.get(county, 0))
+        rows.append({
+            "County":          county,
+            "Eligible n":      e_n,
+            "Eligible %":      round(e_n / elig_n * 100, 1) if elig_n else None,
+            "Ineligible n":    i_n,
+            "Ineligible %":    round(i_n / inelig_n * 100, 1) if inelig_n else None,
+            "Total n":         e_n + i_n,
+        })
+
+    county_df = (
+        pd.DataFrame(rows)
+        .sort_values("Total n", ascending=False)
+        .reset_index(drop=True)
+    )
+    # Append totals row
+    totals = pd.DataFrame([{
+        "County":       "TOTAL",
+        "Eligible n":   int(elig_counts.sum()),
+        "Eligible %":   100.0 if elig_n else None,
+        "Ineligible n": int(inelig_counts.sum()),
+        "Ineligible %": 100.0 if inelig_n else None,
+        "Total n":      int(elig_counts.sum()) + int(inelig_counts.sum()),
+    }])
+    county_df = pd.concat([county_df, totals], ignore_index=True)
+    print(f"  County: {len(county_df) - 1} counties + totals row")
+else:
+    print("  County column not found — skipping county sheet")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
     "eligible":        elig_freqs,
     "ineligible":      inelig_freqs,
+    "county":          county_df,
     "free_text":       free_text_df,
     "completion_time": completion_time_df,
 }
