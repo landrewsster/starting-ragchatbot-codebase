@@ -27,9 +27,11 @@ cat("Output:", basename(OUTPUT_FILE), "\n")
 available  <- excel_sheets(FREQ_FILE)
 read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, sheet = name) else NULL
 
-eligible    <- read_if("eligible")
-ineligible  <- read_if("ineligible")
-county_freq <- read_if("county_freq")
+eligible         <- read_if("eligible")
+ineligible       <- read_if("ineligible")
+county_freq      <- read_if("county_freq")
+completion_time  <- read_if("completion_time")
+completion_summ  <- read_if("completion_summary")
 
 # ── Question classification ───────────────────────────────────────────────────
 DEMO_PATTERNS <- c(
@@ -341,6 +343,54 @@ if (!is.null(county_freq) && nrow(county_freq) > 0) {
     body_add_par("County of Practice", style = "heading 2") %>%
     body_add_flextable(make_county_table(county_freq)) %>%
     body_add_par("", style = "Normal")
+}
+
+# 6. Completion time
+if (!is.null(completion_time) && nrow(completion_time) > 0) {
+  ct_stats <- completion_time %>%
+    group_by(group) %>%
+    summarise(
+      n      = n(),
+      Median = median(duration_minutes, na.rm = TRUE),
+      Mean   = round(mean(duration_minutes, na.rm = TRUE), 1),
+      Min    = min(duration_minutes, na.rm = TRUE),
+      Max    = max(duration_minutes, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(group = str_to_title(group)) %>%
+    rename(Group = group)
+
+  ft_stats <- flextable(ct_stats) %>%
+    theme_booktabs() %>%
+    bold(part = "header") %>%
+    fontsize(size = 10, part = "all") %>%
+    font(fontname = "Calibri", part = "all") %>%
+    align(j = -1, align = "right", part = "all") %>%
+    add_footer_lines("All times in minutes. Median recommended over mean due to outliers (survey left open). Excludes respondents missing timestamps.") %>%
+    fontsize(size = 9, part = "footer") %>%
+    italic(part = "footer") %>%
+    align(align = "left", part = "footer") %>%
+    autofit()
+
+  doc <- doc %>%
+    body_add_par("Completion Time", style = "heading 2") %>%
+    body_add_flextable(ft_stats) %>%
+    body_add_par("", style = "Normal")
+
+  if (!is.null(completion_summ) && nrow(completion_summ) > 0) {
+    ft_buckets <- flextable(completion_summ) %>%
+      theme_booktabs() %>%
+      bold(part = "header") %>%
+      fontsize(size = 10, part = "all") %>%
+      font(fontname = "Calibri", part = "all") %>%
+      align(j = -1, align = "right", part = "all") %>%
+      autofit()
+
+    doc <- doc %>%
+      body_add_par("Distribution of Completion Times", style = "heading 3") %>%
+      body_add_flextable(ft_buckets) %>%
+      body_add_par("", style = "Normal")
+  }
 }
 
 # ── Save ──────────────────────────────────────────────────────────────────────
