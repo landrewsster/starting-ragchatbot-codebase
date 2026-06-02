@@ -45,7 +45,7 @@ county_recoded <- county_raw %>%
       # str_detect(str_to_lower(county_raw), "st\\.?\\s*louis")   ~ "St Louis",
       # str_detect(str_to_lower(county_raw), "dakota")            ~ "Dakota",
       # ── Fallback: use the normalized value from Python ──────────────────────
-      TRUE ~ county_normalized
+      .default = county_normalized
     )
   )
 
