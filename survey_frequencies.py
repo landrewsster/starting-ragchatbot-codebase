@@ -83,12 +83,18 @@ free_text_cols = {
     or c.strip() == "Specify"
 }
 
-# System / admin columns — skip
+# System / admin columns — skip (Record ID only; Complete? is included in analysis)
 system_cols = {
     c for c in df.columns
-    if c.strip() in ("Record ID", "Complete?", "")
-    or re.match(r'complete\??\s*$', c.strip(), re.IGNORECASE)
+    if c.strip() in ("Record ID", "")
 }
+
+# Find completion status column(s) — REDCap names them "<Form> Complete?"
+complete_cols = [
+    c for c in df.columns
+    if re.search(r'complete\??\s*$', c.strip(), re.IGNORECASE)
+    and c.strip() not in ("Record ID", "")
+]
 
 skip = set(checkbox_cols) | free_text_cols | system_cols
 
@@ -143,6 +149,18 @@ else:
     eligible   = df.copy()
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
+
+# ── Completion summary ────────────────────────────────────────────────────────
+if complete_cols:
+    print(f"\nCompletion status columns found: {complete_cols}")
+    for cc in complete_cols:
+        if cc in eligible.columns:
+            counts = eligible[cc].str.strip().value_counts(dropna=False)
+            print(f"\n  [{cc}] — eligible respondents (n={len(eligible)}):")
+            for val, n in counts.items():
+                print(f"    {str(val):<30} {n}")
+else:
+    print("\nNo 'Complete?' column found in data")
 
 # ── Frequency functions ───────────────────────────────────────────────────────
 def freq_single(series, question_text, ordered=None):
