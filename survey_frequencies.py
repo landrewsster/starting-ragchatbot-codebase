@@ -382,16 +382,27 @@ free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame(
 print(f"  Free-text responses collected: {len(free_text_rows)}")
 
 # ── Build county sheet ────────────────────────────────────────────────────────
-# Find the first column matching the county pattern
-county_col = next(
-    (c for c in df.columns if re.search(r'what is the county of your practice', c, re.IGNORECASE)),
-    None
-)
+# Find ALL columns matching the county pattern and pick the one with the most
+# non-empty values (handles cases where REDCap duplicates the question per arm)
+county_pattern = r'what is the county of your practice'
+county_candidates = [c for c in df.columns if re.search(county_pattern, c, re.IGNORECASE)]
+print(f"\nCounty column candidates: {county_candidates}")
+
+county_col = None
+if county_candidates:
+    county_col = max(
+        county_candidates,
+        key=lambda c: df[c].str.strip().ne("").sum()
+    )
+    print(f"  Using: '{county_col[:80]}'")
+    print(f"  Non-empty values — eligible: {eligible[county_col].str.strip().ne('').sum()}, "
+          f"ineligible: {ineligible[county_col].str.strip().ne('').sum()}")
 
 county_df = pd.DataFrame()
 if county_col:
     def _county_counts(grp_df):
-        vals = grp_df[county_col].str.strip().replace("", pd.NA).dropna()
+        vals = grp_df[county_col].str.strip()
+        vals = vals[vals != ""]
         counts = vals.value_counts()
         n_total = len(vals)
         return counts, n_total
