@@ -392,22 +392,34 @@ county_candidates = [
 ]
 print(f"\nCounty columns found: {len(county_candidates)}")
 
+def normalize_county(val):
+    """Standardize county name: strip, collapse spaces, normalize St./St, title case."""
+    val = val.strip()
+    val = re.sub(r'\s+', ' ', val)
+    val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)  # St. → St
+    val = val.title()
+    return val
+
 county_df = pd.DataFrame()
+county_freq_df = pd.DataFrame()
+
 if county_candidates:
     county_rows = []
     for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
-        # Collect one response per respondent — use the first non-empty county
-        # column for each row (handles arm-specific duplicates)
         for _, row in grp_df.iterrows():
-            val = ""
+            raw = ""
             for col in county_candidates:
                 if col in grp_df.columns:
                     v = str(row[col]).strip()
                     if v and v.lower() not in ("nan", ""):
-                        val = v
+                        raw = v
                         break
-            if val:
-                rec = {"group": grp_name, "county": val, "recode": ""}
+            if raw:
+                rec = {
+                    "group":             grp_name,
+                    "county_raw":        raw,
+                    "county_normalized": normalize_county(raw),
+                }
                 if record_id_col and record_id_col in grp_df.columns:
                     rec = {"record_id": row[record_id_col], **rec}
                 county_rows.append(rec)
@@ -415,14 +427,50 @@ if county_candidates:
     if county_rows:
         county_df = (
             pd.DataFrame(county_rows)
-            .sort_values(["group", "county"], key=lambda s: s.str.lower())
+            .sort_values(["group", "county_normalized"], key=lambda s: s.str.lower())
             .reset_index(drop=True)
         )
         print(f"  County responses: {len(county_df)} "
               f"(eligible: {(county_df['group']=='eligible').sum()}, "
               f"ineligible: {(county_df['group']=='ineligible').sum()})")
+
+        # Frequency table by normalized county and eligibility group
+        elig_counts   = county_df[county_df["group"]=="eligible"]["county_normalized"].value_counts()
+        inelig_counts = county_df[county_df["group"]=="ineligible"]["county_normalized"].value_counts()
+        elig_n   = len(county_df[county_df["group"]=="eligible"])
+        inelig_n = len(county_df[county_df["group"]=="ineligible"])
+
+        all_counties = sorted(set(elig_counts.index) | set(inelig_counts.index))
+        freq_rows = []
+        for county in all_counties:
+            e_n = int(elig_counts.get(county, 0))
+            i_n = int(inelig_counts.get(county, 0))
+            freq_rows.append({
+                "County":          county,
+                "Eligible n":      e_n,
+                "Eligible %":      round(e_n / elig_n * 100, 1) if elig_n else None,
+                "Ineligible n":    i_n,
+                "Ineligible %":    round(i_n / inelig_n * 100, 1) if inelig_n else None,
+                "Total n":         e_n + i_n,
+            })
+
+        county_freq_df = (
+            pd.DataFrame(freq_rows)
+            .sort_values("Total n", ascending=False)
+            .reset_index(drop=True)
+        )
+        totals = pd.DataFrame([{
+            "County":       "TOTAL",
+            "Eligible n":   elig_n,
+            "Eligible %":   100.0 if elig_n else None,
+            "Ineligible n": inelig_n,
+            "Ineligible %": 100.0 if inelig_n else None,
+            "Total n":      elig_n + inelig_n,
+        }])
+        county_freq_df = pd.concat([county_freq_df, totals], ignore_index=True)
+        print(f"  County frequency: {len(county_freq_df)-1} unique counties")
 else:
-    print("  County column not found — skipping county sheet")
+    print("  County column not found — skipping county sheets")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
@@ -430,6 +478,7 @@ print(f"\nWriting: {OUTPUT_FILE.name}")
 sheets = {
     "eligible":        elig_freqs,
     "ineligible":      inelig_freqs,
+    "county_freq":     county_freq_df,
     "county":          county_df,
     "free_text":       free_text_df,
     "completion_time": completion_time_df,
