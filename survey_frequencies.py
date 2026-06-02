@@ -195,6 +195,9 @@ else:
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
 
+# Record ID column (needed in both timestamp and free-text sections)
+record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
+
 # ── Completion summary ────────────────────────────────────────────────────────
 if complete_cols:
     print(f"\nCompletion status columns found: {complete_cols}")
@@ -207,34 +210,41 @@ if complete_cols:
 else:
     print("\nNo 'Complete?' column found in data")
 
-# ── Completion time ───────────────────────────────────────────────────────────
+# ── Survey date distribution (from first timestamp column) ────────────────────
+# REDCap standard exports do not include a survey start time, so completion
+# duration cannot be computed. Instead, summarise when surveys were submitted.
 completion_time_df = pd.DataFrame()
 
-print(f"\nTimestamp columns detected: {timestamp_cols if timestamp_cols else 'none'}")
-
-if len(timestamp_cols) >= 2:
-    # Assume first = start, second = end (REDCap order)
-    start_col, end_col = timestamp_cols[0], timestamp_cols[1]
-    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
-        if grp_df.empty:
-            continue
-        starts = pd.to_datetime(grp_df[start_col], errors="coerce")
-        ends   = pd.to_datetime(grp_df[end_col],   errors="coerce")
-        mins   = (ends - starts).dt.total_seconds() / 60
-        valid  = mins.dropna()
-        valid  = valid[valid >= 0]  # drop negative (data errors)
-        if not valid.empty:
-            print(f"\n  Completion time — {grp_name} (n={len(valid)} with both timestamps):")
-            print(f"    Mean   : {valid.mean():.1f} min")
-            print(f"    Median : {valid.median():.1f} min")
-            print(f"    Min    : {valid.min():.1f} min")
-            print(f"    Max    : {valid.max():.1f} min")
-elif len(timestamp_cols) == 1:
-    # Only one timestamp — report it as survey date distribution
+if timestamp_cols:
     ts_col = timestamp_cols[0]
-    parsed = pd.to_datetime(eligible[ts_col], errors="coerce")
-    print(f"\n  Single timestamp column found ('{ts_col}') — cannot compute duration.")
-    print(f"  Survey dates range: {parsed.min()} to {parsed.max()}")
+    print(f"\nTimestamp column: '{ts_col}'")
+    rows = []
+    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
+        if grp_df.empty or ts_col not in grp_df.columns:
+            continue
+        parsed = pd.to_datetime(grp_df[ts_col], errors="coerce")
+        valid  = parsed.dropna()
+        if valid.empty:
+            continue
+        print(f"  {grp_name}: {len(valid)} submissions, "
+              f"{valid.min().date()} to {valid.max().date()}")
+        rec_ids = (
+            grp_df.loc[parsed.notna(), grp_df.columns[0]]
+            if record_id_col is None
+            else grp_df.loc[parsed.notna(), record_id_col]
+        )
+        for rid, ts in zip(rec_ids, valid):
+            rows.append({
+                "record_id":   rid,
+                "group":       grp_name,
+                "submitted_at": ts.strftime("%Y-%m-%d %H:%M"),
+                "date":        ts.strftime("%Y-%m-%d"),
+                "day_of_week": ts.strftime("%A"),
+                "hour":        ts.hour,
+            })
+    completion_time_df = pd.DataFrame(rows) if rows else pd.DataFrame()
+else:
+    print("\nNo timestamp column found in data")
 
 # ── Frequency functions ───────────────────────────────────────────────────────
 def freq_single(series, question_text, ordered=None):
@@ -316,31 +326,7 @@ print("\nBuilding frequency tables ...")
 elig_freqs   = build_all_frequencies(eligible)
 inelig_freqs = build_all_frequencies(ineligible)
 
-# ── Build completion time sheet ───────────────────────────────────────────────
-completion_time_rows = []
-
-if len(timestamp_cols) >= 2:
-    start_col, end_col = timestamp_cols[0], timestamp_cols[1]
-    for grp_name, grp_df in [("eligible", eligible), ("ineligible", ineligible)]:
-        if grp_df.empty:
-            continue
-        starts = pd.to_datetime(grp_df[start_col], errors="coerce")
-        ends   = pd.to_datetime(grp_df[end_col],   errors="coerce")
-        mins   = (ends - starts).dt.total_seconds() / 60
-        # Attach per-record completion times
-        for i, (m, s, e) in enumerate(zip(mins, starts, ends)):
-            completion_time_rows.append({
-                "group":       grp_name,
-                "start_time":  str(s) if pd.notna(s) else "",
-                "end_time":    str(e) if pd.notna(e) else "",
-                "minutes":     round(m, 1) if pd.notna(m) and m >= 0 else None,
-            })
-
-completion_time_df = pd.DataFrame(completion_time_rows) if completion_time_rows else pd.DataFrame()
-
 # ── Build free-text sheet ─────────────────────────────────────────────────────
-# Find Record ID column if present
-record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
 
 # Collect non-empty free-text responses in survey column order.
 # Demographic free-text: include both groups. Main survey free-text: eligible only.
