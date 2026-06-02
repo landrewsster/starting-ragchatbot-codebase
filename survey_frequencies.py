@@ -87,9 +87,12 @@ def _looks_like_free_text(series):
 
 free_text_cols = {
     c for c in df.columns
-    if re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
-    or c.strip() == "Specify"
-    or (c not in checkbox_cols and _looks_like_free_text(df[c].astype(str)))
+    if c not in checkbox_cols  # never treat binary checkbox columns as free text
+    and (
+        re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
+        or c.strip() == "Specify"
+        or _looks_like_free_text(df[c].astype(str))
+    )
 }
 
 # Detect timestamp columns before building skip set
@@ -335,7 +338,7 @@ for col in df.columns:
             continue
         for _, row in grp_df.iterrows():
             val = str(row[col]).strip()
-            if val and val.lower() not in ("nan", ""):
+            if val and val.lower() not in ("nan", "", "checked", "unchecked", "0", "1"):
                 rec = {
                     "group":    grp_name,
                     "question": short_q(col),
