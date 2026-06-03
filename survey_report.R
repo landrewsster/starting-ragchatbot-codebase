@@ -17,7 +17,7 @@ library(tidyr)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
 
-FREQ_FILE   <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-01_1832_frequencies.xlsx")
+FREQ_FILE   <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-01_1832_EDITED_frequencies.xlsx")
 OUTPUT_FILE <- sub("\\.xlsx$", "_report.docx", FREQ_FILE)
 
 cat("Input :", basename(FREQ_FILE), "\n")
