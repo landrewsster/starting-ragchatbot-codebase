@@ -496,18 +496,16 @@ print(f"\nCounty columns found: {len(county_candidates)}")
 
 def normalize_county(val):
     """Basic standardization: strip, collapse spaces, St. → St, title case,
-    and remove the word 'County' anywhere (e.g. 'Washington County' → 'Washington',
-    'Pima County Az' → 'Pima Az')."""
+    and strip trailing ' County' suffix (e.g. 'Washington County' → 'Washington')."""
     val = val.strip()
     val = re.sub(r'\s+', ' ', val)
     val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)
-    val = re.sub(r'\bCounty\b', '', val, flags=re.IGNORECASE)  # remove "County" anywhere
-    val = re.sub(r'\s+', ' ', val).strip()  # clean up extra spaces left by removal
+    val = re.sub(r'\s+County\s*$', '', val, flags=re.IGNORECASE)  # strip trailing " County"
     val = val.title()
     return val
 
 # ── County recode rules ───────────────────────────────────────────────────────
-# Applied after normalize_county (which title-cases and strips " County" suffix).
+# Applied after normalize_county (which title-cases and strips trailing " County").
 # Comparisons are case-insensitive (keys stored lower-case).
 # "" (blank)  = invalid entry, excluded from county frequency table.
 # "N/A"       = respondent does not practice in a Minnesota county
@@ -524,9 +522,10 @@ COUNTY_RECODES = {
     "mcleod":               "McLeod",       # title-case produces Mcleod; correct to McLeod
     "lesueur":              "Le Sueur",     # title-case produces Lesueur; correct to Le Sueur
 
-    # Out-of-state responses (note: " County" suffix already stripped by normalize_county)
+    # Out-of-state responses
     "pima":                 "N/A",   # Pima County, AZ — out of state
-    "pima az":              "N/A",   # Pima County AZ — out of state
+    "pima az":              "N/A",   # Pima County AZ — out of state (trailing "County" already stripped)
+    "pima county az":       "N/A",   # Pima County Az — out of state (explicit case)
     "la crosse, wisconsin": "N/A",   # La Crosse County, WI
     "washburn wi":          "N/A",   # Washburn County, WI
     "st croix wi":          "N/A",   # St. Croix County, WI
