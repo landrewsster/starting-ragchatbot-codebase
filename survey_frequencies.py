@@ -180,9 +180,14 @@ complete_cols = [
 
 def _complete_col_label(col):
     """Return a disambiguated label for a Complete? column.
-    Checks COMPLETE_COL_LABEL_OVERRIDES first, then auto-detects from preceding column."""
-    if col in COMPLETE_COL_LABEL_OVERRIDES:
-        return COMPLETE_COL_LABEL_OVERRIDES[col]
+    Checks COMPLETE_COL_LABEL_OVERRIDES first (case-insensitive), then auto-detects
+    from the preceding column."""
+    override = COMPLETE_COL_LABEL_OVERRIDES.get(col) or \
+               COMPLETE_COL_LABEL_OVERRIDES.get(col.strip()) or \
+               next((v for k, v in COMPLETE_COL_LABEL_OVERRIDES.items()
+                     if k.lower() == col.strip().lower()), None)
+    if override is not None:
+        return override
     idx = list(df.columns).index(col)
     for i in range(idx - 1, -1, -1):
         prev = df.columns[i]
