@@ -321,8 +321,8 @@ for grp_name, grp_df, end_col in [
         print(f"  WARNING: end column not found for {grp_name}")
         continue
 
-    start    = pd.to_datetime(grp_df[start_col], errors="coerce")
-    end      = pd.to_datetime(grp_df[end_col],   errors="coerce")
+    start    = pd.to_datetime(grp_df[start_col], errors="coerce", format="mixed")
+    end      = pd.to_datetime(grp_df[end_col],   errors="coerce", format="mixed")
     duration = (end - start).dt.total_seconds() / 60
 
     valid = start.notna() & end.notna() & (duration >= 0)
