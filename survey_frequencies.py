@@ -157,14 +157,19 @@ COMPLETE_COL_LABEL_OVERRIDES = {
     "Inel_demo_complete": "Complete? [after: ineligible demographics]",
 }
 
-# Fallback column names for completion-time roles when timestamp columns are
-# unnamed in the REDCap export (appear as "Unnamed: N").
-# Named columns (screener_start, survey_end, inel_demo_end) take priority;
-# these overrides are only used when the named column is not found.
+# Fallback column names for all 6 timestamp roles when columns are unnamed
+# in the REDCap export (appear as "Unnamed: N").
+# Named columns (screener_start, survey_end, etc.) take priority over these.
+# Only screener_start / survey_end / inel_demo_end are used for completion time;
+# the others are listed here for documentation and future use.
+# Set a value to None if the index is unknown — it won't affect computation.
 TIMESTAMP_COL_OVERRIDES = {
-    "screener_start": "Unnamed: 1",    # start timestamp — all respondents
-    "survey_end":     "Unnamed: 249",  # end timestamp — eligible respondents
-    "inel_demo_end":  "Unnamed: 222",  # end timestamp — ineligible respondents
+    "screener_start":  "Unnamed: 1",    # start timestamp — all respondents
+    "screener_end":    None,             # end of screener — set to "Unnamed: N" if known
+    "survey_start":    None,             # start of eligible survey — set to "Unnamed: N" if known
+    "survey_end":      "Unnamed: 249",  # end timestamp — eligible respondents
+    "inel_demo_start": None,             # start of ineligible demographics — set to "Unnamed: N" if known
+    "inel_demo_end":   "Unnamed: 222",  # end timestamp — ineligible respondents
 }
 
 complete_cols = [
