@@ -95,14 +95,20 @@ make_table <- function(df) {
 
 # Two-group side-by-side table with optional footer
 make_wide_table <- function(df, footer = NULL) {
-  num_cols <- names(df)[sapply(df, is.numeric)]
+  num_cols  <- names(df)[sapply(df, is.numeric)]
+  resp_cols <- setdiff(names(df), num_cols)
+  # Fit within a 6.5-inch page: numeric cols narrow, Response column gets the rest
+  num_width  <- 0.65
+  resp_width <- max(2.5, 6.5 - length(num_cols) * num_width)
   ft <- flextable(df) %>%
     theme_booktabs() %>%
     bold(part = "header") %>%
     fontsize(size = 10, part = "all") %>%
     font(fontname = "Calibri", part = "all") %>%
-    align(j = num_cols, align = "right", part = "all") %>%
-    autofit()
+    align(j = num_cols,  align = "right", part = "all") %>%
+    align(j = resp_cols, align = "left",  part = "all") %>%
+    width(j = num_cols,  width = num_width) %>%
+    width(j = resp_cols, width = resp_width)
   if (!is.null(footer)) {
     ft <- ft %>%
       add_footer_lines(footer) %>%
