@@ -149,6 +149,14 @@ system_cols = {
 # Label each by the last substantive question before it so the section is clear.
 COMPLETE_RE = re.compile(r'complete\??\s*$|_complete\s*$', re.IGNORECASE)
 
+# Optional manual label overrides — keys are exact column names from the CSV (case-sensitive).
+# Use these when the auto-generated label isn't specific enough.
+COMPLETE_COL_LABEL_OVERRIDES = {
+    "Screener_complete":  "Complete? [after: In an average week, how many days do you see patients either…]",
+    "Survey_complete":    "Complete? [after: full eligible survey]",
+    "Inel_demo_complete": "Complete? [after: ineligible demographics]",
+}
+
 complete_cols = [
     c for c in df.columns
     if COMPLETE_RE.search(c.strip())
@@ -156,7 +164,10 @@ complete_cols = [
 ]
 
 def _complete_col_label(col):
-    """Return 'Complete? [after: <preceding question>]' for disambiguation."""
+    """Return a disambiguated label for a Complete? column.
+    Checks COMPLETE_COL_LABEL_OVERRIDES first, then auto-detects from preceding column."""
+    if col in COMPLETE_COL_LABEL_OVERRIDES:
+        return COMPLETE_COL_LABEL_OVERRIDES[col]
     idx = list(df.columns).index(col)
     for i in range(idx - 1, -1, -1):
         prev = df.columns[i]
