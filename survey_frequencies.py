@@ -168,7 +168,15 @@ def _complete_col_label(col):
 
 complete_col_labels = {c: _complete_col_label(c) for c in complete_cols}
 
-skip = set(checkbox_cols) | free_text_cols | system_cols
+# County columns are handled separately in the county_freq sheet (with recoding).
+# Exclude them from the eligible/ineligible frequency tables to avoid showing raw values.
+county_skip_cols = {
+    c for c in df.columns
+    if re.search(r'what is the county of your practice', c, re.IGNORECASE)
+    and '(choice=' not in c
+}
+
+skip = set(checkbox_cols) | free_text_cols | system_cols | county_skip_cols
 
 # Single-choice columns (everything not checkbox, free-text, or system)
 single_cols = [c for c in df.columns if c not in skip]

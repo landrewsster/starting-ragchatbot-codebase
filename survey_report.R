@@ -42,7 +42,6 @@ DEMO_PATTERNS <- c(
   "what is your secondary or sub.specialty",
   "which of the following best describes your primary practice setting",
   "how would you describe the insurance status",
-  "what is the county of your practice",
   "what is your gender",
   "what is your age",
   "what is your race/ethnicity"
