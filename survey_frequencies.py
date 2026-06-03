@@ -483,6 +483,11 @@ COUNTY_RECODES = {
     # Health system name entered instead of county
     "mille lacs health":    "Mille Lacs",
 
+    # Spelling / capitalization fixes
+    "ottertail":            "Otter Tail",   # common misspelling of Otter Tail County
+    "mcleod":               "McLeod",       # title-case produces Mcleod; correct to McLeod
+    "lesueur":              "Le Sueur",     # title-case produces Lesueur; correct to Le Sueur
+
     # Out-of-state responses (note: " County" suffix already stripped by normalize_county)
     "pima":                 "N/A",   # Pima County, AZ — out of state
     "pima az":              "N/A",   # Pima County AZ — out of state
