@@ -461,15 +461,17 @@ county_candidates = [
 print(f"\nCounty columns found: {len(county_candidates)}")
 
 def normalize_county(val):
-    """Basic standardization: strip, collapse spaces, St. → St, title case."""
+    """Basic standardization: strip, collapse spaces, St. → St, title case,
+    and strip trailing ' County' suffix (e.g. 'Washington County' → 'Washington')."""
     val = val.strip()
     val = re.sub(r'\s+', ' ', val)
     val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)
+    val = re.sub(r'\s+County\s*$', '', val, flags=re.IGNORECASE)  # strip trailing " County"
     val = val.title()
     return val
 
 # ── County recode rules ───────────────────────────────────────────────────────
-# Applied after normalize_county (which title-cases everything).
+# Applied after normalize_county (which title-cases and strips " County" suffix).
 # Comparisons are case-insensitive (keys stored lower-case).
 # "" (blank)  = invalid entry, excluded from county frequency table.
 # "N/A"       = respondent does not practice in a Minnesota county
@@ -481,10 +483,9 @@ COUNTY_RECODES = {
     # Health system name entered instead of county
     "mille lacs health":    "Mille Lacs",
 
-    # "County" suffix — standardize to county name only
-    "pima county":          "Pima",
-
-    # Out-of-state responses
+    # Out-of-state responses (note: " County" suffix already stripped by normalize_county)
+    "pima":                 "N/A",   # Pima County, AZ — out of state
+    "pima az":              "N/A",   # Pima County AZ — out of state
     "la crosse, wisconsin": "N/A",   # La Crosse County, WI
     "washburn wi":          "N/A",   # Washburn County, WI
     "st croix wi":          "N/A",   # St. Croix County, WI
