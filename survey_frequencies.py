@@ -157,6 +157,16 @@ COMPLETE_COL_LABEL_OVERRIDES = {
     "Inel_demo_complete": "Complete? [after: ineligible demographics]",
 }
 
+# Fallback column names for completion-time roles when timestamp columns are
+# unnamed in the REDCap export (appear as "Unnamed: N").
+# Named columns (screener_start, survey_end, inel_demo_end) take priority;
+# these overrides are only used when the named column is not found.
+TIMESTAMP_COL_OVERRIDES = {
+    "screener_start": "Unnamed: 1",    # start timestamp — all respondents
+    "survey_end":     "Unnamed: 249",  # end timestamp — eligible respondents
+    "inel_demo_end":  "Unnamed: 222",  # end timestamp — ineligible respondents
+}
+
 complete_cols = [
     c for c in df.columns
     if COMPLETE_RE.search(c.strip())
@@ -265,9 +275,17 @@ else:
 def _find_col(columns, pattern):
     return next((c for c in columns if re.search(pattern, c, re.IGNORECASE)), None)
 
-start_col      = _find_col(df.columns, r'^screener_start$')
-end_elig_col   = _find_col(df.columns, r'^survey_end$')
-end_inelig_col = _find_col(df.columns, r'^inel_demo_end$')
+def _find_ts_col(role, pattern):
+    """Find a timestamp column: named pattern takes priority, then TIMESTAMP_COL_OVERRIDES."""
+    found = _find_col(df.columns, pattern)
+    if found:
+        return found
+    override = TIMESTAMP_COL_OVERRIDES.get(role)
+    return override if (override and override in df.columns) else None
+
+start_col      = _find_ts_col("screener_start", r'^screener_start$')
+end_elig_col   = _find_ts_col("survey_end",     r'^survey_end$')
+end_inelig_col = _find_ts_col("inel_demo_end",  r'^inel_demo_end$')
 
 print(f"\nCompletion time columns:")
 print(f"  Start       : {start_col or 'NOT FOUND'}")
