@@ -462,11 +462,13 @@ print(f"\nCounty columns found: {len(county_candidates)}")
 
 def normalize_county(val):
     """Basic standardization: strip, collapse spaces, St. → St, title case,
-    and strip trailing ' County' suffix (e.g. 'Washington County' → 'Washington')."""
+    and remove the word 'County' anywhere (e.g. 'Washington County' → 'Washington',
+    'Pima County Az' → 'Pima Az')."""
     val = val.strip()
     val = re.sub(r'\s+', ' ', val)
     val = re.sub(r'\bSt\.', 'St', val, flags=re.IGNORECASE)
-    val = re.sub(r'\s+County\s*$', '', val, flags=re.IGNORECASE)  # strip trailing " County"
+    val = re.sub(r'\bCounty\b', '', val, flags=re.IGNORECASE)  # remove "County" anywhere
+    val = re.sub(r'\s+', ' ', val).strip()  # clean up extra spaces left by removal
     val = val.title()
     return val
 
