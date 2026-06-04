@@ -1,14 +1,17 @@
 # survey_likert_chart.R
 #
-# Diverging bar chart for Likert-scale attitude questions.
-# Agree (SA+A) on right, Disagree (SD+D) on left, Don't know as separate bar.
+# Produces two diverging bar charts for Likert-scale attitude questions:
+#   1. _likert_collapsed.png   — Agree (SA+A) vs Disagree (SD+D)
+#   2. _likert_uncollapsed.png — all four levels shown separately
+#
+# Bar widths are proportional to %; bar labels show n (counts).
+# Don't know shown as a separate gray bar to the right.
 #
 # Install packages once:
-#   install.packages(c("readxl", "dplyr", "tidyr", "ggplot2", "stringr", "forcats"))
+#   install.packages(c("readxl", "dplyr", "ggplot2", "stringr", "forcats"))
 
 library(readxl)
 library(dplyr)
-library(tidyr)
 library(ggplot2)
 library(stringr)
 library(forcats)
@@ -16,12 +19,14 @@ library(forcats)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE      <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
 FREQ_FILE <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-01_1832_EDITED_frequencies.xlsx")
-OUT_FILE  <- sub("\\.xlsx$", "_likert_chart.png", FREQ_FILE)
+OUT_COLLAPSED   <- sub("\\.xlsx$", "_likert_collapsed.png",   FREQ_FILE)
+OUT_UNCOLLAPSED <- sub("\\.xlsx$", "_likert_uncollapsed.png", FREQ_FILE)
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 AGREE_LEVELS    <- c("Strongly agree", "Agree")
 DISAGREE_LEVELS <- c("Strongly disagree", "Disagree")
 DK_LEVEL        <- "Don't know"
+ALL_LEVELS      <- c(DISAGREE_LEVELS, AGREE_LEVELS, DK_LEVEL)
 
 LIKERT_PATTERNS <- c(
   "there is no safe level",
@@ -33,7 +38,6 @@ LIKERT_PATTERNS <- c(
   "clinicians should screen"
 )
 
-# Short labels — update if full question text differs from these guesses
 SHORT_LABELS <- list(
   "no safe level"            = "No safe level of cannabis\nduring pregnancy",
   "risks.+outweigh"          = "Risks outweigh benefits\nfor therapeutic use",
@@ -44,13 +48,22 @@ SHORT_LABELS <- list(
   "clinicians should screen" = "Clinicians should screen\nfor cannabis use"
 )
 
-COLORS <- c(
+COLORS_COLLAPSED <- c(
   "Agree"      = "#2d7d46",
   "Disagree"   = "#c0392b",
   "Don't know" = "#aaaaaa"
 )
 
-DK_GAP <- 4   # visual gap (percentage points) between Agree and DK bars
+COLORS_UNCOLLAPSED <- c(
+  "Strongly agree"    = "#1a5c32",
+  "Agree"             = "#74c476",
+  "Disagree"          = "#f4a261",
+  "Strongly disagree" = "#c0392b",
+  "Don't know"        = "#aaaaaa"
+)
+
+DK_GAP   <- 4    # gap (% units) between Agree bar and DK bar
+MIN_W_N  <- 5    # minimum bar width (% units) to show n label
 
 # ── Load and filter ───────────────────────────────────────────────────────────
 eligible <- read_excel(FREQ_FILE, sheet = "eligible")
@@ -62,160 +75,227 @@ is_likert_q <- function(q) {
 
 raw <- eligible %>%
   filter(sapply(Question, is_likert_q)) %>%
-  filter(Response %in% c(AGREE_LEVELS, DISAGREE_LEVELS, DK_LEVEL)) %>%
+  filter(Response %in% ALL_LEVELS) %>%
   mutate(n = as.numeric(n))
 
-if (nrow(raw) == 0) stop("No Likert rows found — check FREQ_FILE path and sheet.")
+if (nrow(raw) == 0) stop("No Likert rows found — check FREQ_FILE path.")
 
-# ── Short labels ──────────────────────────────────────────────────────────────
+# Short labels
 get_short_label <- function(q) {
   for (pat in names(SHORT_LABELS))
     if (str_detect(str_to_lower(q), regex(pat, ignore_case = TRUE)))
       return(SHORT_LABELS[[pat]])
   str_wrap(q, width = 45)
 }
-
 q_label_map <- raw %>%
   distinct(Question) %>%
   mutate(q_short = sapply(Question, get_short_label))
-
 raw <- raw %>% left_join(q_label_map, by = "Question")
 
-# ── Collapse to Agree / Disagree / Don't know ─────────────────────────────────
-df <- raw %>%
-  mutate(category = case_when(
-    Response %in% AGREE_LEVELS    ~ "Agree",
-    Response %in% DISAGREE_LEVELS ~ "Disagree",
-    TRUE                          ~ "Don't know"
-  )) %>%
-  group_by(Question, q_short, category) %>%
-  summarise(n = sum(n, na.rm = TRUE), .groups = "drop")
+# ── Helper: build plot data ───────────────────────────────────────────────────
+# Returns a data frame with xmin/xmax/xcenter/bar_width/n_count per bar segment,
+# plus an anchors data frame for the n= annotations.
 
-# Percentages: Agree/Disagree out of non-DK respondents; DK out of all
-df <- df %>%
-  group_by(Question) %>%
-  mutate(
-    n_no_dk = sum(n[category != "Don't know"]),
-    n_all   = sum(n),
-    pct     = ifelse(category == "Don't know",
-                     n / n_all   * 100,
-                     n / n_no_dk * 100)
-  ) %>%
-  ungroup()
+build_plot_data <- function(collapsed) {
 
-# ── Bar x-positions ───────────────────────────────────────────────────────────
-# Disagree: xmin = -disagree_pct, xmax = 0
-# Agree:    xmin = 0,             xmax = agree_pct
-# DK:       xmin = agree_pct + DK_GAP, xmax = agree_pct + DK_GAP + dk_pct
+  if (collapsed) {
+    # Collapse SA+A → Agree, SD+D → Disagree
+    df <- raw %>%
+      mutate(category = case_when(
+        Response %in% AGREE_LEVELS    ~ "Agree",
+        Response %in% DISAGREE_LEVELS ~ "Disagree",
+        TRUE                          ~ "Don't know"
+      )) %>%
+      group_by(Question, q_short, category) %>%
+      summarise(n_count = sum(n, na.rm = TRUE), .groups = "drop")
 
-anchors <- df %>%
-  group_by(Question, q_short) %>%
-  summarise(
-    agree_pct    = sum(pct[category == "Agree"],      na.rm = TRUE),
-    disagree_pct = sum(pct[category == "Disagree"],   na.rm = TRUE),
-    dk_pct       = sum(pct[category == "Don't know"], na.rm = TRUE),
-    n_no_dk      = first(n_no_dk),
-    .groups = "drop"
-  )
+    df <- df %>%
+      group_by(Question) %>%
+      mutate(
+        n_no_dk = sum(n_count[category != "Don't know"]),
+        n_all   = sum(n_count),
+        pct     = ifelse(category == "Don't know",
+                         n_count / n_all   * 100,
+                         n_count / n_no_dk * 100)
+      ) %>%
+      ungroup()
 
-# ── Question order (highest % agree at top) ───────────────────────────────────
-q_order <- anchors %>%
-  arrange(agree_pct) %>%
-  pull(q_short)
+    anchors <- df %>%
+      group_by(Question, q_short) %>%
+      summarise(
+        agree_pct    = sum(pct[category == "Agree"],      na.rm = TRUE),
+        disagree_pct = sum(pct[category == "Disagree"],   na.rm = TRUE),
+        dk_pct       = sum(pct[category == "Don't know"], na.rm = TRUE),
+        n_no_dk      = first(n_no_dk),
+        .groups = "drop"
+      )
 
-anchors <- anchors %>%
-  mutate(q_short = factor(q_short, levels = q_order),
-         y = as.numeric(q_short))
+    q_order <- anchors %>% arrange(agree_pct) %>% pull(q_short)
+    anchors <- anchors %>%
+      mutate(q_short = factor(q_short, levels = q_order),
+             y = as.numeric(q_short))
 
-# ── Long format for geom_rect ─────────────────────────────────────────────────
-plot_df <- bind_rows(
-  anchors %>% transmute(q_short, y, category = "Agree",
-                        xmin = 0, xmax = agree_pct, pct = agree_pct),
-  anchors %>% transmute(q_short, y, category = "Disagree",
-                        xmin = -disagree_pct, xmax = 0, pct = disagree_pct),
-  anchors %>% transmute(q_short, y, category = "Don't know",
-                        xmin = agree_pct + DK_GAP,
-                        xmax = agree_pct + DK_GAP + dk_pct,
-                        pct = dk_pct)
-) %>%
-  mutate(
-    category  = factor(category, levels = c("Disagree", "Agree", "Don't know")),
-    xcenter   = (xmin + xmax) / 2,
-    bar_width = xmax - xmin
-  )
+    n_df <- df %>% select(Question, category, n_count)
 
-max_x <- max(plot_df$xmax, na.rm = TRUE)
+    plot_df <- bind_rows(
+      anchors %>% transmute(Question, q_short, y, category = "Agree",
+                            xmin = 0, xmax = agree_pct),
+      anchors %>% transmute(Question, q_short, y, category = "Disagree",
+                            xmin = -disagree_pct, xmax = 0),
+      anchors %>% transmute(Question, q_short, y, category = "Don't know",
+                            xmin = agree_pct + DK_GAP,
+                            xmax = agree_pct + DK_GAP + dk_pct)
+    ) %>%
+      left_join(n_df, by = c("Question", "category")) %>%
+      mutate(
+        category  = factor(category, levels = c("Disagree", "Agree", "Don't know")),
+        xcenter   = (xmin + xmax) / 2,
+        bar_width = xmax - xmin
+      )
 
-# ── Plot ──────────────────────────────────────────────────────────────────────
-p <- ggplot(plot_df) +
-  geom_rect(aes(
-    xmin = xmin, xmax = xmax,
-    ymin = y - 0.38, ymax = y + 0.38,
-    fill = category
-  ), color = "white", linewidth = 0.3) +
-  # Percentage labels (only on bars wide enough)
-  geom_text(
-    data = plot_df %>% filter(bar_width >= 8),
-    aes(x = xcenter, y = y, label = paste0(round(pct), "%")),
-    color = "white", size = 3, fontface = "bold"
-  ) +
-  # Center line
-  geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
-  # n= labels at far right
-  geom_text(
-    data = anchors,
-    aes(x = max_x + 6, y = y, label = paste0("n=", n_no_dk)),
-    hjust = 0, size = 2.8, color = "gray40"
-  ) +
-  # Disagree / Agree direction labels
-  annotate("text", x = -78, y = length(q_order) + 0.75,
-           label = "← Disagree", hjust = 0, size = 3, color = "gray40", fontface = "italic") +
-  annotate("text", x = 78, y = length(q_order) + 0.75,
-           label = "Agree →", hjust = 1, size = 3, color = "gray40", fontface = "italic") +
-  # DK label above DK bars
-  annotate("text",
-           x = mean(c(anchors$agree_pct[1] + DK_GAP,
-                       anchors$agree_pct[1] + DK_GAP + anchors$dk_pct[1])),
-           y = length(q_order) + 0.75,
-           label = "Don't\nknow", hjust = 0.5, size = 2.8, color = "gray50", fontface = "italic") +
-  scale_x_continuous(
-    limits = c(-100, max_x + 16),
-    breaks = c(-100, -75, -50, -25, 0, 25, 50, 75, 100),
-    labels = function(x) paste0(abs(x), "%"),
-    expand = c(0, 0)
-  ) +
-  scale_y_continuous(
-    breaks = seq_along(q_order),
-    labels = q_order,
-    expand = c(0.1, 0.1)
-  ) +
-  scale_fill_manual(values = COLORS) +
-  labs(
-    title    = "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding",
-    subtitle = "Eligible respondents (full survey completed)",
-    x = NULL, y = NULL, fill = NULL,
-    caption  = paste0(
-      "Agree = Strongly agree + Agree; Disagree = Strongly disagree + Disagree. ",
-      "Agree/Disagree % exclude Don't know from denominator. n = respondents excluding Don't know."
-    )
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    legend.position    = "bottom",
-    legend.key.size    = unit(0.45, "cm"),
-    legend.text        = element_text(size = 9),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor   = element_blank(),
-    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
-    axis.text.y        = element_text(size = 9, lineheight = 1.15),
-    axis.text.x        = element_text(size = 9),
-    plot.title         = element_text(face = "bold", size = 12),
-    plot.subtitle      = element_text(size = 10, color = "gray50"),
-    plot.caption       = element_text(size = 8, color = "gray60"),
-    plot.margin        = margin(10, 10, 10, 10)
-  ) +
-  guides(fill = guide_legend(nrow = 1))
+  } else {
+    # Uncollapsed: SA and A on right, D and SD on left
+    df <- raw %>%
+      mutate(category = Response) %>%
+      group_by(Question, q_short, category) %>%
+      summarise(n_count = sum(n, na.rm = TRUE), .groups = "drop")
 
-# ── Save ──────────────────────────────────────────────────────────────────────
-ggsave(OUT_FILE, p, width = 11, height = 5.5, dpi = 300, bg = "white")
-cat("Saved:", basename(OUT_FILE), "\n")
+    df <- df %>%
+      group_by(Question) %>%
+      mutate(
+        n_no_dk = sum(n_count[category != "Don't know"]),
+        n_all   = sum(n_count),
+        pct     = ifelse(category == "Don't know",
+                         n_count / n_all   * 100,
+                         n_count / n_no_dk * 100)
+      ) %>%
+      ungroup()
+
+    anchors <- df %>%
+      group_by(Question, q_short) %>%
+      summarise(
+        sa_pct = sum(pct[category == "Strongly agree"],    na.rm = TRUE),
+        a_pct  = sum(pct[category == "Agree"],             na.rm = TRUE),
+        d_pct  = sum(pct[category == "Disagree"],          na.rm = TRUE),
+        sd_pct = sum(pct[category == "Strongly disagree"], na.rm = TRUE),
+        dk_pct = sum(pct[category == "Don't know"],        na.rm = TRUE),
+        n_no_dk = first(n_no_dk),
+        .groups = "drop"
+      ) %>%
+      mutate(agree_total = a_pct + sa_pct)
+
+    q_order <- anchors %>% arrange(agree_total) %>% pull(q_short)
+    anchors <- anchors %>%
+      mutate(q_short = factor(q_short, levels = q_order),
+             y = as.numeric(q_short))
+
+    n_df <- df %>% select(Question, category, n_count)
+
+    plot_df <- bind_rows(
+      anchors %>% transmute(Question, q_short, y, category = "Strongly agree",
+                            xmin = a_pct, xmax = a_pct + sa_pct),
+      anchors %>% transmute(Question, q_short, y, category = "Agree",
+                            xmin = 0, xmax = a_pct),
+      anchors %>% transmute(Question, q_short, y, category = "Disagree",
+                            xmin = -d_pct, xmax = 0),
+      anchors %>% transmute(Question, q_short, y, category = "Strongly disagree",
+                            xmin = -(d_pct + sd_pct), xmax = -d_pct),
+      anchors %>% transmute(Question, q_short, y, category = "Don't know",
+                            xmin = agree_total + DK_GAP,
+                            xmax = agree_total + DK_GAP + dk_pct)
+    ) %>%
+      left_join(n_df, by = c("Question", "category")) %>%
+      mutate(
+        category  = factor(category, levels = c(
+          "Strongly disagree", "Disagree", "Agree", "Strongly agree", "Don't know")),
+        xcenter   = (xmin + xmax) / 2,
+        bar_width = xmax - xmin
+      )
+  }
+
+  list(plot_df = plot_df, anchors = anchors, q_order = q_order)
+}
+
+# ── Chart builder ─────────────────────────────────────────────────────────────
+make_chart <- function(collapsed) {
+  d      <- build_plot_data(collapsed)
+  plot_df <- d$plot_df
+  anchors <- d$anchors
+  q_order <- d$q_order
+  colors  <- if (collapsed) COLORS_COLLAPSED else COLORS_UNCOLLAPSED
+  max_x   <- max(plot_df$xmax, na.rm = TRUE)
+
+  caption_text <- if (collapsed) {
+    paste0("Agree = Strongly agree + Agree; Disagree = Strongly disagree + Disagree. ",
+           "Agree/Disagree % exclude Don't know from denominator. n = respondents excluding Don't know.")
+  } else {
+    "Agree/Disagree % exclude Don't know from denominator. n = respondents excluding Don't know."
+  }
+
+  ggplot(plot_df) +
+    geom_rect(aes(
+      xmin = xmin, xmax = xmax,
+      ymin = y - 0.38, ymax = y + 0.38,
+      fill = category
+    ), color = "white", linewidth = 0.3) +
+    # n labels inside bars wide enough to fit
+    geom_text(
+      data = plot_df %>% filter(bar_width >= MIN_W_N, !is.na(n_count)),
+      aes(x = xcenter, y = y, label = n_count),
+      color = "white", size = 3, fontface = "bold"
+    ) +
+    geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
+    # n= total at right margin
+    geom_text(
+      data = anchors,
+      aes(x = max_x + 6, y = y, label = paste0("n=", n_no_dk)),
+      hjust = 0, size = 2.8, color = "gray40"
+    ) +
+    annotate("text", x = -78, y = length(q_order) + 0.75,
+             label = "← Disagree", hjust = 0, size = 3,
+             color = "gray40", fontface = "italic") +
+    annotate("text", x = 78, y = length(q_order) + 0.75,
+             label = "Agree →", hjust = 1, size = 3,
+             color = "gray40", fontface = "italic") +
+    scale_x_continuous(
+      limits = c(-100, max_x + 16),
+      breaks = c(-100, -75, -50, -25, 0, 25, 50, 75, 100),
+      labels = function(x) paste0(abs(x), "%"),
+      expand = c(0, 0)
+    ) +
+    scale_y_continuous(
+      breaks = seq_along(q_order),
+      labels = q_order,
+      expand = c(0.1, 0.1)
+    ) +
+    scale_fill_manual(values = colors) +
+    labs(
+      title    = "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding",
+      subtitle = "Eligible respondents (full survey completed)",
+      x = NULL, y = NULL, fill = NULL,
+      caption = caption_text
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.position    = "bottom",
+      legend.key.size    = unit(0.45, "cm"),
+      legend.text        = element_text(size = 9),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
+      axis.text.y        = element_text(size = 9, lineheight = 1.15),
+      axis.text.x        = element_text(size = 9),
+      plot.title         = element_text(face = "bold", size = 12),
+      plot.subtitle      = element_text(size = 10, color = "gray50"),
+      plot.caption       = element_text(size = 8, color = "gray60"),
+      plot.margin        = margin(10, 10, 10, 10)
+    ) +
+    guides(fill = guide_legend(nrow = 1))
+}
+
+# ── Save both charts ──────────────────────────────────────────────────────────
+ggsave(OUT_COLLAPSED,   make_chart(collapsed = TRUE),  width = 11, height = 5.5, dpi = 300, bg = "white")
+cat("Saved:", basename(OUT_COLLAPSED), "\n")
+
+ggsave(OUT_UNCOLLAPSED, make_chart(collapsed = FALSE), width = 11, height = 5.5, dpi = 300, bg = "white")
+cat("Saved:", basename(OUT_UNCOLLAPSED), "\n")
