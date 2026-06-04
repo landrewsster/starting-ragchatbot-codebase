@@ -280,7 +280,7 @@ make_chart <- function(collapsed) {
     scale_fill_manual(values = colors) +
     labs(
       title    = "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding",
-      subtitle = "Eligible respondents (full survey completed)",
+      subtitle = NULL,
       x = NULL, y = NULL, fill = NULL,
       caption = caption_text
     ) +
