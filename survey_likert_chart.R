@@ -103,6 +103,18 @@ df <- df %>%
 # ── Diverging bar positions ───────────────────────────────────────────────────
 # Neither agree nor disagree is centered at x = 0 (half on each side).
 # Disagree categories extend left (negative), Agree categories extend right.
+
+# Compute per-question offsets separately to avoid within-group subsetting
+q_offsets <- df %>%
+  filter(Response != "Don't know") %>%
+  group_by(Question) %>%
+  summarise(
+    neither_pct  = sum(pct[Response == "Neither agree nor disagree"], na.rm = TRUE),
+    disagree_sum = sum(pct[Response %in% DISAGREE], na.rm = TRUE),
+    offset       = -(disagree_sum + neither_pct / 2),
+    .groups = "drop"
+  )
+
 div_df <- df %>%
   filter(Response != "Don't know") %>%
   mutate(Response = factor(Response, levels = c(
@@ -110,16 +122,14 @@ div_df <- df %>%
     "Agree", "Strongly agree"
   ))) %>%
   arrange(Question, Response) %>%
+  left_join(q_offsets, by = "Question") %>%
   group_by(Question) %>%
   mutate(
-    neither_pct  = sum(pct[Response == "Neither agree nor disagree"], na.rm = TRUE),
-    disagree_sum = sum(pct[Response %in% DISAGREE], na.rm = TRUE),
-    offset       = -(disagree_sum + neither_pct / 2),
-    cumulative   = cumsum(pct),
-    xmax         = cumulative + offset,
-    xmin         = lag(cumulative, default = 0) + offset,
-    xcenter      = (xmin + xmax) / 2,
-    bar_width    = xmax - xmin
+    cumulative = cumsum(pct),
+    xmax       = cumulative + offset,
+    xmin       = lag(cumulative, default = 0) + offset,
+    xcenter    = (xmin + xmax) / 2,
+    bar_width  = xmax - xmin
   ) %>%
   ungroup()
 
