@@ -116,6 +116,15 @@ free_text_cols = {
     )
 }
 
+# "Other, please specify" columns — detected by name, not cardinality.
+# These are shown inline in the frequency tables directly below their parent question.
+# High-cardinality free-text columns (open-ended questions) stay in the free_text sheet only.
+named_free_text_cols = {
+    c for c in free_text_cols
+    if re.search(r'\bspecify\b|\bplease describe\b|\bexplain\b', c, re.IGNORECASE)
+    or c.strip() == "Specify"
+}
+
 # Detect timestamp columns before building skip set
 def _looks_like_timestamps(series):
     """True if >50% of non-empty values parse as datetimes (ISO or US M/D/YY format)."""
@@ -211,6 +220,29 @@ skip = set(checkbox_cols) | free_text_cols | system_cols | county_skip_cols
 
 # Single-choice columns (everything not checkbox, free-text, or system)
 single_cols = [c for c in df.columns if c not in skip]
+
+# ── Free-text column associations ─────────────────────────────────────────────
+# Walk columns in survey order; each named free-text column (specify/describe)
+# is attached to the last substantive question preceding it, so "Other, please
+# specify" responses can be shown inline below the question they belong to.
+_ft_q_key  = None
+_cb_set_ft = set(checkbox_cols)
+free_text_associations: dict[str, str] = {}   # ft_col → question key
+for _c in df.columns:
+    if _c in system_cols or _c in county_skip_cols:
+        continue
+    if _c in _cb_set_ft:
+        _ft_q_key = parent_question(_c)
+    elif _c in named_free_text_cols:
+        if _ft_q_key is not None:
+            free_text_associations[_c] = _ft_q_key
+    elif _c not in free_text_cols:
+        _ft_q_key = complete_col_labels.get(_c, _c)
+
+# Reverse map: question key → list of associated specify columns
+q_free_text_cols: dict[str, list[str]] = {}
+for _fc, _qk in free_text_associations.items():
+    q_free_text_cols.setdefault(_qk, []).append(_fc)
 
 # Ordered response categories for known question types
 ORDERED_LIKERT     = [
@@ -432,6 +464,24 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
         })
     return pd.DataFrame(rows)
 
+def free_text_for_question(df_sub, q_key):
+    """Return a DataFrame of verbatim 'Other, please specify' responses for q_key, or None."""
+    ft_cols = [c for c in q_free_text_cols.get(q_key, []) if c in df_sub.columns]
+    if not ft_cols:
+        return None
+    rows = []
+    for ft_col in ft_cols:
+        for val in df_sub[ft_col]:
+            v = str(val).strip()
+            if v and v.lower() not in ("nan", "", "checked", "unchecked", "0", "1"):
+                rows.append({
+                    "Question": re.sub(r'\s+', ' ', str(q_key)).strip(),
+                    "Type":     "Open text",
+                    "Response": v,
+                })
+    return pd.DataFrame(rows) if rows else None
+
+
 def build_all_frequencies(df_sub):
     """
     Build one combined frequency table for df_sub, processing columns in the
@@ -457,6 +507,9 @@ def build_all_frequencies(df_sub):
                 t = freq_checkbox_group(df_sub, parent, child_cols)
                 if t is not None:
                     parts.append(t)
+                    ft = free_text_for_question(df_sub, parent)
+                    if ft is not None:
+                        parts.append(ft)
         else:
             # Single-choice — use disambiguated label for Complete? columns
             label   = complete_col_labels.get(col, col)
@@ -464,6 +517,9 @@ def build_all_frequencies(df_sub):
             t = freq_single(df_sub[col], label, ordered)
             if t is not None:
                 parts.append(t)
+                ft = free_text_for_question(df_sub, label)
+                if ft is not None:
+                    parts.append(ft)
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
