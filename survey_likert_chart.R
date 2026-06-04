@@ -112,7 +112,7 @@ div_df <- df %>%
   arrange(Question, Response) %>%
   group_by(Question) %>%
   mutate(
-    neither_pct  = pct[Response == "Neither agree nor disagree"],
+    neither_pct  = sum(pct[Response == "Neither agree nor disagree"], na.rm = TRUE),
     disagree_sum = sum(pct[Response %in% DISAGREE], na.rm = TRUE),
     offset       = -(disagree_sum + neither_pct / 2),
     cumulative   = cumsum(pct),
