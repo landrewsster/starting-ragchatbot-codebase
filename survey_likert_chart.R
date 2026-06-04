@@ -39,13 +39,17 @@ LIKERT_PATTERNS <- c(
 )
 
 SHORT_LABELS <- list(
-  "no safe level"            = "No safe level of cannabis\nduring pregnancy",
-  "risks.+outweigh"          = "Risks outweigh benefits\nfor therapeutic use",
-  "therapeutic reasons"      = "Patients use cannabis\nfor therapeutic reasons",
-  "contraindication"         = "Cannabis is contraindicated\nfor breastfeeding",
-  "accurately report"        = "Patients accurately report\ncannabis use",
-  "routine toxicology"       = "Routine toxicology screening\nis appropriate",
-  "clinicians should screen" = "Clinicians should screen\nfor cannabis use"
+  "no safe level.+pregnancy"       = "No safe level of cannabis\nduring pregnancy",
+  "no safe level.+breastfeed"      = "No safe level of cannabis\nduring breastfeeding",
+  "no safe level"                  = "No safe level of cannabis",        # fallback
+  "risks.+fetus|risks.+pregnant"   = "Risks outweigh medical needs\n(fetus / pregnant person)",
+  "risks.+newborn|risks.+breastfeed" = "Risks outweigh medical needs\n(newborn / breastfeeding person)",
+  "risks.+outweigh"                = "Risks outweigh medical needs",     # fallback
+  "therapeutic reasons"            = "Patients use cannabis\nfor therapeutic reasons",
+  "contraindication"               = "Cannabis is contraindicated\nfor breastfeeding",
+  "accurately report"              = "Patients accurately report\ncannabis use",
+  "routine toxicology"             = "Routine toxicology screening\nis appropriate",
+  "clinicians should screen"       = "Clinicians should screen\nfor cannabis use"
 )
 
 COLORS_COLLAPSED <- c(
@@ -85,7 +89,7 @@ get_short_label <- function(q) {
   for (pat in names(SHORT_LABELS))
     if (str_detect(str_to_lower(q), regex(pat, ignore_case = TRUE)))
       return(SHORT_LABELS[[pat]])
-  str_wrap(q, width = 45)
+  str_wrap(q, width = 35)
 }
 q_label_map <- raw %>%
   distinct(Question) %>%
@@ -288,19 +292,19 @@ make_chart <- function(collapsed) {
       panel.grid.major.y = element_blank(),
       panel.grid.minor   = element_blank(),
       panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
-      axis.text.y        = element_text(size = 8, lineheight = 1.15),
+      axis.text.y        = element_text(size = 7.5, lineheight = 1.2),
       axis.text.x        = element_text(size = 9),
       plot.title         = element_text(face = "bold", size = 12),
       plot.subtitle      = element_text(size = 10, color = "gray50"),
       plot.caption       = element_text(size = 8, color = "gray60"),
-      plot.margin        = margin(10, 10, 10, 40)
+      plot.margin        = margin(10, 15, 10, 5)
     ) +
     guides(fill = guide_legend(nrow = 1))
 }
 
 # ── Save both charts ──────────────────────────────────────────────────────────
-ggsave(OUT_COLLAPSED,   make_chart(collapsed = TRUE),  width = 13, height = 5.5, dpi = 300, bg = "white")
+ggsave(OUT_COLLAPSED,   make_chart(collapsed = TRUE),  width = 13, height = 7, dpi = 300, bg = "white")
 cat("Saved:", basename(OUT_COLLAPSED), "\n")
 
-ggsave(OUT_UNCOLLAPSED, make_chart(collapsed = FALSE), width = 13, height = 5.5, dpi = 300, bg = "white")
+ggsave(OUT_UNCOLLAPSED, make_chart(collapsed = FALSE), width = 13, height = 7, dpi = 300, bg = "white")
 cat("Saved:", basename(OUT_UNCOLLAPSED), "\n")
