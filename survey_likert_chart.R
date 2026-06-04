@@ -124,9 +124,7 @@ build_plot_data <- function(collapsed) {
       mutate(
         n_no_dk = sum(n_count[category != "Don't know"]),
         n_all   = sum(n_count),
-        pct     = ifelse(category == "Don't know",
-                         n_count / n_all   * 100,
-                         n_count / n_no_dk * 100)
+        pct     = n_count / n_all * 100
       ) %>%
       ungroup()
 
@@ -137,6 +135,7 @@ build_plot_data <- function(collapsed) {
         disagree_pct = sum(pct[category == "Disagree"],   na.rm = TRUE),
         dk_pct       = sum(pct[category == "Don't know"], na.rm = TRUE),
         n_no_dk      = first(n_no_dk),
+        n_all        = first(n_all),
         .groups = "drop"
       ) %>%
       arrange(agree_pct) %>%
@@ -174,9 +173,7 @@ build_plot_data <- function(collapsed) {
       mutate(
         n_no_dk = sum(n_count[category != "Don't know"]),
         n_all   = sum(n_count),
-        pct     = ifelse(category == "Don't know",
-                         n_count / n_all   * 100,
-                         n_count / n_no_dk * 100)
+        pct     = n_count / n_all * 100
       ) %>%
       ungroup()
 
@@ -189,6 +186,7 @@ build_plot_data <- function(collapsed) {
         sd_pct = sum(pct[category == "Strongly disagree"], na.rm = TRUE),
         dk_pct = sum(pct[category == "Don't know"],        na.rm = TRUE),
         n_no_dk = first(n_no_dk),
+        n_all   = first(n_all),
         .groups = "drop"
       ) %>%
       mutate(agree_total = a_pct + sa_pct) %>%
@@ -234,10 +232,9 @@ make_chart <- function(collapsed) {
   max_x   <- max(plot_df$xmax, na.rm = TRUE)
 
   caption_text <- if (collapsed) {
-    paste0("Agree = Strongly agree + Agree; Disagree = Strongly disagree + Disagree. ",
-           "Agree/Disagree % exclude Don't know from denominator. n = respondents excluding Don't know.")
+    "Agree = Strongly agree + Agree; Disagree = Strongly disagree + Disagree. Percentages of all respondents including Don't know."
   } else {
-    "Agree/Disagree % exclude Don't know from denominator. n = respondents excluding Don't know."
+    "Percentages of all respondents including Don't know."
   }
 
   ggplot(plot_df) +
@@ -256,7 +253,7 @@ make_chart <- function(collapsed) {
     # n= total at right margin
     geom_text(
       data = anchors,
-      aes(x = max_x + 6, y = y, label = paste0("n=", n_no_dk)),
+      aes(x = max_x + 6, y = y, label = paste0("n=", n_all)),
       hjust = 0, size = 2.8, color = "gray40"
     ) +
     annotate("text", x = -78, y = length(q_order) + 0.75,
@@ -291,19 +288,19 @@ make_chart <- function(collapsed) {
       panel.grid.major.y = element_blank(),
       panel.grid.minor   = element_blank(),
       panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
-      axis.text.y        = element_text(size = 9, lineheight = 1.15),
+      axis.text.y        = element_text(size = 8, lineheight = 1.15),
       axis.text.x        = element_text(size = 9),
       plot.title         = element_text(face = "bold", size = 12),
       plot.subtitle      = element_text(size = 10, color = "gray50"),
       plot.caption       = element_text(size = 8, color = "gray60"),
-      plot.margin        = margin(10, 10, 10, 10)
+      plot.margin        = margin(10, 10, 10, 40)
     ) +
     guides(fill = guide_legend(nrow = 1))
 }
 
 # ── Save both charts ──────────────────────────────────────────────────────────
-ggsave(OUT_COLLAPSED,   make_chart(collapsed = TRUE),  width = 11, height = 5.5, dpi = 300, bg = "white")
+ggsave(OUT_COLLAPSED,   make_chart(collapsed = TRUE),  width = 13, height = 5.5, dpi = 300, bg = "white")
 cat("Saved:", basename(OUT_COLLAPSED), "\n")
 
-ggsave(OUT_UNCOLLAPSED, make_chart(collapsed = FALSE), width = 11, height = 5.5, dpi = 300, bg = "white")
+ggsave(OUT_UNCOLLAPSED, make_chart(collapsed = FALSE), width = 13, height = 5.5, dpi = 300, bg = "white")
 cat("Saved:", basename(OUT_UNCOLLAPSED), "\n")
