@@ -138,12 +138,11 @@ build_plot_data <- function(collapsed) {
         dk_pct       = sum(pct[category == "Don't know"], na.rm = TRUE),
         n_no_dk      = first(n_no_dk),
         .groups = "drop"
-      )
+      ) %>%
+      arrange(agree_pct) %>%
+      mutate(y = row_number())
 
-    q_order <- anchors %>% arrange(agree_pct) %>% pull(q_short)
-    anchors <- anchors %>%
-      mutate(q_short = factor(q_short, levels = q_order),
-             y = as.numeric(q_short))
+    q_order <- anchors$q_short
 
     n_df <- df %>% select(Question, category, n_count)
 
@@ -192,12 +191,11 @@ build_plot_data <- function(collapsed) {
         n_no_dk = first(n_no_dk),
         .groups = "drop"
       ) %>%
-      mutate(agree_total = a_pct + sa_pct)
+      mutate(agree_total = a_pct + sa_pct) %>%
+      arrange(agree_total) %>%
+      mutate(y = row_number())
 
-    q_order <- anchors %>% arrange(agree_total) %>% pull(q_short)
-    anchors <- anchors %>%
-      mutate(q_short = factor(q_short, levels = q_order),
-             y = as.numeric(q_short))
+    q_order <- anchors$q_short
 
     n_df <- df %>% select(Question, category, n_count)
 
