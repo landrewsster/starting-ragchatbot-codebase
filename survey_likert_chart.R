@@ -90,6 +90,16 @@ get_short_label <- function(q) {
 q_label_map <- raw %>%
   distinct(Question) %>%
   mutate(q_short = sapply(Question, get_short_label))
+
+# If two questions got the same short label, fall back to wrapped full text
+dupes <- q_label_map$q_short[duplicated(q_label_map$q_short)]
+if (length(dupes) > 0) {
+  message("Duplicate short labels detected — using wrapped full text for affected questions: ",
+          paste(dupes, collapse = "; "))
+  q_label_map <- q_label_map %>%
+    mutate(q_short = ifelse(q_short %in% dupes, str_wrap(Question, width = 45), q_short))
+}
+
 raw <- raw %>% left_join(q_label_map, by = "Question")
 
 # ── Helper: build plot data ───────────────────────────────────────────────────
