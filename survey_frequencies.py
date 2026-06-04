@@ -242,6 +242,11 @@ print(f"  Checkbox groups      : {len(checkbox_groups)}")
 print(f"  Single-choice        : {len(single_cols)}")
 print(f"  Free-text (skipped)  : {len(free_text_cols)}")
 
+if checkbox_groups:
+    print(f"\nCheckbox groups found:")
+    for parent, cols in checkbox_groups.items():
+        print(f"  [{len(cols):2d} choices] {short_q(parent, 90)}")
+
 # ── Split eligible vs ineligible ──────────────────────────────────────────────
 elig_col = next(
     (c for c in df.columns
@@ -389,14 +394,31 @@ def freq_single(series, question_text, ordered=None):
     return out
 
 def freq_checkbox_group(df_sub, parent_q, child_cols):
-    """Frequency table for a checkbox group."""
-    # Denominator = rows where at least one child column is not blank
+    """Frequency table for a checkbox group.
+
+    Denominator = rows where at least one child column has a non-blank value.
+    Falls back to all rows in df_sub if every value is blank (e.g. question
+    only shown via branching logic and responses stored as empty strings).
+    """
     has_response = df_sub[child_cols].apply(
         lambda col: col.str.strip().ne("")
     ).any(axis=1)
     n_denom = has_response.sum()
+
     if n_denom == 0:
-        return None
+        # Fallback: count every row with at least one "Checked" / "1" value
+        has_checked = df_sub[child_cols].apply(
+            lambda col: col.apply(is_checked)
+        ).any(axis=1)
+        n_checked_total = has_checked.sum()
+        if n_checked_total == 0:
+            print(f"  WARNING: skipping checkbox group (all blank): "
+                  f"{short_q(parent_q, 70)}")
+            return None
+        # Some rows were checked even though the "has any value" mask missed them
+        n_denom = n_checked_total
+        has_response = has_checked
+
     rows = []
     for col in child_cols:
         n_checked = df_sub.loc[has_response, col].apply(is_checked).sum()
@@ -417,21 +439,20 @@ def build_all_frequencies(df_sub):
     are interleaved to match the survey flow).
     """
     parts = []
-
-    # Walk columns in original order; emit single or checkbox as encountered
     emitted_checkbox_parents = set()
+    checkbox_set = set(checkbox_cols)   # O(1) membership test
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
             continue
 
-        if col in checkbox_cols:
+        if col in checkbox_set:
             # Emit the whole checkbox group when we hit the first child column
             parent = parent_question(col)
             if parent in emitted_checkbox_parents:
                 continue
             emitted_checkbox_parents.add(parent)
-            child_cols = [c for c in checkbox_groups[parent] if c in df_sub.columns]
+            child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if child_cols:
                 t = freq_checkbox_group(df_sub, parent, child_cols)
                 if t is not None:
