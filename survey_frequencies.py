@@ -58,7 +58,11 @@ for _c in list(df.columns):
 if _single_dedup:
     for _base, _var in _single_dedup:
         _empty = df[_base].str.strip().eq("")
+        n_filled = int(_empty.sum())
         df.loc[_empty, _base] = df.loc[_empty, _var]
+        if n_filled > 0:
+            _label = _var[:60] + "…" if len(_var) > 60 else _var
+            print(f"  Merged '{_label}' → base ({n_filled} rows filled)")
     df = df.drop(columns=[_v for _, _v in _single_dedup])
     print(f"Merged {len(_single_dedup)} deduplicated column(s) into base columns")
 

@@ -225,7 +225,9 @@ add_screener_section <- function(doc, elig_df, inelig_df) {
   combine_screener <- function(elig_df, inelig_df, pattern) {
     get_rows <- function(df) {
       if (is.null(df) || nrow(df) == 0) return(NULL)
-      df %>% filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
+      df %>%
+        filter(!is_complete_q(Question)) %>%
+        filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
     }
     eq <- get_rows(elig_df)
     iq <- get_rows(inelig_df)
