@@ -33,6 +33,14 @@ county_freq      <- read_if("county_freq")
 completion_time  <- read_if("completion_time")
 completion_summ  <- read_if("completion_summary")
 
+# Remove verbatim Open text rows — shown inline in Excel but excluded from the report
+filter_open_text <- function(df) {
+  if (is.null(df) || !("Type" %in% names(df))) return(df)
+  df %>% filter(Type != "Open text")
+}
+eligible   <- filter_open_text(eligible)
+ineligible <- filter_open_text(ineligible)
+
 # ── Question classification ───────────────────────────────────────────────────
 DEMO_PATTERNS <- c(
   "what is your profession",
@@ -68,9 +76,16 @@ norm_q <- function(q) str_trim(str_remove(q, "\\s*\\.\\d+\\s*$"))
 # ── Flextable helpers ─────────────────────────────────────────────────────────
 # Single-group table: n and % columns, N as footer
 make_table <- function(df) {
-  n_col  <- intersect(c("N (answered)", "N (denominator)"), names(df))
-  n_val  <- if (length(n_col) > 0) unique(df[[n_col[1]]])[1] else NA
-  n_note <- if (!is.na(n_val)) paste0(n_col[1], " = ", n_val) else NULL
+  # Find N: single-choice uses "N (answered)", checkbox uses "N (denominator)"
+  n_col <- NA_character_
+  n_val <- NA_real_
+  for (.col in c("N (answered)", "N (denominator)")) {
+    if (.col %in% names(df)) {
+      .vals <- suppressWarnings(as.numeric(df[[.col]]))
+      if (any(!is.na(.vals))) { n_col <- .col; n_val <- max(.vals, na.rm = TRUE); break }
+    }
+  }
+  n_note <- if (!is.na(n_val)) paste0(n_col, " = ", as.integer(n_val)) else NULL
 
   df <- df %>% select(-any_of(c("N (answered)", "N (denominator)")))
 
@@ -140,9 +155,14 @@ side_by_side <- function(elig_df, inelig_df, pattern = NULL, exact_q = NULL) {
       df %>% filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
     }
     if (nrow(rows) == 0) return(NULL)
-    n_col <- intersect(c("N (answered)", "N (denominator)"), names(rows))
-    n_vals <- if (length(n_col) > 0) suppressWarnings(as.numeric(rows[[n_col[1]]])) else NA
-    n_val  <- if (length(n_col) > 0 && any(!is.na(n_vals))) max(n_vals, na.rm = TRUE) else NA
+    # Find N: single-choice uses "N (answered)", checkbox uses "N (denominator)"
+    n_val <- NA_real_
+    for (.col in c("N (answered)", "N (denominator)")) {
+      if (.col %in% names(rows)) {
+        .vals <- suppressWarnings(as.numeric(rows[[.col]]))
+        if (any(!is.na(.vals))) { n_val <- max(.vals, na.rm = TRUE); break }
+      }
+    }
     # Normalize whitespace in Response before aggregating to prevent spurious duplicates
     out <- rows %>%
       mutate(Response = str_squish(Response)) %>%
