@@ -50,9 +50,12 @@ def is_checked(val):
     return str(val).strip().lower() in ("checked", "1", "yes", "true")
 
 def choice_label(col):
-    """Extract option text from a checkbox column name."""
-    m = re.search(r'\(choice=(.+?)\)\s*$', col)
-    return m.group(1).strip() if m else col
+    """Extract option text from a checkbox column name.
+    Strips pandas dedup suffixes (.1, .2, …) before matching so that
+    duplicate-exported columns are labelled identically to their originals."""
+    col_clean = re.sub(r'\.\d+$', '', col.strip())
+    m = re.search(r'\(choice=(.+?)\)\s*$', col_clean)
+    return m.group(1).strip() if m else col_clean
 
 def parent_question(col):
     """Extract parent question text from a checkbox column name."""
@@ -451,14 +454,23 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
         n_denom = n_checked_total
         has_response = has_checked
 
-    rows = []
+    # Group child columns by their choice label so pandas dedup variants
+    # (.1, .2, …) are combined rather than emitted as separate response rows.
+    label_cols: dict[str, list[str]] = {}
     for col in child_cols:
-        n_checked = df_sub.loc[has_response, col].apply(is_checked).sum()
+        label_cols.setdefault(choice_label(col), []).append(col)
+
+    rows = []
+    for label, cols in label_cols.items():
+        n_checked = sum(
+            int(df_sub.loc[has_response, c].apply(is_checked).sum())
+            for c in cols if c in df_sub.columns
+        )
         rows.append({
             "Question":        re.sub(r'\s+', ' ', str(parent_q)).strip(),
             "Type":            "Select all that apply",
-            "Response":        choice_label(col),
-            "n":               int(n_checked),
+            "Response":        label,
+            "n":               n_checked,
             "%":               round(n_checked / n_denom * 100, 1),
             "N (denominator)": int(n_denom),
         })
