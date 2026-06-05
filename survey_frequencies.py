@@ -290,10 +290,31 @@ elig_col = next(
     None
 )
 
+days_col = next(
+    (c for c in df.columns
+     if re.search(r'how many days.*see patients|average week.*how many', c, re.IGNORECASE)),
+    None
+)
+
 if elig_col:
-    eligible   = df[df[elig_col].str.strip().str.lower() == "yes"].reset_index(drop=True)
-    ineligible = df[df[elig_col].str.strip().str.lower() != "yes"].reset_index(drop=True)
+    said_yes  = df[elig_col].str.strip().str.lower() == "yes"
+
+    # Exclude respondents who answered "0 days" on the follow-up days-per-week
+    # question — seeing 0 patients means they do not meet the clinical threshold.
+    zero_days = pd.Series(False, index=df.index)
+    if days_col:
+        zero_days = df[days_col].str.strip().str.lower().str.match(r'^0\s*days?$', na=False)
+        n_zero = zero_days.sum()
+        if n_zero > 0:
+            print(f"\nExcluding {n_zero} respondent(s) who said 'Yes' to prenatal care "
+                  f"but answered '0 days' on: {short_q(days_col, 70)}")
+
+    eligible   = df[ said_yes & ~zero_days].reset_index(drop=True)
+    ineligible = df[~said_yes |  zero_days].reset_index(drop=True)
+
     print(f"\nEligibility split on: {short_q(elig_col, 80)}")
+    if days_col:
+        print(f"  + '0 days' exclusion on: {short_q(days_col, 70)}")
     print(f"  Eligible   (full survey) : {len(eligible)}")
     print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
 else:
