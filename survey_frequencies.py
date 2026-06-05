@@ -44,6 +44,35 @@ except FileNotFoundError:
 df = df.fillna("")
 print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
 
+# ── Merge pandas-deduplicated single-choice columns ───────────────────────────
+# REDCap exports the same non-checkbox field in multiple instruments; pandas
+# renames duplicates col.1, col.2, …  Each respondent answers in exactly one
+# arm, so we coalesce into the base column and drop the extras.
+_df_cols = set(df.columns)
+_single_dedup: list[tuple[str, str]] = []
+for _c in list(df.columns):
+    _m = re.match(r'^(.+?)\.\d+$', _c)
+    if _m and _m.group(1) in _df_cols and '(choice=' not in _c:
+        _single_dedup.append((_m.group(1), _c))
+
+if _single_dedup:
+    for _base, _var in _single_dedup:
+        _empty = df[_base].str.strip().eq("")
+        df.loc[_empty, _base] = df.loc[_empty, _var]
+    df = df.drop(columns=[_v for _, _v in _single_dedup])
+    print(f"Merged {len(_single_dedup)} deduplicated column(s) into base columns")
+
+# ── Filter to screener-complete respondents ───────────────────────────────────
+# Exclude respondents who opened the survey but did not complete the screener.
+_sc_col = next((c for c in df.columns if c.strip().lower() == "screener_complete"), None)
+if _sc_col:
+    n_before = len(df)
+    df = df[df[_sc_col].str.strip().str.lower() == "complete"].reset_index(drop=True)
+    print(f"Filtered to screener-complete: {len(df)} of {n_before} "
+          f"({n_before - len(df)} excluded — did not finish screener)")
+else:
+    print("WARNING: Screener_complete column not found — all respondents included")
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def is_checked(val):
     """True for any checkbox-positive coding: Checked / 1 / Yes / True."""
