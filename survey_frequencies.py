@@ -77,46 +77,6 @@ if _sc_col:
 else:
     print("WARNING: Screener_complete column not found — all respondents included")
 
-# ── Manual data corrections ───────────────────────────────────────────────────
-# Respondent clarified mid-survey they screen 100% of patients; recode their
-# answer to the universal screening question and clear their "why don't you
-# screen" response (no longer applicable after the recode).
-_recode_trigger = "moving to the next slide clarified"
-_recode_mask = df.apply(
-    lambda row: any(_recode_trigger.lower() in str(v).lower() for v in row),
-    axis=1,
-)
-if _recode_mask.any():
-    _screen_q_col = next(
-        (c for c in df.columns
-         if re.search(
-             r'screen all patients.*pregnant.*breastfeed|'
-             r'screen all patients who are pregnant',
-             c, re.IGNORECASE)),
-        None,
-    )
-    _why_not_col = next(
-        (c for c in df.columns
-         if re.search(
-             r"why don't you.*screen all patients|"
-             r"why don.t you or others.*screen all",
-             c, re.IGNORECASE)),
-        None,
-    )
-    if _screen_q_col:
-        df.loc[_recode_mask, _screen_q_col] = "Yes, all patients (i.e. universal screening)"
-        print(f"\nManual recode: {int(_recode_mask.sum())} respondent(s) — "
-              f"screening answer set to 'Yes, all patients'")
-    else:
-        print("\nWARNING: Screening question column not found for manual recode")
-    if _why_not_col:
-        df.loc[_recode_mask, _why_not_col] = ""
-        print(f"Manual recode: cleared 'why don't you screen' answer for same respondent(s)")
-    else:
-        print("\nWARNING: 'Why don't you screen' column not found for clearing")
-else:
-    print("\nWARNING: Manual recode trigger text not found in data")
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def is_checked(val):
     """True for any checkbox-positive coding: Checked / 1 / Yes / True."""
