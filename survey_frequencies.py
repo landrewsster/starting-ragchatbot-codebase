@@ -716,10 +716,18 @@ if county_candidates:
                 county_rows.append(rec)
 
     if county_rows:
+        METRO_COUNTIES = {
+            "hennepin", "washington", "carver", "scott",
+            "ramsey", "anoka", "dakota",
+        }
+
         county_df = (
             pd.DataFrame(county_rows)
             .sort_values(["group", "county_recoded"], key=lambda s: s.str.lower())
             .reset_index(drop=True)
+        )
+        county_df["metro"] = county_df["county_recoded"].apply(
+            lambda c: 1 if c.strip().lower() in METRO_COUNTIES else 0
         )
         print(f"  County responses: {len(county_df)} "
               f"(eligible: {(county_df['group']=='eligible').sum()}, "
