@@ -30,6 +30,7 @@ read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, shee
 eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
 county_freq      <- read_if("county_freq")
+county_data      <- read_if("county")
 completion_time  <- read_if("completion_time")
 completion_summ  <- read_if("completion_summary")
 
@@ -369,6 +370,55 @@ if (!is.null(county_freq) && nrow(county_freq) > 0) {
   doc <- doc %>%
     body_add_par("County of Practice", style = "heading 2") %>%
     body_add_flextable(make_county_table(county_freq)) %>%
+    body_add_par("", style = "Normal")
+}
+
+# 5a. Metro vs Non-Metro
+if (!is.null(county_data) &&
+    all(c("metro", "county_recoded", "group") %in% names(county_data))) {
+
+  valid    <- county_data %>% filter(county_recoded != "")
+  elig_n   <- sum(valid$group == "eligible")
+  inelig_n <- sum(valid$group == "ineligible")
+
+  metro_tbl <- valid %>%
+    mutate(Metro = if_else(as.integer(metro) == 1L,
+                           "Metro (7-county)", "Non-metro")) %>%
+    group_by(Metro) %>%
+    summarise(
+      `Eligible n`   = sum(group == "eligible"),
+      `Ineligible n` = sum(group == "ineligible"),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      `Eligible %`   = round(`Eligible n`   / elig_n   * 100, 1),
+      `Ineligible %` = round(`Ineligible n` / inelig_n * 100, 1),
+      `Total n`      = `Eligible n` + `Ineligible n`
+    ) %>%
+    select(Metro, `Eligible n`, `Eligible %`,
+           `Ineligible n`, `Ineligible %`, `Total n`) %>%
+    arrange(desc(`Total n`)) %>%
+    bind_rows(tibble(
+      Metro          = "TOTAL",
+      `Eligible n`   = elig_n,
+      `Eligible %`   = 100.0,
+      `Ineligible n` = inelig_n,
+      `Ineligible %` = 100.0,
+      `Total n`      = elig_n + inelig_n
+    ))
+
+  doc <- doc %>%
+    body_add_par("Metro vs Non-Metro", style = "heading 2") %>%
+    body_add_flextable(
+      make_wide_table(
+        metro_tbl,
+        footer = paste0(
+          "Metro = Hennepin, Washington, Carver, Scott, Ramsey, Anoka, Dakota. ",
+          "Respondents who provided a county only (N = ", elig_n + inelig_n, ")."
+        )
+      ) %>%
+        bold(i = nrow(metro_tbl), part = "body")
+    ) %>%
     body_add_par("", style = "Normal")
 }
 
