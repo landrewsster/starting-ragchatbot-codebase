@@ -58,7 +58,9 @@ CHART2_PATTERNS <- c(
   "contraindication to breastfeeding"
 )
 CONF_PATTERNS    <- c("talk about (cannabis|tobacco|alcohol)")
-KNOW_PATTERNS    <- c("level of knowledge")
+KNOW_PATTERNS    <- c("patients planning a pregnancy",
+                      "patients who are pregnant",
+                      "patients who are breastfeeding")
 OPINION_PATTERNS <- c("feel about the legalization", "legalization of.*cannabis in minnesota")
 ALL_PATTERNS  <- c(CHART1_PATTERNS, CHART2_PATTERNS, CONF_PATTERNS, KNOW_PATTERNS, OPINION_PATTERNS)
 
@@ -88,7 +90,7 @@ SHORT_LABELS <- list(
   "who are breastfeeding"              = "Knowledge: patients\nwho are breastfeeding",
   "level of knowledge.*pregnant"       = "Knowledge: patients\nwho are pregnant",
   "level of knowledge.*breastfeed"     = "Knowledge: patients\nwho are breastfeeding",
-  "level of knowledge"                 = "Knowledge: patients",  # fallback
+  "level of knowledge"                 = "Knowledge: patients",
   # Opinion — legalization
   "legalization of medical cannabis"           = "Medical cannabis\nlegalization (MN)",
   "non.medical.*recreational|recreational.*cannabis in minnesota" = "Recreational cannabis\nlegalization (MN)",
