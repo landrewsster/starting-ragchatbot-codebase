@@ -298,11 +298,42 @@ LIKERT_PATTERNS = [
 ]
 CONFIDENCE_PATTERNS = [r"talk about (cannabis|tobacco|alcohol)"]
 
+# Branching rules — questions only shown to respondents who answered a parent
+# question a specific way.  Add one dict per parent→child group.
+BRANCHING_RULES = [
+    {
+        "child_patterns": [
+            r"in what context did you receive the training",
+            r"was the training focused solely on cannabis",
+            r"what did the training.+include related to cannabis",
+        ],
+        "parent_pattern": r"have you had any formal training related to cannabis",
+        "parent_value":   "yes",
+    },
+]
+
 def ordered_for_col(col):
     if any(re.search(p, col, re.IGNORECASE) for p in LIKERT_PATTERNS):
         return ORDERED_LIKERT
     if any(re.search(p, col, re.IGNORECASE) for p in CONFIDENCE_PATTERNS):
         return ORDERED_CONFIDENCE
+    return None
+
+def get_branching_denom(df_sub, question_label):
+    """Return parent-eligible count if question_label matches a branching rule, else None."""
+    for rule in BRANCHING_RULES:
+        if any(re.search(p, question_label, re.IGNORECASE) for p in rule["child_patterns"]):
+            parent_col = next(
+                (c for c in df_sub.columns
+                 if re.search(rule["parent_pattern"], c, re.IGNORECASE)
+                 and "(choice=" not in c),
+                None
+            )
+            if parent_col:
+                return int(
+                    (df_sub[parent_col].str.strip().str.lower()
+                     == rule["parent_value"].lower()).sum()
+                )
     return None
 
 print(f"\nColumn types detected:")
@@ -464,37 +495,60 @@ if not completion_time_df.empty:
     )
 
 # ── Frequency functions ───────────────────────────────────────────────────────
-def freq_single(series, question_text, ordered=None):
-    """Frequency table for a single-choice column."""
+def freq_single(series, question_text, ordered=None, n_denom=None, include_missing=False):
+    """Frequency table for a single-choice column.
+
+    n_denom: override denominator (use for branching questions where eligible
+             pool > those who answered).  When None, denominator = answered.
+    include_missing: if True and n_denom is set, append a Missing (skipped) row.
+    """
     vals = series.apply(norm_val).dropna()
-    n_total = len(vals)
-    if n_total == 0:
+    n_answered = len(vals)
+    if n_answered == 0 and not (n_denom and n_denom > 0):
         return None
+    denom = n_denom if n_denom is not None else n_answered
     counts = vals.value_counts(dropna=True)
     if ordered:
         idx = [o for o in ordered if o in counts.index]
         idx += [v for v in counts.index if v not in idx]
         counts = counts.reindex(idx).dropna()
-    pct = (counts / n_total * 100).round(1)
+    pct = (counts / denom * 100).round(1)
     out = pd.DataFrame({"Response": counts.index, "n": counts.values, "%": pct.values})
     out.insert(0, "Question", re.sub(r'\s+', ' ', str(question_text)).strip())
     out.insert(1, "Type", "Single choice")
-    out["N (answered)"] = n_total
+    out["N (denominator)"] = denom
+    if include_missing and n_denom is not None:
+        n_missing = denom - n_answered
+        if n_missing > 0:
+            missing_row = pd.DataFrame([{
+                "Question":        re.sub(r'\s+', ' ', str(question_text)).strip(),
+                "Type":            "Single choice",
+                "Response":        "Missing (skipped)",
+                "n":               n_missing,
+                "%":               round(n_missing / denom * 100, 1),
+                "N (denominator)": denom,
+            }])
+            out = pd.concat([out, missing_row], ignore_index=True)
     return out
 
-def freq_checkbox_group(df_sub, parent_q, child_cols):
+def freq_checkbox_group(df_sub, parent_q, child_cols,
+                         n_denom_override=None, include_missing=False):
     """Frequency table for a checkbox group.
 
-    Denominator = rows where at least one child column has a non-blank value.
-    Falls back to all rows in df_sub if every value is blank (e.g. question
-    only shown via branching logic and responses stored as empty strings).
+    Denominator = rows where at least one child column has a non-blank value,
+    unless n_denom_override is supplied (use for branching questions where the
+    eligible pool > those who answered).
+
+    include_missing: if True and n_denom_override is set, append a Missing
+                     (skipped) row for those in the eligible pool who left the
+                     entire question blank.
     """
     has_response = df_sub[child_cols].apply(
         lambda col: col.str.strip().ne("")
     ).any(axis=1)
-    n_denom = has_response.sum()
+    n_answered = has_response.sum()
 
-    if n_denom == 0:
+    if n_answered == 0:
         # Fallback: count every row with at least one "Checked" / "1" value
         has_checked = df_sub[child_cols].apply(
             lambda col: col.apply(is_checked)
@@ -504,9 +558,10 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
             print(f"  WARNING: skipping checkbox group (all blank): "
                   f"{short_q(parent_q, 70)}")
             return None
-        # Some rows were checked even though the "has any value" mask missed them
-        n_denom = n_checked_total
+        n_answered   = n_checked_total
         has_response = has_checked
+
+    n_denom = n_denom_override if n_denom_override is not None else n_answered
 
     # Group child columns by their choice label so pandas dedup variants
     # (.1, .2, …) are combined rather than emitted as separate response rows.
@@ -528,6 +583,19 @@ def freq_checkbox_group(df_sub, parent_q, child_cols):
             "%":               round(n_checked / n_denom * 100, 1),
             "N (denominator)": int(n_denom),
         })
+
+    if include_missing and n_denom_override is not None:
+        n_missing = int(n_denom) - int(n_answered)
+        if n_missing > 0:
+            rows.append({
+                "Question":        re.sub(r'\s+', ' ', str(parent_q)).strip(),
+                "Type":            "Select all that apply",
+                "Response":        "Missing (skipped)",
+                "n":               n_missing,
+                "%":               round(n_missing / n_denom * 100, 1),
+                "N (denominator)": int(n_denom),
+            })
+
     return pd.DataFrame(rows)
 
 def free_text_for_question(df_sub, q_key):
@@ -570,7 +638,10 @@ def build_all_frequencies(df_sub):
             emitted_checkbox_parents.add(parent)
             child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if child_cols:
-                t = freq_checkbox_group(df_sub, parent, child_cols)
+                n_br = get_branching_denom(df_sub, parent)
+                t = freq_checkbox_group(df_sub, parent, child_cols,
+                                        n_denom_override=n_br,
+                                        include_missing=(n_br is not None))
                 if t is not None:
                     parts.append(t)
                     ft = free_text_for_question(df_sub, parent)
@@ -580,7 +651,9 @@ def build_all_frequencies(df_sub):
             # Single-choice — use disambiguated label for Complete? columns
             label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
-            t = freq_single(df_sub[col], label, ordered)
+            n_br    = get_branching_denom(df_sub, label)
+            t = freq_single(df_sub[col], label, ordered,
+                            n_denom=n_br, include_missing=(n_br is not None))
             if t is not None:
                 parts.append(t)
                 ft = free_text_for_question(df_sub, label)
