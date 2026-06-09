@@ -195,6 +195,8 @@ build_plot_data <- function(df_in, collapsed,
                              pos_label = "Positive", neg_label = "Negative",
                              neutral_label = "Neither") {
 
+  if (nrow(df_in) == 0) stop("build_plot_data: df_in is empty — check question patterns match the Excel file")
+
   has_dk      <- length(dk_levels)      > 0 && any(df_in$Response %in% dk_levels,      na.rm = TRUE)
   has_neutral <- length(neutral_levels) > 0 && any(df_in$Response %in% neutral_levels, na.rm = TRUE)
   all_resp    <- c(pos_levels, neg_levels, dk_levels, neutral_levels)
@@ -276,6 +278,14 @@ build_plot_data <- function(df_in, collapsed,
       summarise(pos_total = sum(pct, na.rm = TRUE), n_all = first(n_all), .groups = "drop") %>%
       arrange(pos_total) %>%
       mutate(y = row_number())
+
+    if (nrow(q_pos_order) == 0) {
+      stop(paste0(
+        "build_plot_data: no positive-level responses found in data.\n",
+        "  pos_levels expected : ", paste(pos_levels, collapse = ", "), "\n",
+        "  Response values seen: ", paste(sort(unique(df$category)), collapse = ", ")
+      ))
+    }
 
     q_order <- q_pos_order$q_short
 
