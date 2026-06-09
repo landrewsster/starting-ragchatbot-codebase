@@ -32,13 +32,18 @@ LIKERT_POS <- c("Agree", "Strongly agree")
 LIKERT_NEG <- c("Disagree", "Strongly disagree")
 CONF_POS   <- c("Somewhat confident", "Very confident")
 CONF_NEG   <- c("Not confident")
-KNOW_POS   <- c("Somewhat knowledgeable", "Very Knowledgeable")
-KNOW_NEG   <- c("Not Very Knowledgeable", "Not at all knowledgeable")
-DK         <- "Don't know"
+KNOW_POS      <- c("Somewhat knowledgeable", "Very Knowledgeable")
+KNOW_NEG      <- c("Not Very Knowledgeable", "Not at all knowledgeable")
+OPINION_POS     <- c("Somewhat supportive", "Very supportive")
+OPINION_NEG     <- c("Somewhat opposed", "Very opposed")
+OPINION_NEUTRAL <- c("Neither supportive nor opposed")
+DK            <- "Don't know"
 
 ALL_RESP_LEVELS <- unique(c(LIKERT_POS, LIKERT_NEG,
                              CONF_POS, CONF_NEG,
-                             KNOW_POS, KNOW_NEG, DK))
+                             KNOW_POS, KNOW_NEG,
+                             OPINION_POS, OPINION_NEG, OPINION_NEUTRAL,
+                             DK))
 
 # ── Question patterns ─────────────────────────────────────────────────────────
 CHART1_PATTERNS <- c(
@@ -52,9 +57,10 @@ CHART2_PATTERNS <- c(
   "therapeutic reasons",
   "contraindication to breastfeeding"
 )
-CONF_PATTERNS <- c("talk about (cannabis|tobacco|alcohol)")
-KNOW_PATTERNS <- c("level of knowledge")
-ALL_PATTERNS  <- c(CHART1_PATTERNS, CHART2_PATTERNS, CONF_PATTERNS, KNOW_PATTERNS)
+CONF_PATTERNS    <- c("talk about (cannabis|tobacco|alcohol)")
+KNOW_PATTERNS    <- c("level of knowledge")
+OPINION_PATTERNS <- c("feel about the legalization", "legalization of.*cannabis in minnesota")
+ALL_PATTERNS  <- c(CHART1_PATTERNS, CHART2_PATTERNS, CONF_PATTERNS, KNOW_PATTERNS, OPINION_PATTERNS)
 
 # ── Short labels ──────────────────────────────────────────────────────────────
 # Listed most-specific first; first match wins.
@@ -82,7 +88,11 @@ SHORT_LABELS <- list(
   "who are breastfeeding"              = "Knowledge: patients\nwho are breastfeeding",
   "level of knowledge.*pregnant"       = "Knowledge: patients\nwho are pregnant",
   "level of knowledge.*breastfeed"     = "Knowledge: patients\nwho are breastfeeding",
-  "level of knowledge"                 = "Knowledge: patients"   # fallback
+  "level of knowledge"                 = "Knowledge: patients",  # fallback
+  # Opinion — legalization
+  "legalization of medical cannabis"           = "Medical cannabis\nlegalization (MN)",
+  "non.medical.*recreational|recreational.*cannabis in minnesota" = "Recreational cannabis\nlegalization (MN)",
+  "legalization.*cannabis in minnesota"        = "Cannabis legalization (MN)"  # fallback
 )
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -106,6 +116,16 @@ ALL_COLORS <- c(
   "Not knowledgeable"        = "#c0392b",
   "Confident"                = "#7b2d8b",
   # "Agree" / "Disagree" / "Not confident" already covered above
+  # Opinion — uncollapsed
+  "Very supportive"                = "#1a5c32",
+  "Somewhat supportive"            = "#74c476",
+  "Neither supportive nor opposed" = "#cccccc",
+  "Somewhat opposed"               = "#f4a261",
+  "Very opposed"                   = "#c0392b",
+  # Opinion — collapsed
+  "Supportive"                     = "#2d7d46",
+  "Opposed"                        = "#c0392b",
+  "Neither"                        = "#cccccc",
   # DK (shared)
   "Don't know"               = "#aaaaaa"
 )
@@ -153,33 +173,41 @@ raw <- raw %>% left_join(q_label_map, by = "Question")
 
 raw1     <- raw %>% filter(sapply(Question, is_q_in, patterns = CHART1_PATTERNS))
 raw2     <- raw %>% filter(sapply(Question, is_q_in, patterns = CHART2_PATTERNS))
-raw_conf <- raw %>% filter(sapply(Question, is_q_in, patterns = CONF_PATTERNS))
-raw_know <- raw %>% filter(sapply(Question, is_q_in, patterns = KNOW_PATTERNS))
+raw_conf    <- raw %>% filter(sapply(Question, is_q_in, patterns = CONF_PATTERNS))
+raw_know    <- raw %>% filter(sapply(Question, is_q_in, patterns = KNOW_PATTERNS))
+raw_opinion <- raw %>% filter(sapply(Question, is_q_in, patterns = OPINION_PATTERNS))
 
-cat("Chart 1 (attitude-screening)  :", n_distinct(raw1$Question),     "questions\n")
-cat("Chart 2 (attitude-safety)     :", n_distinct(raw2$Question),     "questions\n")
-cat("Confidence                    :", n_distinct(raw_conf$Question),  "questions\n")
-cat("Knowledge                     :", n_distinct(raw_know$Question),  "questions\n")
+cat("Chart 1 (attitude-screening)  :", n_distinct(raw1$Question),       "questions\n")
+cat("Chart 2 (attitude-safety)     :", n_distinct(raw2$Question),       "questions\n")
+cat("Confidence                    :", n_distinct(raw_conf$Question),    "questions\n")
+cat("Knowledge                     :", n_distinct(raw_know$Question),    "questions\n")
+cat("Opinion (legalization)        :", n_distinct(raw_opinion$Question), "questions\n")
 
 # ── Helper: build plot data ───────────────────────────────────────────────────
-# pos_levels : ordered inner→outer (e.g. c("Agree", "Strongly agree"))
-# neg_levels : ordered inner→outer (e.g. c("Disagree", "Strongly disagree"))
-# dk_levels  : don't-know level(s); pass character(0) if none
-# pos_label / neg_label : labels used when collapsed = TRUE
+# pos_levels     : ordered inner→outer (e.g. c("Agree", "Strongly agree"))
+# neg_levels     : ordered inner→outer (e.g. c("Disagree", "Strongly disagree"))
+# dk_levels      : don't-know level(s); pass character(0) if none
+# neutral_levels : midpoint level(s) centered at x=0; pass character(0) if none
+# pos_label / neg_label / neutral_label : labels used when collapsed = TRUE
 build_plot_data <- function(df_in, collapsed,
                              pos_levels, neg_levels, dk_levels = DK,
-                             pos_label = "Positive", neg_label = "Negative") {
+                             neutral_levels = character(0),
+                             pos_label = "Positive", neg_label = "Negative",
+                             neutral_label = "Neither") {
 
-  has_dk <- length(dk_levels) > 0 && any(df_in$Response %in% dk_levels, na.rm = TRUE)
+  has_dk      <- length(dk_levels)      > 0 && any(df_in$Response %in% dk_levels,      na.rm = TRUE)
+  has_neutral <- length(neutral_levels) > 0 && any(df_in$Response %in% neutral_levels, na.rm = TRUE)
+  all_resp    <- c(pos_levels, neg_levels, dk_levels, neutral_levels)
 
   # ---- COLLAPSED ----
   if (collapsed) {
     df <- df_in %>%
-      filter(Response %in% c(pos_levels, neg_levels, dk_levels)) %>%
+      filter(Response %in% all_resp) %>%
       mutate(category = case_when(
-        Response %in% pos_levels ~ pos_label,
-        Response %in% neg_levels ~ neg_label,
-        Response %in% dk_levels  ~ "Don't know",
+        Response %in% pos_levels     ~ pos_label,
+        Response %in% neg_levels     ~ neg_label,
+        Response %in% dk_levels      ~ "Don't know",
+        Response %in% neutral_levels ~ neutral_label,
         TRUE ~ NA_character_
       )) %>%
       filter(!is.na(category)) %>%
@@ -192,10 +220,11 @@ build_plot_data <- function(df_in, collapsed,
     anchors <- df %>%
       group_by(Question, q_short) %>%
       summarise(
-        pos_pct = sum(pct[category == pos_label],     na.rm = TRUE),
-        neg_pct = sum(pct[category == neg_label],     na.rm = TRUE),
-        dk_pct  = sum(pct[category == "Don't know"],  na.rm = TRUE),
-        n_all   = first(n_all),
+        pos_pct     = sum(pct[category == pos_label],     na.rm = TRUE),
+        neg_pct     = sum(pct[category == neg_label],     na.rm = TRUE),
+        dk_pct      = sum(pct[category == "Don't know"],  na.rm = TRUE),
+        neutral_pct = sum(pct[category == neutral_label], na.rm = TRUE),
+        n_all       = first(n_all),
         .groups = "drop"
       ) %>%
       arrange(pos_pct) %>%
@@ -204,12 +233,20 @@ build_plot_data <- function(df_in, collapsed,
     q_order <- anchors$q_short
     n_df    <- df %>% select(Question, category, n_count)
 
+    # Pos/neg bars are offset from center by half the neutral width.
+    # When neutral_pct = 0 (no neutral), this reduces to the standard form.
     plot_df <- bind_rows(
       anchors %>% transmute(Question, q_short, y, category = pos_label,
-                            xmin = 0,       xmax = pos_pct),
+                            xmin =  neutral_pct / 2,
+                            xmax =  neutral_pct / 2 + pos_pct),
       anchors %>% transmute(Question, q_short, y, category = neg_label,
-                            xmin = -neg_pct, xmax = 0)
+                            xmin = -(neutral_pct / 2 + neg_pct),
+                            xmax = -neutral_pct / 2)
     )
+    if (has_neutral)
+      plot_df <- bind_rows(plot_df,
+        anchors %>% transmute(Question, q_short, y, category = neutral_label,
+                              xmin = -neutral_pct / 2, xmax = neutral_pct / 2))
     if (has_dk)
       plot_df <- bind_rows(plot_df,
         anchors %>% transmute(Question, q_short, y, category = "Don't know",
@@ -217,12 +254,15 @@ build_plot_data <- function(df_in, collapsed,
 
     plot_df <- plot_df %>% left_join(n_df, by = c("Question", "category"))
 
-    factor_lvls <- c(neg_label, pos_label, if (has_dk) "Don't know")
+    factor_lvls <- c(neg_label,
+                     if (has_neutral) neutral_label,
+                     pos_label,
+                     if (has_dk) "Don't know")
 
   # ---- UNCOLLAPSED ----
   } else {
     df <- df_in %>%
-      filter(Response %in% c(pos_levels, neg_levels, dk_levels)) %>%
+      filter(Response %in% all_resp) %>%
       mutate(category = Response) %>%
       group_by(Question, q_short, category) %>%
       summarise(n_count = sum(n, na.rm = TRUE), .groups = "drop") %>%
@@ -230,7 +270,6 @@ build_plot_data <- function(df_in, collapsed,
       mutate(n_all = sum(n_count), pct = n_count / n_all * 100) %>%
       ungroup()
 
-    # Sort questions by total positive %
     q_pos_order <- df %>%
       filter(category %in% pos_levels) %>%
       group_by(Question, q_short) %>%
@@ -240,7 +279,6 @@ build_plot_data <- function(df_in, collapsed,
 
     q_order <- q_pos_order$q_short
 
-    # Build bar segments per question
     all_bars <- vector("list", nrow(q_pos_order))
     for (i in seq_len(nrow(q_pos_order))) {
       qrow  <- q_pos_order[i, ]
@@ -256,10 +294,13 @@ build_plot_data <- function(df_in, collapsed,
         if (length(r) == 0) NA_real_ else r[1]
       }
 
+      # Neutral half-width shifts the pos/neg stacks away from center
+      neutral_offset <- if (has_neutral) sum(sapply(neutral_levels, get_pct)) / 2 else 0
+
       pos_pcts <- sapply(pos_levels, get_pct)
-      pos_cum  <- cumsum(c(0, pos_pcts))
+      pos_cum  <- cumsum(c(neutral_offset, pos_pcts))
       neg_pcts <- sapply(neg_levels, get_pct)
-      neg_cum  <- cumsum(c(0, neg_pcts))
+      neg_cum  <- cumsum(c(neutral_offset, neg_pcts))
 
       bars <- tibble(
         Question = qrow$Question,
@@ -273,6 +314,16 @@ build_plot_data <- function(df_in, collapsed,
         n_count  = c(sapply(pos_levels, get_n), sapply(neg_levels, get_n))
       )
 
+      if (has_neutral) {
+        neutral_pct_val <- sum(sapply(neutral_levels, get_pct))
+        neutral_n_val   <- sum(sapply(neutral_levels, get_n), na.rm = TRUE)
+        bars <- bind_rows(bars, tibble(
+          Question = qrow$Question, q_short = qrow$q_short, y = y_val,
+          category = neutral_label,
+          xmin = -neutral_pct_val / 2, xmax = neutral_pct_val / 2,
+          n_count = neutral_n_val
+        ))
+      }
       if (has_dk) {
         dk_pct_val <- sum(sapply(dk_levels, get_pct))
         dk_n_val   <- sum(sapply(dk_levels, get_n), na.rm = TRUE)
@@ -289,7 +340,10 @@ build_plot_data <- function(df_in, collapsed,
     plot_df <- bind_rows(all_bars)
     anchors <- q_pos_order %>% rename(pos_pct = pos_total)
 
-    factor_lvls <- c(rev(neg_levels), pos_levels, if (has_dk) "Don't know")
+    factor_lvls <- c(rev(neg_levels),
+                     if (has_neutral) neutral_label,
+                     pos_levels,
+                     if (has_dk) "Don't know")
   }
 
   plot_df <- plot_df %>%
@@ -305,12 +359,15 @@ build_plot_data <- function(df_in, collapsed,
 # ── Chart builder ─────────────────────────────────────────────────────────────
 make_chart <- function(df_in, collapsed,
                         pos_levels, neg_levels, dk_levels = DK,
+                        neutral_levels = character(0),
                         pos_label = "Positive", neg_label = "Negative",
+                        neutral_label = "Neither",
                         pos_arrow = NULL, neg_arrow = NULL,
                         title = "Cannabis Screening Survey") {
 
   d       <- build_plot_data(df_in, collapsed, pos_levels, neg_levels,
-                              dk_levels, pos_label, neg_label)
+                              dk_levels, neutral_levels,
+                              pos_label, neg_label, neutral_label)
   plot_df <- d$plot_df
   anchors <- d$anchors
   q_order <- d$q_order
@@ -325,12 +382,16 @@ make_chart <- function(df_in, collapsed,
 
   caption_text <- if (collapsed) {
     glue_collapse(c(
-      if (length(pos_levels) > 1) paste0(pos_label, " = ", paste(rev(pos_levels), collapse = " + ")),
-      if (length(neg_levels) > 1) paste0(neg_label, " = ", paste(rev(neg_levels), collapse = " + ")),
+      if (length(pos_levels)     > 1) paste0(pos_label,     " = ", paste(rev(pos_levels),     collapse = " + ")),
+      if (length(neg_levels)     > 1) paste0(neg_label,     " = ", paste(rev(neg_levels),     collapse = " + ")),
+      if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
       "Percentages of all respondents."
     ), sep = "  ")
   } else {
-    "Percentages of all respondents."
+    glue_collapse(c(
+      if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
+      "Percentages of all respondents."
+    ), sep = "  ")
   }
 
   p <- ggplot(plot_df) +
@@ -483,3 +544,26 @@ ggsave(make_out("knowledge", "uncollapsed"),
                   title = KNOW_TITLE),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("knowledge", "uncollapsed")), "\n")
+
+# Opinion chart (2 questions, no DK, neutral midpoint centered at zero)
+OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
+
+ggsave(make_out("opinion", "collapsed"),
+       make_chart(raw_opinion, TRUE,  OPINION_POS, OPINION_NEG, character(0),
+                  neutral_levels = OPINION_NEUTRAL,
+                  pos_label = "Supportive", neg_label = "Opposed",
+                  neutral_label = "Neither",
+                  pos_arrow = "Supportive →", neg_arrow = "← Opposed",
+                  title = OPINION_TITLE),
+       width = 11, height = 3.5, dpi = 300, bg = "white")
+cat("Saved:", basename(make_out("opinion", "collapsed")), "\n")
+
+ggsave(make_out("opinion", "uncollapsed"),
+       make_chart(raw_opinion, FALSE, OPINION_POS, OPINION_NEG, character(0),
+                  neutral_levels = OPINION_NEUTRAL,
+                  pos_label = "Supportive", neg_label = "Opposed",
+                  neutral_label = "Neither",
+                  pos_arrow = "Supportive →", neg_arrow = "← Opposed",
+                  title = OPINION_TITLE),
+       width = 11, height = 3.5, dpi = 300, bg = "white")
+cat("Saved:", basename(make_out("opinion", "uncollapsed")), "\n")
