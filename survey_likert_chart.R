@@ -31,7 +31,7 @@ make_out  <- function(tag, suffix) sub("\\.xlsx$", paste0("_", tag, "_", suffix,
 LIKERT_POS <- c("Agree", "Strongly agree")
 LIKERT_NEG <- c("Disagree", "Strongly disagree")
 CONF_POS   <- c("Somewhat confident", "Very confident")
-CONF_NEG   <- c("Not confident")
+CONF_NEG   <- c("Not very confident", "Not at all confident")
 KNOW_POS      <- c("Somewhat knowledgeable", "Very Knowledgeable")
 KNOW_NEG      <- c("Not Very Knowledgeable", "Not at all knowledgeable")
 OPINION_POS     <- c("Somewhat supportive", "Very supportive")
@@ -107,7 +107,9 @@ ALL_COLORS <- c(
   # Confidence — uncollapsed
   "Very confident"           = "#4a1463",
   "Somewhat confident"       = "#b07cc6",
-  "Not confident"            = "#c0392b",
+  "Not very confident"       = "#f4a261",
+  "Not at all confident"     = "#c0392b",
+  "Not confident"            = "#c0392b",   # kept for backward compat
   # Knowledge — uncollapsed
   "Very Knowledgeable"       = "#084594",
   "Somewhat knowledgeable"   = "#6baed6",
@@ -146,10 +148,22 @@ is_q_in <- function(q, patterns) {
   any(sapply(patterns, function(p) str_detect(str_to_lower(q), regex(p, ignore_case = TRUE))))
 }
 
+# Case-insensitive response normalization: maps lower-cased response strings to
+# the canonical ALL_RESP_LEVELS spelling, so minor capitalisation differences in
+# the Excel don't silently drop rows.
+resp_norm_lookup <- setNames(ALL_RESP_LEVELS, str_to_lower(ALL_RESP_LEVELS))
+
 raw <- eligible %>%
   filter(sapply(Question, is_q_in, patterns = ALL_PATTERNS)) %>%
-  filter(Response %in% ALL_RESP_LEVELS) %>%
-  mutate(n = as.numeric(n))
+  mutate(
+    Response = {
+      lwr <- str_to_lower(Response)
+      dplyr::if_else(lwr %in% names(resp_norm_lookup),
+                     resp_norm_lookup[lwr], Response)
+    },
+    n = as.numeric(n)
+  ) %>%
+  filter(Response %in% ALL_RESP_LEVELS)
 
 if (nrow(raw) == 0) stop("No rows found — check FREQ_FILE path.")
 
@@ -444,9 +458,10 @@ make_chart <- function(df_in, collapsed,
       axis.text.y        = element_text(size = 7.5, lineheight = 1.2),
       axis.text.x.bottom = element_text(size = 9),
       axis.text.x.top    = element_text(size = 8, color = "gray50"),
-      plot.title         = element_text(face = "bold", size = 12),
-      plot.caption       = element_text(size = 8, color = "gray60"),
-      plot.margin        = margin(10, 20, 10, 5)
+      plot.title            = element_text(face = "bold", size = 12),
+      plot.caption          = element_text(size = 8, color = "gray60", hjust = 0.5),
+      plot.caption.position = "plot",
+      plot.margin           = margin(10, 20, 10, 5)
     ) +
     guides(fill = guide_legend(nrow = 1))
 
@@ -529,7 +544,7 @@ ggsave(make_out("confidence", "collapsed"),
                   pos_label = "Confident", neg_label = "Not confident",
                   pos_arrow = "Confident →", neg_arrow = "← Not confident",
                   title = CONF_TITLE),
-       width = 11, height = 4.5, dpi = 300, bg = "white")
+       width = 12, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("confidence", "collapsed")), "\n")
 
 ggsave(make_out("confidence", "uncollapsed"),
@@ -537,7 +552,7 @@ ggsave(make_out("confidence", "uncollapsed"),
                   pos_label = "Confident", neg_label = "Not confident",
                   pos_arrow = "Confident →", neg_arrow = "← Not confident",
                   title = CONF_TITLE),
-       width = 11, height = 4.5, dpi = 300, bg = "white")
+       width = 12, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("confidence", "uncollapsed")), "\n")
 
 # Knowledge chart (3 questions, no Don't know)
