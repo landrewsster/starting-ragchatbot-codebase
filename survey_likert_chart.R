@@ -508,14 +508,13 @@ LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeedin
 CONF_TITLE   <- "Confidence in Discussing Substance Use with Patients"
 KNOW_TITLE   <- "Knowledge of Cannabis Health Risks by Patient Population"
 
-# Chart 1 — attitude (screening items, 3 questions)
-ggsave(make_out("likert_chart1", "collapsed"),
-       make_chart(raw1, TRUE,  LIKERT_POS, LIKERT_NEG, DK,
-                  pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE),
-       width = 11, height = 4.5, dpi = 300, bg = "white")
-cat("Saved:", basename(make_out("likert_chart1", "collapsed")), "\n")
+# ── Save charts (uncollapsed only) ───────────────────────────────────────────
+LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
+CONF_TITLE   <- "Confidence in Discussing Substance Use with Patients"
+KNOW_TITLE   <- "Knowledge of Cannabis Health Risks by Patient Population"
+OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
 
+# Chart 1 — attitude screening items (3 questions)
 ggsave(make_out("likert_chart1", "uncollapsed"),
        make_chart(raw1, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
@@ -523,14 +522,7 @@ ggsave(make_out("likert_chart1", "uncollapsed"),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 
-# Chart 2 — attitude (safety/belief items, 5 questions)
-ggsave(make_out("likert_chart2", "collapsed"),
-       make_chart(raw2, TRUE,  LIKERT_POS, LIKERT_NEG, DK,
-                  pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE),
-       width = 13, height = 7, dpi = 300, bg = "white")
-cat("Saved:", basename(make_out("likert_chart2", "collapsed")), "\n")
-
+# Chart 2 — attitude safety/belief items (5 questions)
 ggsave(make_out("likert_chart2", "uncollapsed"),
        make_chart(raw2, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
@@ -539,14 +531,6 @@ ggsave(make_out("likert_chart2", "uncollapsed"),
 cat("Saved:", basename(make_out("likert_chart2", "uncollapsed")), "\n")
 
 # Confidence chart (3 questions, has Don't know)
-ggsave(make_out("confidence", "collapsed"),
-       make_chart(raw_conf, TRUE,  CONF_POS, CONF_NEG, DK,
-                  pos_label = "Confident", neg_label = "Not confident",
-                  pos_arrow = "Confident →", neg_arrow = "← Not confident",
-                  title = CONF_TITLE),
-       width = 12, height = 4.5, dpi = 300, bg = "white")
-cat("Saved:", basename(make_out("confidence", "collapsed")), "\n")
-
 ggsave(make_out("confidence", "uncollapsed"),
        make_chart(raw_conf, FALSE, CONF_POS, CONF_NEG, DK,
                   pos_label = "Confident", neg_label = "Not confident",
@@ -556,14 +540,6 @@ ggsave(make_out("confidence", "uncollapsed"),
 cat("Saved:", basename(make_out("confidence", "uncollapsed")), "\n")
 
 # Knowledge chart (3 questions, no Don't know)
-ggsave(make_out("knowledge", "collapsed"),
-       make_chart(raw_know, TRUE,  KNOW_POS, KNOW_NEG, character(0),
-                  pos_label = "Knowledgeable", neg_label = "Not knowledgeable",
-                  pos_arrow = "Knowledgeable →", neg_arrow = "← Not knowledgeable",
-                  title = KNOW_TITLE),
-       width = 11, height = 4.5, dpi = 300, bg = "white")
-cat("Saved:", basename(make_out("knowledge", "collapsed")), "\n")
-
 ggsave(make_out("knowledge", "uncollapsed"),
        make_chart(raw_know, FALSE, KNOW_POS, KNOW_NEG, character(0),
                   pos_label = "Knowledgeable", neg_label = "Not knowledgeable",
@@ -573,18 +549,6 @@ ggsave(make_out("knowledge", "uncollapsed"),
 cat("Saved:", basename(make_out("knowledge", "uncollapsed")), "\n")
 
 # Opinion chart (2 questions, no DK, neutral midpoint centered at zero)
-OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
-
-ggsave(make_out("opinion", "collapsed"),
-       make_chart(raw_opinion, TRUE,  OPINION_POS, OPINION_NEG, character(0),
-                  neutral_levels = OPINION_NEUTRAL,
-                  pos_label = "Supportive", neg_label = "Opposed",
-                  neutral_label = "Neither",
-                  pos_arrow = "Supportive →", neg_arrow = "← Opposed",
-                  title = OPINION_TITLE),
-       width = 11, height = 3.5, dpi = 300, bg = "white")
-cat("Saved:", basename(make_out("opinion", "collapsed")), "\n")
-
 ggsave(make_out("opinion", "uncollapsed"),
        make_chart(raw_opinion, FALSE, OPINION_POS, OPINION_NEG, character(0),
                   neutral_levels = OPINION_NEUTRAL,
