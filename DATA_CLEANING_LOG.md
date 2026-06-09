@@ -45,14 +45,14 @@ When you make a change to the CSV:
 
 ---
 
-### [DATE UNKNOWN] Recode screening method for Record 217 *(recode uncertain — confirm)*
+### [DATE UNKNOWN] Recode screening method for Record 217
 
 | Field | Detail |
 |-------|--------|
 | **Type** | Value recode |
 | **Record ID** | 217 (eligible) |
 | **How to identify** | Column `Specify.1` contains: *"targeted screening based on patient admitting substance use"* |
-| **Change made** | Column `Specify.1` → `Patients with a self-reported history of drug abuse` *(recode marked uncertain — verify before applying)* |
+| **Change made** | Column `Specify.1` → `Patients with a self-reported history of drug abuse` |
 | **Reason** | Free-text description most closely matches the "self-reported history" response option |
 
 ---
