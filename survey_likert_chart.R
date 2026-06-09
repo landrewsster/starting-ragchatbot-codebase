@@ -215,6 +215,8 @@ build_plot_data <- function(df_in, collapsed,
         anchors %>% transmute(Question, q_short, y, category = "Don't know",
                               xmin = DK_START, xmax = DK_START + dk_pct))
 
+    plot_df <- plot_df %>% left_join(n_df, by = c("Question", "category"))
+
     factor_lvls <- c(neg_label, pos_label, if (has_dk) "Don't know")
 
   # ---- UNCOLLAPSED ----
