@@ -21,40 +21,64 @@ When you make a change to the CSV:
 
 ---
 
+### [DATE UNKNOWN] Recode free-text screening method for Record 247
+
+| Field | Detail |
+|-------|--------|
+| **Type** | Value recode |
+| **Record ID** | 247 (eligible) |
+| **How to identify** | Column `Specify.3` contains: *"Part of rooming questions"* |
+| **Change made** | Column `Specify.3` → `Standardized assessment tool/questionnaire, care team administered. Please specify:` |
+| **Reason** | Free-text clarifies this is a standardized care-team-administered tool |
+
+---
+
+### [DATE UNKNOWN] Recode free-text screening method for Record 143
+
+| Field | Detail |
+|-------|--------|
+| **Type** | Value recode |
+| **Record ID** | 143 (eligible) |
+| **How to identify** | Column `Specify.3` contains: *"pt questionnaire in Epic"* |
+| **Change made** | Column `Specify.3` → `Standardized assessment tool/questionnaire, patient-administered (e.g., patient fills out form). Please specify:` |
+| **Reason** | Free-text clarifies this is a patient-administered questionnaire in Epic |
+
+---
+
+### [DATE UNKNOWN] Recode screening method for Record 217 *(recode uncertain — confirm)*
+
+| Field | Detail |
+|-------|--------|
+| **Type** | Value recode |
+| **Record ID** | 217 (eligible) |
+| **How to identify** | Column `Specify.1` contains: *"targeted screening based on patient admitting substance use"* |
+| **Change made** | Column `Specify.1` → `Patients with a self-reported history of drug abuse` *(recode marked uncertain — verify before applying)* |
+| **Reason** | Free-text description most closely matches the "self-reported history" response option |
+
+---
+
+### [DATE UNKNOWN] Recoded screening question for Record 128
+
+| Field | Detail |
+|-------|--------|
+| **Type** | Value recode |
+| **Record ID** | 128 (eligible) |
+| **How to identify** | Column `Specify.1` contains: *"moving to the next slide clarified that 'screen' includes questioning if use. We ask 100% about any and all drugs used. 100%."* |
+| **Change made** | **Q: Do you or others in your practice screen all patients who are pregnant or breastfeeding for cannabis use?** → `Yes, all patients (i.e. universal screening)` |
+| **Also changed** | Cleared `Specify.1` free-text (no longer applicable after recode) |
+| **Reason** | Respondent clarified mid-survey they screen 100% of patients; initial "No" response did not reflect actual practice |
+
+---
+
 ### [DATE UNKNOWN] Deleted 4 test responses
 
 | Field | Detail |
 |-------|--------|
 | **Type** | Row deletion |
 | **Records affected** | 4 test/pilot submissions |
-| **How to identify** | *(Add identifying info here — e.g., record IDs, names, or a unique text string from their responses)* |
+| **How to identify** | County free-text field contained `"TEST"` (or similar test indicator) |
 | **Change made** | Deleted all 4 rows from the CSV |
 | **Reason** | Test submissions, not real respondents |
-
----
-
-### [DATE UNKNOWN] Recoded screening question for 1 respondent
-
-| Field | Detail |
-|-------|--------|
-| **Type** | Value recode |
-| **Records affected** | 1 respondent |
-| **How to identify** | Free-text response containing: *"moving to the next slide clarified that 'screen' includes questioning if use. We ask 100% about any and all drugs used."* |
-| **Change made** | **Q: Do you or others in your practice screen all patients who are pregnant or breastfeeding for cannabis use?** — changed response to `Yes, all patients (i.e. universal screening)` |
-| **Reason** | Respondent clarified mid-survey they screen 100% of patients; initial response did not reflect actual practice |
-| **Also changed** | Cleared their free-text response to "Why don't you or others in your practice screen all patients…" (no longer applicable after recode) |
-
----
-
-### [DATE UNKNOWN] Other recodes (details unknown)
-
-| Field | Detail |
-|-------|--------|
-| **Type** | Unknown |
-| **Records affected** | Unknown |
-| **How to identify** | *(Fill in when you remember or rediscover these)* |
-| **Change made** | *(Fill in)* |
-| **Reason** | *(Fill in)* |
 
 ---
 
@@ -68,8 +92,8 @@ Copy and paste this block for each new change:
 | Field | Detail |
 |-------|--------|
 | **Type** | Row deletion / Value recode / Column edit |
-| **Records affected** | N respondent(s) |
-| **How to identify** | Record ID: XXX  —OR—  unique text: "…" |
-| **Change made** | Column: [column name]  Old value: [X]  New value: [Y] |
+| **Record ID** | XXX (eligible / ineligible) |
+| **How to identify** | Column `[col]` contains: *"unique text string"* |
+| **Change made** | Column `[col]`  Old value: `[X]`  →  New value: `[Y]` |
 | **Reason** | … |
 ```
