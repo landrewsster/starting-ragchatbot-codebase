@@ -346,6 +346,25 @@ BRANCHING_RULES = [
         "parent_value":   ["Yes, all patients (i.e. universal screening)",
                            "No, only some patients"],
     },
+
+    # ── Q14 documentation question branches ───────────────────────────────────
+    # Q15 + Q16 — shown to those who answered "Yes" to Q14
+    {
+        "child_patterns": [
+            r"how is this information recorded within the electronic health record",
+            r"has your behavior around documenting this information changed since legalization",
+        ],
+        "parent_pattern": r"consistently record information in patient records about cannabis use",
+        "parent_value":   "Yes",
+    },
+    # Q17 — shown to those who answered "No" to Q14
+    {
+        "child_patterns": [
+            r"why don.t you or others.+consistently document this information",
+        ],
+        "parent_pattern": r"consistently record information in patient records about cannabis use",
+        "parent_value":   "No",
+    },
 ]
 
 def ordered_for_col(col):
