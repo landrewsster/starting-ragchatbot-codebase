@@ -406,7 +406,17 @@ def get_branching_denom(df_sub, question_label):
                     mask = col_lower.isin([v.lower() for v in pv])
                 else:
                     mask = col_lower == pv.lower()
-                return int(mask.sum())
+                n = int(mask.sum())
+                if n == 0:
+                    pv_display = pv if isinstance(pv, str) else " / ".join(pv)
+                    actual = sorted(df_sub[parent_col].str.strip().unique().tolist())
+                    print(f"  WARNING: branching rule matched '{short_q(question_label, 60)}' "
+                          f"but parent_value '{pv_display}' found 0 rows.\n"
+                          f"    Parent column: {short_q(parent_col, 70)}\n"
+                          f"    Actual values: {actual[:10]}\n"
+                          f"    → falling back to answered-only denominator")
+                    return None   # fall back: treat as no branching rule
+                return n
     return None
 
 print(f"\nColumn types detected:")
