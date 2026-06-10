@@ -1,30 +1,28 @@
 #!/bin/bash
 # run_survey.sh
 #
-# Runs the full survey analysis pipeline:
-#   1. survey_frequencies.py  — builds frequency tables → Excel
-#   2. survey_hbar_charts.R   — horizontal bar charts for SATA questions
+# Runs the full survey analysis pipeline.
+# Place this script in: ~/Downloads/CRC MDH Project/MDH analysis/
 #
 # Usage:
-#   ./run_survey.sh                        # uses default filename (survey_data.csv)
-#   ./run_survey.sh my_data_file.csv       # specify CSV filename
+#   ./run_survey.sh                  # uses the default CSV filename below
+#   ./run_survey.sh my_new_file.csv  # override with a different filename
 
 set -e   # stop on first error
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+CSV="${1:-MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-01_1832_EDITED.csv}"
 
-# ── Step 1: frequency tables ───────────────────────────────────────────────────
-echo "=== Step 1: survey_frequencies.py ==="
-if [ -n "$1" ]; then
-    python3 "$SCRIPT_DIR/survey_frequencies.py" "$1"
-else
-    python3 "$SCRIPT_DIR/survey_frequencies.py"
-fi
+echo "=== Step 1: survey_frequencies.py ($CSV) ==="
+python3 "$DIR/survey_frequencies.py" "$CSV"
 
-# ── Step 2: horizontal bar charts ─────────────────────────────────────────────
 echo ""
-echo "=== Step 2: survey_hbar_charts.R ==="
-Rscript "$SCRIPT_DIR/survey_hbar_charts.R"
+echo "=== Step 2: survey_likert_chart.R ==="
+Rscript "$DIR/survey_likert_chart.R"
+
+echo ""
+echo "=== Step 3: survey_hbar_charts.R ==="
+Rscript "$DIR/survey_hbar_charts.R"
 
 echo ""
 echo "Done."
