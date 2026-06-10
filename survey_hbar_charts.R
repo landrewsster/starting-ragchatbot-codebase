@@ -165,7 +165,8 @@ for (spec in CHARTS) {
   cat(sprintf("Building chart: %s  (%d response options)\n",
               spec$stem, nrow(raw)))
 
-  p <- make_hbar(raw, title = spec$title)
+  title_text <- if (!is.null(spec$title)) spec$title else unique(raw$Question)[1]
+  p <- make_hbar(raw, title = title_text)
   ggsave(make_out(spec$stem), p,
          width = 11, height = spec$height, dpi = 300, bg = "white")
   cat(sprintf("  Saved: %s\n", basename(make_out(spec$stem))))
