@@ -310,6 +310,44 @@ BRANCHING_RULES = [
         "parent_pattern": r"have you had any formal training related to cannabis",
         "parent_value":   "yes",
     },
+
+    # ── Screening question (Q1) branches ──────────────────────────────────────
+    # Q2 — "Who do you screen, if only some?" → only "No, only some patients"
+    {
+        "child_patterns": [
+            r"who do you or others.+screen.+if only some",
+        ],
+        "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
+        "parent_value":   "No, only some patients",
+    },
+    # Q3 — "Why don't you screen all patients?" → both "No" groups
+    {
+        "child_patterns": [
+            r"why don.t you or others.+screen all patients",
+        ],
+        "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
+        "parent_value":   ["No, only some patients",
+                           "No, don't screen any patients"],
+    },
+    # Q4 — "Why do you screen all patients?" → only "Yes, all patients"
+    {
+        "child_patterns": [
+            r"why do you or others.+screen all patients for cannabis",
+        ],
+        "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
+        "parent_value":   "Yes, all patients (i.e. universal screening)",
+    },
+    # Q5 — "Which approaches do you use to screen?" → "No, only some patients"
+    # NOTE: if the "Yes, all patients" group is also routed to this question,
+    # change parent_value to a list:
+    #   ["Yes, all patients (i.e. universal screening)", "No, only some patients"]
+    {
+        "child_patterns": [
+            r"which.+approaches.+most commonly use to screen patients for cannabis",
+        ],
+        "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
+        "parent_value":   "No, only some patients",
+    },
 ]
 
 def ordered_for_col(col):
