@@ -330,10 +330,13 @@ def get_branching_denom(df_sub, question_label):
                 None
             )
             if parent_col:
-                return int(
-                    (df_sub[parent_col].str.strip().str.lower()
-                     == rule["parent_value"].lower()).sum()
-                )
+                col_lower = df_sub[parent_col].str.strip().str.lower()
+                pv = rule["parent_value"]
+                if isinstance(pv, list):
+                    mask = col_lower.isin([v.lower() for v in pv])
+                else:
+                    mask = col_lower == pv.lower()
+                return int(mask.sum())
     return None
 
 print(f"\nColumn types detected:")
