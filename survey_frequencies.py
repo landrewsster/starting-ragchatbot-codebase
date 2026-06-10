@@ -337,16 +337,14 @@ BRANCHING_RULES = [
         "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
         "parent_value":   "Yes, all patients (i.e. universal screening)",
     },
-    # Q5 — "Which approaches do you use to screen?" → "No, only some patients"
-    # NOTE: if the "Yes, all patients" group is also routed to this question,
-    # change parent_value to a list:
-    #   ["Yes, all patients (i.e. universal screening)", "No, only some patients"]
+    # Q5 — "Which approaches do you use to screen?" → all who screen (Yes + No, only some)
     {
         "child_patterns": [
             r"which.+approaches.+most commonly use to screen patients for cannabis",
         ],
         "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
-        "parent_value":   "No, only some patients",
+        "parent_value":   ["Yes, all patients (i.e. universal screening)",
+                           "No, only some patients"],
     },
 ]
 
