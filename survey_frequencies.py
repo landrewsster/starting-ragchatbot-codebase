@@ -335,7 +335,7 @@ BRANCHING_RULES = [
             r"why do you or others.+screen all patients for cannabis",
         ],
         "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
-        "parent_value":   "Yes, all patients (i.e. universal screening)",
+        "parent_value":   "Yes, all patients (i.e., universal screening)",
     },
     # Q5 — "Which approaches do you use to screen?" → all who screen (Yes + No, only some)
     {
@@ -343,7 +343,7 @@ BRANCHING_RULES = [
             r"which.+approaches.+most commonly use to screen patients for cannabis",
         ],
         "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
-        "parent_value":   ["Yes, all patients (i.e. universal screening)",
+        "parent_value":   ["Yes, all patients (i.e., universal screening)",
                            "No, only some patients"],
     },
 
@@ -401,6 +401,11 @@ def get_branching_denom(df_sub, question_label):
             )
             if parent_col:
                 col_lower = df_sub[parent_col].str.strip().str.lower()
+                non_empty = col_lower[col_lower != ""]
+                if len(non_empty) == 0:
+                    # Parent column all blank for this group (e.g. ineligible
+                    # respondents never saw this question) — skip silently.
+                    return None
                 pv = rule["parent_value"]
                 if isinstance(pv, list):
                     mask = col_lower.isin([v.lower() for v in pv])
@@ -409,13 +414,13 @@ def get_branching_denom(df_sub, question_label):
                 n = int(mask.sum())
                 if n == 0:
                     pv_display = pv if isinstance(pv, str) else " / ".join(pv)
-                    actual = sorted(df_sub[parent_col].str.strip().unique().tolist())
+                    actual = sorted(non_empty.unique().tolist())
                     print(f"  WARNING: branching rule matched '{short_q(question_label, 60)}' "
                           f"but parent_value '{pv_display}' found 0 rows.\n"
                           f"    Parent column: {short_q(parent_col, 70)}\n"
                           f"    Actual values: {actual[:10]}\n"
-                          f"    → falling back to answered-only denominator")
-                    return None   # fall back: treat as no branching rule
+                          f"    → update BRANCHING_RULES parent_value to match")
+                    return None
                 return n
     return None
 
