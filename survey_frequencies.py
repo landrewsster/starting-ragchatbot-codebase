@@ -365,6 +365,21 @@ BRANCHING_RULES = [
         "parent_pattern": r"consistently record information in patient records about cannabis use",
         "parent_value":   "No",
     },
+
+    # ── Q18 branch — Q19, Q20, Q21 shown to "Yes" ─────────────────────────────
+    # Q19 and Q20 are open-text (free_text sheet only) so this rule only fires
+    # for Q21 in the frequency tables.
+    # Q21 has its own nested branch: Yes→Q22 (open text), No/Don't specify→Q23.
+    # Q22 is open text so no rule needed for it. Q23 is shown to all.
+    {
+        "child_patterns": [
+            r"what messages do you typically give.+patients who are pregnant",
+            r"what messages do you typically give.+patients who are breastfeeding",
+            r"does the message given to patients.+differ whether it is medical",
+        ],
+        "parent_pattern": r"do you ever talk to patients about cannabis use",
+        "parent_value":   "Yes",
+    },
 ]
 
 def ordered_for_col(col):
