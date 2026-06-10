@@ -33,17 +33,20 @@ CHARTS <- list(
   list(
     pattern = "better inform patients who are pregnant or breastfeeding",
     stem    = "sata_q45_inform_patients",
-    height  = 6
+    height  = 6,
+    title   = NULL   # replace NULL with a quoted string to add a headline
   ),
   list(
     pattern = "better screen patients who are pregnant or breastfeeding for cannabis",
     stem    = "sata_q46_screen",
-    height  = 5.5
+    height  = 5.5,
+    title   = NULL
   ),
   list(
     pattern = "better inform interventions",
     stem    = "sata_q47_inform_interventions",
-    height  = 5.5
+    height  = 5.5,
+    title   = NULL
   )
 )
 
@@ -68,7 +71,7 @@ get_sata_data <- function(df, pattern) {
     )
 }
 
-make_hbar <- function(df) {
+make_hbar <- function(df, title = NULL) {
   N_denom <- df$N[1]
 
   plot_df <- df %>%
@@ -94,6 +97,7 @@ make_hbar <- function(df) {
       expand = c(0, 0)
     ) +
     labs(
+      title   = if (!is.null(title)) str_wrap(title, width = 90) else NULL,
       x       = NULL,
       y       = NULL,
       caption = paste0(
@@ -104,6 +108,8 @@ make_hbar <- function(df) {
     ) +
     theme_minimal(base_size = 11) +
     theme(
+      plot.title            = element_text(size = 11, face = "bold", hjust = 0,
+                                           margin = margin(b = 8)),
       axis.text.y           = element_text(size = 9,  hjust = 1),
       axis.text.x           = element_text(size = 9,  color = "gray50"),
       panel.grid.major.y    = element_blank(),
@@ -127,7 +133,7 @@ for (spec in CHARTS) {
   cat(sprintf("Building chart: %s  (%d response options)\n",
               spec$stem, nrow(raw)))
 
-  p <- make_hbar(raw)
+  p <- make_hbar(raw, title = spec$title)
   ggsave(make_out(spec$stem), p,
          width = 11, height = spec$height, dpi = 300, bg = "white")
   cat(sprintf("  Saved: %s\n", basename(make_out(spec$stem))))
