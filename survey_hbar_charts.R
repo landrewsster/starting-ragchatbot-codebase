@@ -47,6 +47,38 @@ CHARTS <- list(
     stem    = "sata_q47_inform_interventions",
     height  = 5.5,
     title   = "Providers report needing clear clinical pathways following a positive screen"
+  ),
+
+  # ── Additional SATA questions ──────────────────────────────────────────────
+  list(
+    pattern = "types of clinical encounters.+screen patients for cannabis",
+    stem    = "sata_q6_encounter_types",
+    height  = 5,
+    title   = NULL   # fill in after reviewing data
+  ),
+  list(
+    pattern = "positive screen for cannabis use during pregnancy",
+    stem    = "sata_q10_actions_pregnancy",
+    height  = 6,
+    title   = NULL
+  ),
+  list(
+    pattern = "positive screen for cannabis use during breastfeeding",
+    stem    = "sata_q11_actions_breastfeeding",
+    height  = 6,
+    title   = NULL
+  ),
+  list(
+    pattern = "how is this information recorded within the electronic health record",
+    stem    = "sata_q15_ehr_recording",
+    height  = 5.5,
+    title   = NULL
+  ),
+  list(
+    pattern = "factors may influence your confidence level discussing",
+    stem    = "sata_q40_confidence_factors",
+    height  = 6,
+    title   = NULL
   )
 )
 
