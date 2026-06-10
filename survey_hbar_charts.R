@@ -34,19 +34,19 @@ CHARTS <- list(
     pattern = "better inform patients who are pregnant or breastfeeding",
     stem    = "sata_q45_inform_patients",
     height  = 6,
-    title   = NULL   # replace NULL with a quoted string to add a headline
+    title   = "Most providers lack guidance on cannabis risks during pregnancy and breastfeeding"
   ),
   list(
     pattern = "better screen patients who are pregnant or breastfeeding for cannabis",
     stem    = "sata_q46_screen",
     height  = 5.5,
-    title   = NULL
+    title   = "Standardized screening protocols are the top gap in cannabis screening practice"
   ),
   list(
     pattern = "better inform interventions",
     stem    = "sata_q47_inform_interventions",
     height  = 5.5,
-    title   = NULL
+    title   = "Providers report needing clear clinical pathways following a positive screen"
   )
 )
 
