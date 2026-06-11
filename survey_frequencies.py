@@ -114,6 +114,9 @@ for c in checkbox_cols:
 
 # Demographic column patterns — questions shown to ALL respondents
 # Defined early so free-text detection can exclude these columns from cardinality check.
+# Response text that maps to tenure = 1 (20+ years).  Matched case-insensitively.
+TENURE_HIGH_PATTERN = r"20 or more"
+
 DEMO_PATTERNS = [
     r"what is your profession",
     r"do you primarily see pregnant",
@@ -752,6 +755,38 @@ def build_all_frequencies(df_sub):
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
+def build_crosstab(df_with_group, group_col, label1, label0):
+    """
+    Split df_with_group on binary group_col (1 vs 0), run build_all_frequencies
+    on each half, and merge side-by-side.
+
+    Returns columns:
+      Question | Type | Response | n (label1) | % (label1) | N (label1)
+                                 | n (label0) | % (label0) | N (label0)
+    """
+    g1 = df_with_group[df_with_group[group_col] == 1].drop(columns=[group_col]).reset_index(drop=True)
+    g0 = df_with_group[df_with_group[group_col] == 0].drop(columns=[group_col]).reset_index(drop=True)
+
+    if g1.empty or g0.empty:
+        print(f"  WARNING: one group is empty for {group_col} — skipping cross-tab")
+        return pd.DataFrame()
+
+    print(f"  {label1}: n={len(g1)}  |  {label0}: n={len(g0)}")
+    f1 = build_all_frequencies(g1).rename(columns={
+        "n": f"n ({label1})", "%": f"% ({label1})", "N (denominator)": f"N ({label1})"
+    })
+    f0 = build_all_frequencies(g0).rename(columns={
+        "n": f"n ({label0})", "%": f"% ({label0})", "N (denominator)": f"N ({label0})"
+    })
+
+    merged = f1.merge(f0, on=["Question", "Type", "Response"], how="outer")
+    col_order = [
+        "Question", "Type", "Response",
+        f"n ({label1})", f"% ({label1})", f"N ({label1})",
+        f"n ({label0})", f"% ({label0})", f"N ({label0})",
+    ]
+    return merged[[c for c in col_order if c in merged.columns]]
+
 # ── Build sheets ──────────────────────────────────────────────────────────────
 print("\nBuilding frequency tables ...")
 
@@ -935,12 +970,59 @@ if county_candidates:
 else:
     print("  County column not found — skipping county sheets")
 
+# ── Cross-tabulations ─────────────────────────────────────────────────────────
+print("\nBuilding cross-tabulations ...")
+
+# ── Metro cross-tab ────────────────────────────────────────────────────────────
+crosstab_metro_df = pd.DataFrame()
+if not county_df.empty and record_id_col:
+    elig_county = (
+        county_df[county_df["group"] == "eligible"][["record_id", "metro"]]
+        .rename(columns={"record_id": record_id_col})
+    )
+    eligible_geo = eligible.merge(elig_county, on=record_id_col, how="left")
+    eligible_geo["metro"] = pd.to_numeric(eligible_geo["metro"], errors="coerce")
+    eligible_geo = eligible_geo[eligible_geo["metro"].isin([0, 1])].copy()
+    eligible_geo["metro"] = eligible_geo["metro"].astype(int)
+    n_metro    = (eligible_geo["metro"] == 1).sum()
+    n_nonmetro = (eligible_geo["metro"] == 0).sum()
+    print(f"  Metro cross-tab: metro={n_metro}, non-metro={n_nonmetro} "
+          f"({len(eligible) - len(eligible_geo)} excluded — no county recorded)")
+    crosstab_metro_df = build_crosstab(eligible_geo, "metro", "Metro", "Non-metro")
+else:
+    print("  Skipping metro cross-tab — county data not available")
+
+# ── Tenure cross-tab ───────────────────────────────────────────────────────────
+crosstab_tenure_df = pd.DataFrame()
+years_col = next(
+    (c for c in eligible.columns
+     if re.search(r"how long have you been practicing", c, re.IGNORECASE)),
+    None
+)
+if years_col:
+    eligible_tenure = eligible.copy()
+    eligible_tenure["tenure"] = eligible_tenure[years_col].apply(
+        lambda v: 1 if re.search(TENURE_HIGH_PATTERN, str(v), re.IGNORECASE)
+                  else (0 if str(v).strip() not in ("", "nan") else pd.NA)
+    )
+    eligible_tenure = eligible_tenure[eligible_tenure["tenure"].notna()].copy()
+    eligible_tenure["tenure"] = eligible_tenure["tenure"].astype(int)
+    n_high = (eligible_tenure["tenure"] == 1).sum()
+    n_low  = (eligible_tenure["tenure"] == 0).sum()
+    print(f"  Tenure cross-tab: 20+ yrs={n_high}, <20 yrs={n_low} "
+          f"({len(eligible) - len(eligible_tenure)} excluded — did not answer)")
+    crosstab_tenure_df = build_crosstab(eligible_tenure, "tenure", "20+ years", "<20 years")
+else:
+    print("  WARNING: years of practice column not found — skipping tenure cross-tab")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
     "eligible":           elig_freqs,
     "ineligible":         inelig_freqs,
+    "crosstab_metro":     crosstab_metro_df,
+    "crosstab_tenure":    crosstab_tenure_df,
     "county_freq":        county_freq_df,
     "county":             county_df,
     "free_text":          free_text_df,
