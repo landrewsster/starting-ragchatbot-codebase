@@ -256,7 +256,7 @@ add_screener_section <- function(doc, elig_df, inelig_df) {
         align(j = c("n", "%"), align = "right", part = "all") %>%
         width(j = "Response", width = 3.5) %>%
         width(j = c("n", "%"), width = 0.7) %>%
-        add_footer_lines(paste0("N (answered) = ", total_n)) %>%
+        add_footer_lines(paste0("N (denominator) = ", total_n)) %>%
         fontsize(size = 9, part = "footer") %>%
         italic(part = "footer") %>%
         align(align = "left", part = "footer")
@@ -340,7 +340,7 @@ n_elig_screener <- if (!is.null(eligible) && nrow(eligible) > 0) {
   sc_rows <- eligible %>%
     filter(str_detect(str_to_lower(Question), SCREENER_PATTERNS[1])) %>%
     filter(str_detect(str_to_lower(Response), "^yes"))
-  if (nrow(sc_rows) > 0) sc_rows$n[1] else max(eligible$`N (answered)`, na.rm = TRUE)
+  if (nrow(sc_rows) > 0) sc_rows$n[1] else max(eligible$`N (denominator)`, na.rm = TRUE)
 } else NA
 
 doc <- doc %>%
@@ -351,7 +351,7 @@ doc <- doc %>%
     style = "Normal") %>%
   body_add_par(
     sprintf("Ineligible respondents (screener + demographics only): n = %s (note: some may not have answered all screener questions)",
-            ifelse(is.null(ineligible), "—", max(ineligible$`N (answered)`, na.rm = TRUE))),
+            ifelse(is.null(ineligible), "—", max(ineligible$`N (denominator)`, na.rm = TRUE))),
     style = "Normal") %>%
   body_add_par("Note: N varies by question due to optional or skipped items.", style = "Normal") %>%
   body_add_par("", style = "Normal")
