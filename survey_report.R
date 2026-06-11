@@ -29,6 +29,8 @@ read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, shee
 
 eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
+crosstab_metro   <- read_if("crosstab_metro")
+crosstab_tenure  <- read_if("crosstab_tenure")
 county_freq      <- read_if("county_freq")
 county_data      <- read_if("county")
 completion_time  <- read_if("completion_time")
@@ -133,6 +135,70 @@ make_wide_table <- function(df, footer = NULL) {
       align(align = "left", part = "footer")
   }
   ft
+}
+
+fmt_p <- function(p) {
+  ifelse(is.na(p), NA_character_,
+         ifelse(as.numeric(p) < 0.001, "< 0.001", sprintf("%.3f", as.numeric(p))))
+}
+
+# Cross-tab table for one question: Response | n/% for each group | p_value | test
+# N values go in the footer so they don't repeat per row.
+make_crosstab_table <- function(df, label1, label0) {
+  N1_col <- paste0("N (", label1, ")")
+  N0_col <- paste0("N (", label0, ")")
+  N1 <- if (N1_col %in% names(df)) as.integer(df[[N1_col]][1]) else NA_integer_
+  N0 <- if (N0_col %in% names(df)) as.integer(df[[N0_col]][1]) else NA_integer_
+
+  col_n1  <- paste0("n (", label1, ")")
+  col_pct1 <- paste0("% (", label1, ")")
+  col_n0  <- paste0("n (", label0, ")")
+  col_pct0 <- paste0("% (", label0, ")")
+
+  display <- df %>%
+    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "p_value", "test"))) %>%
+    mutate(p_value = fmt_p(p_value))
+
+  footer <- paste0(label1, "  N = ", N1, "     |     ", label0, "  N = ", N0)
+
+  num_cols  <- intersect(c(col_n1, col_pct1, col_n0, col_pct0), names(display))
+  char_cols <- setdiff(names(display), num_cols)
+
+  flextable(display) %>%
+    theme_booktabs() %>%
+    bold(part = "header") %>%
+    fontsize(size = 10, part = "all") %>%
+    font(fontname = "Calibri", part = "all") %>%
+    align(j = num_cols,  align = "right", part = "all") %>%
+    align(j = char_cols, align = "left",  part = "all") %>%
+    width(j = "Response",  width = 2.8) %>%
+    width(j = num_cols,    width = 0.60) %>%
+    width(j = intersect(c("p_value", "test"), names(display)), width = 0.70) %>%
+    add_footer_lines(footer) %>%
+    fontsize(size = 9, part = "footer") %>%
+    italic(part = "footer") %>%
+    align(align = "left", part = "footer")
+}
+
+# Loop through all questions in a cross-tab sheet and emit one table per question
+add_crosstab_section <- function(doc, ct_df, label1, label0, heading) {
+  if (is.null(ct_df) || nrow(ct_df) == 0) return(doc)
+  ct_df <- ct_df %>% filter(is.na(Type) | Type != "Open text")
+  if (nrow(ct_df) == 0) return(doc)
+
+  doc <- body_add_par(doc, heading, style = "heading 2")
+
+  for (q in unique(ct_df$Question)) {
+    q_rows    <- ct_df %>% filter(Question == q)
+    q_type    <- if ("Type" %in% names(q_rows)) unique(q_rows$Type)[1] else ""
+    type_note <- if (isTRUE(q_type == "Select all that apply")) " (select all that apply)" else ""
+
+    doc <- doc %>%
+      body_add_par(paste0(q, type_note), style = "heading 3") %>%
+      body_add_flextable(make_crosstab_table(q_rows, label1, label0)) %>%
+      body_add_par("", style = "Normal")
+  }
+  doc
 }
 
 make_county_table <- function(df) {
@@ -365,6 +431,26 @@ doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
 # 4. Demographic questions — eligible + ineligible side by side
 doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — All Respondents")
 
+# 4b. Tenure summary (derived binary from years of practice)
+if (!is.null(crosstab_tenure) && nrow(crosstab_tenure) > 0 &&
+    all(c("N (20+ years)", "N (<20 years)") %in% names(crosstab_tenure))) {
+  n_high  <- as.integer(crosstab_tenure$`N (20+ years)`[1])
+  n_low   <- as.integer(crosstab_tenure$`N (<20 years)`[1])
+  tot     <- n_high + n_low
+  tenure_summary <- data.frame(
+    Response          = c("20 or more years (tenure = 1)", "Less than 20 years (tenure = 0)"),
+    n                 = c(n_high, n_low),
+    `%`               = round(c(n_high, n_low) / tot * 100, 1),
+    `N (denominator)` = tot,
+    check.names = FALSE
+  )
+  doc <- doc %>%
+    body_add_par("Tenure Group (Years in Practice)", style = "heading 2") %>%
+    body_add_flextable(make_table(tenure_summary)) %>%
+    body_add_par("Tenure = 1 if 20 or more years in practice; tenure = 0 otherwise.", style = "Normal") %>%
+    body_add_par("", style = "Normal")
+}
+
 # 5. County
 if (!is.null(county_freq) && nrow(county_freq) > 0) {
   doc <- doc %>%
@@ -469,6 +555,16 @@ if (!is.null(completion_time) && nrow(completion_time) > 0) {
       body_add_par("", style = "Normal")
   }
 }
+
+# 7. Cross-tabulations
+doc <- add_crosstab_section(
+  doc, crosstab_metro, "Metro", "Non-metro",
+  "Cross-Tabulation by Metro / Non-Metro"
+)
+doc <- add_crosstab_section(
+  doc, crosstab_tenure, "20+ years", "<20 years",
+  "Cross-Tabulation by Tenure (Years in Practice)"
+)
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 print(doc, target = OUTPUT_FILE)
