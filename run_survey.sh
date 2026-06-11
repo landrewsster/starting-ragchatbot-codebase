@@ -25,4 +25,8 @@ echo "=== Step 3: survey_hbar_charts.R ==="
 Rscript "$DIR/survey_hbar_charts.R"
 
 echo ""
+echo "=== Step 4: survey_report.R ==="
+Rscript "$DIR/survey_report.R"
+
+echo ""
 echo "Done."
