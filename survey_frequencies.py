@@ -21,6 +21,14 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    from scipy.stats import chi2_contingency, fisher_exact
+    _SCIPY = True
+except ImportError:
+    _SCIPY = False
+    print("NOTE: scipy not installed — statistical tests will be skipped in cross-tabs.")
+    print("      Install with: pip install scipy")
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE = Path.home() / "Downloads" / "CRC MDH Project" / "MDH analysis"
 
@@ -755,14 +763,67 @@ def build_all_frequencies(df_sub):
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
+def _stat_test(table):
+    """
+    Return (p_value, test_name) for a contingency table (list of [n_g1, n_g0] rows).
+    - 2×2 with any cell < 5 → Fisher's exact
+    - all other cases → chi-square
+    - table is degenerate (empty / all-zero row) → (None, None)
+    """
+    if not _SCIPY:
+        return None, None
+    rows = [[int(a), int(b)] for a, b in table if (a + b) > 0]
+    if len(rows) < 2:
+        return None, None
+    flat = [v for row in rows for v in row]
+    if sum(flat) == 0:
+        return None, None
+    if len(rows) == 2 and min(flat) < 5:
+        _, p = fisher_exact(rows)
+        return round(p, 4), "Fisher"
+    _, p, _, _ = chi2_contingency(rows)
+    note = " (small n)" if min(flat) < 5 else ""
+    return round(p, 4), f"χ²{note}"
+
+
+def _add_pvalues(df, N1, N0, col_n1, col_n0):
+    """Append p_value and test columns to a cross-tab DataFrame."""
+    if not _SCIPY:
+        return df
+    df = df.copy()
+    df["p_value"] = pd.NA
+    df["test"]    = pd.NA
+
+    for (q, qtype), grp in df.groupby(["Question", "Type"], sort=False):
+        data = grp[grp["Response"] != "Missing (skipped)"]
+        n1s = pd.to_numeric(data[col_n1], errors="coerce").fillna(0).astype(int).tolist()
+        n0s = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
+
+        if qtype == "Select all that apply":
+            # Each response option is its own 2×2: checked vs not-checked
+            for idx, c1, c0 in zip(data.index, n1s, n0s):
+                p, tname = _stat_test([[c1, c0], [N1 - c1, N0 - c0]])
+                df.at[idx, "p_value"] = p
+                df.at[idx, "test"]    = tname
+        else:
+            # One test across all response options for the question
+            table = list(zip(n1s, n0s))
+            p, tname = _stat_test(table)
+            for i, idx in enumerate(data.index):
+                df.at[idx, "p_value"] = p if i == 0 else pd.NA
+                df.at[idx, "test"]    = tname if i == 0 else pd.NA
+
+    return df
+
+
 def build_crosstab(df_with_group, group_col, label1, label0):
     """
     Split df_with_group on binary group_col (1 vs 0), run build_all_frequencies
     on each half, and merge side-by-side.
 
-    Returns columns:
-      Question | Type | Response | n (label1) | % (label1) | N (label1)
-                                 | n (label0) | % (label0) | N (label0)
+    N is the fixed total group size (same for every row within a group).
+    % is recalculated as n / N_group so it is consistent across all questions.
+    p_value / test columns use Fisher's exact (2×2 with any cell < 5) or χ².
     """
     g1 = df_with_group[df_with_group[group_col] == 1].drop(columns=[group_col]).reset_index(drop=True)
     g0 = df_with_group[df_with_group[group_col] == 0].drop(columns=[group_col]).reset_index(drop=True)
@@ -771,19 +832,38 @@ def build_crosstab(df_with_group, group_col, label1, label0):
         print(f"  WARNING: one group is empty for {group_col} — skipping cross-tab")
         return pd.DataFrame()
 
-    print(f"  {label1}: n={len(g1)}  |  {label0}: n={len(g0)}")
-    f1 = build_all_frequencies(g1).rename(columns={
-        "n": f"n ({label1})", "%": f"% ({label1})", "N (denominator)": f"N ({label1})"
-    })
-    f0 = build_all_frequencies(g0).rename(columns={
-        "n": f"n ({label0})", "%": f"% ({label0})", "N (denominator)": f"N ({label0})"
-    })
+    N1, N0 = len(g1), len(g0)
+    print(f"  {label1}: N={N1}  |  {label0}: N={N0}")
+
+    f1 = build_all_frequencies(g1).drop(columns=["N (denominator)"], errors="ignore")
+    f0 = build_all_frequencies(g0).drop(columns=["N (denominator)"], errors="ignore")
+
+    if f1.empty or f0.empty:
+        return pd.DataFrame()
+
+    # Recalculate % using fixed group sizes so N is constant across all questions
+    for f, N in [(f1, N1), (f0, N0)]:
+        f["n"] = pd.to_numeric(f["n"], errors="coerce").fillna(0).astype(int)
+        f["%"] = (f["n"] / N * 100).round(1)
+
+    col_n1, col_n0 = f"n ({label1})", f"n ({label0})"
+    f1 = f1.rename(columns={"n": col_n1, "%": f"% ({label1})"})
+    f0 = f0.rename(columns={"n": col_n0, "%": f"% ({label0})"})
 
     merged = f1.merge(f0, on=["Question", "Type", "Response"], how="outer")
+
+    # Fixed N columns — one value per group, same for every row
+    merged[f"N ({label1})"] = N1
+    merged[f"N ({label0})"] = N0
+
+    merged = _add_pvalues(merged, N1, N0, col_n1, col_n0)
+
     col_order = [
         "Question", "Type", "Response",
-        f"n ({label1})", f"% ({label1})", f"N ({label1})",
-        f"n ({label0})", f"% ({label0})", f"N ({label0})",
+        col_n1, f"% ({label1})",
+        col_n0, f"% ({label0})",
+        f"N ({label1})", f"N ({label0})",
+        "p_value", "test",
     ]
     return merged[[c for c in col_order if c in merged.columns]]
 
