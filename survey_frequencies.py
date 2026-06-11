@@ -768,16 +768,18 @@ def _stat_test(table):
     Return (p_value, test_name) for a contingency table (list of [n_g1, n_g0] rows).
     - 2×2 with any cell < 5 → Fisher's exact
     - all other cases → chi-square
-    - table is degenerate (empty / all-zero row) → (None, None)
+    - degenerate table (all-zero row or column) → (None, None)
     """
     if not _SCIPY:
         return None, None
     rows = [[int(a), int(b)] for a, b in table if (a + b) > 0]
     if len(rows) < 2:
         return None, None
-    flat = [v for row in rows for v in row]
-    if sum(flat) == 0:
+    # If either group column sums to zero, chi-square / Fisher's are undefined
+    col_sums = [sum(r[i] for r in rows) for i in range(2)]
+    if any(s == 0 for s in col_sums):
         return None, None
+    flat = [v for row in rows for v in row]
     if len(rows) == 2 and min(flat) < 5:
         _, p = fisher_exact(rows)
         return round(p, 4), "Fisher"
