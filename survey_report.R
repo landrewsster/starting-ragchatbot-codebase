@@ -143,9 +143,11 @@ fmt_p <- function(p) {
 }
 
 # Cross-tab table for one question.
-# Layout: Response | n/% per group | p_value | test
-# Bottom row: "Total" with N1 and N0 under the n columns (% and p blank)
-# Footer: total N = N1 + N0
+# Columns: Response | n/% per group | p (omnibus) | test | post_hoc_p (Holm-corrected)
+# p_value:    omnibus chi-square or Fisher's exact (single-choice questions, first row only)
+# post_hoc_p: Holm-corrected adjusted-residual p (single-choice, when omnibus p < .05)
+#             OR Holm-corrected two-proportion Z-test p (select-all-that-apply, every row)
+# Bottom row: "Total" with N1/N0 under n columns; footer: N = N1 + N0
 make_crosstab_table <- function(df, label1, label0) {
   N1_col <- paste0("N (", label1, ")")
   N0_col <- paste0("N (", label0, ")")
@@ -158,9 +160,12 @@ make_crosstab_table <- function(df, label1, label0) {
   col_pct0 <- paste0("% (", label0, ")")
 
   display <- df %>%
-    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "p_value", "test")))
-  if ("p_value" %in% names(display))
-    display <- display %>% mutate(p_value = fmt_p(p_value))
+    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0,
+                    "p_value", "test", "post_hoc_p")))
+  if ("p_value"    %in% names(display))
+    display <- display %>% mutate(p_value    = fmt_p(p_value))
+  if ("post_hoc_p" %in% names(display))
+    display <- display %>% mutate(post_hoc_p = fmt_p(post_hoc_p))
 
   # Build Total row: N1/N0 under n columns, everything else blank
   total_row <- tibble(Response = "Total")
@@ -173,7 +178,9 @@ make_crosstab_table <- function(df, label1, label0) {
   display <- bind_rows(display, total_row)
   n_rows  <- nrow(display)
 
-  footer   <- paste0("N = ", N1 + N0)
+  footer    <- paste0("N = ", N1 + N0,
+                      "  |  p: omnibus χ² or Fisher's exact (single-choice);",
+                      " post_hoc_p: Holm-corrected (adjusted residual or two-proportion Z-test)")
   num_cols  <- intersect(c(col_n1, col_pct1, col_n0, col_pct0), names(display))
   char_cols <- setdiff(names(display), num_cols)
 
@@ -189,7 +196,7 @@ make_crosstab_table <- function(df, label1, label0) {
     align(j = char_cols, align = "left",  part = "all") %>%
     width(j = "Response",  width = 2.8) %>%
     width(j = num_cols,    width = 0.60) %>%
-    width(j = intersect(c("p_value", "test"), names(display)), width = 0.70) %>%
+    width(j = intersect(c("p_value", "test", "post_hoc_p"), names(display)), width = 0.75) %>%
     add_footer_lines(footer) %>%
     fontsize(size = 9, part = "footer") %>%
     italic(part = "footer") %>%

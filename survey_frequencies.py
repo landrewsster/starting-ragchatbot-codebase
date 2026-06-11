@@ -19,10 +19,11 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 try:
-    from scipy.stats import chi2_contingency, fisher_exact
+    from scipy.stats import chi2_contingency, fisher_exact, norm as _norm
     _SCIPY = True
 except ImportError:
     _SCIPY = False
@@ -763,6 +764,39 @@ def build_all_frequencies(df_sub):
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
+def _two_prop_z(n1, N1, n0, N0):
+    """Two-proportion Z-test. Returns two-tailed p-value or None if undefined."""
+    if N1 == 0 or N0 == 0:
+        return None
+    p_pool = (n1 + n0) / (N1 + N0)
+    if p_pool in (0.0, 1.0):
+        return None
+    se = (p_pool * (1 - p_pool) * (1 / N1 + 1 / N0)) ** 0.5
+    if se == 0:
+        return None
+    z = (n1 / N1 - n0 / N0) / se
+    return float(2 * (1 - _norm.cdf(abs(z))))
+
+
+def _holm_correct(p_values):
+    """Holm step-down correction. Input list may contain None (skipped).
+    Returns list of adjusted p-values in the same order."""
+    valid = [(i, p) for i, p in enumerate(p_values) if p is not None]
+    if not valid:
+        return list(p_values)
+    k = len(valid)
+    adj = {}
+    cummax = 0.0
+    for rank, (i, p) in enumerate(sorted(valid, key=lambda x: x[1])):
+        a = max(min(p * (k - rank), 1.0), cummax)
+        adj[i] = round(a, 4)
+        cummax = a
+    result = list(p_values)
+    for i, a in adj.items():
+        result[i] = a
+    return result
+
+
 def _stat_test(table):
     """
     Return (p_value, test_name) for a contingency table (list of [n_g1, n_g0] rows).
@@ -789,12 +823,26 @@ def _stat_test(table):
 
 
 def _add_pvalues(df, N1, N0, col_n1, col_n0):
-    """Append p_value and test columns to a cross-tab DataFrame."""
+    """
+    Append statistical test columns to a cross-tab DataFrame.
+
+    Single-choice: omnibus chi-square / Fisher's on the full m×2 table.
+      p_value and test are placed on the first response row.
+      When omnibus p < 0.05 and chi-square was used, adjusted standardised
+      residuals are computed for each row; their two-tailed p-values are
+      Holm-corrected and stored in post_hoc_p alongside adj_residual.
+
+    Select-all-that-apply: no proper single omnibus applies (responses are not
+      mutually exclusive). Per-option two-proportion Z-tests are run with Holm
+      correction across all options in the question; results go in post_hoc_p.
+
+    Columns added: p_value, test, adj_residual, post_hoc_p
+    """
     if not _SCIPY:
         return df
     df = df.copy()
-    df["p_value"] = pd.NA
-    df["test"]    = pd.NA
+    for col in ("p_value", "test", "adj_residual", "post_hoc_p"):
+        df[col] = pd.NA
 
     for (q, qtype), grp in df.groupby(["Question", "Type"], sort=False):
         data = grp[grp["Response"] != "Missing (skipped)"]
@@ -802,18 +850,40 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
         n0s = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
 
         if qtype == "Select all that apply":
-            # Each response option is its own 2×2: checked vs not-checked
-            for idx, c1, c0 in zip(data.index, n1s, n0s):
-                p, tname = _stat_test([[c1, c0], [N1 - c1, N0 - c0]])
-                df.at[idx, "p_value"] = p
-                df.at[idx, "test"]    = tname
+            # Per-option two-proportion Z-tests, Holm-corrected across the option set
+            raw_ps = [_two_prop_z(c1, N1, c0, N0) for c1, c0 in zip(n1s, n0s)]
+            for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
+                df.at[idx, "post_hoc_p"] = adj_p
         else:
-            # One test across all response options for the question
+            # Omnibus test on full m×2 table
             table = list(zip(n1s, n0s))
-            p, tname = _stat_test(table)
+            p_omni, tname = _stat_test(table)
             for i, idx in enumerate(data.index):
-                df.at[idx, "p_value"] = p if i == 0 else pd.NA
-                df.at[idx, "test"]    = tname if i == 0 else pd.NA
+                df.at[idx, "p_value"] = p_omni if i == 0 else pd.NA
+                df.at[idx, "test"]    = tname  if i == 0 else pd.NA
+
+            # Post-hoc adjusted residuals when omnibus chi-square is significant
+            if p_omni is not None and p_omni < 0.05 and tname and tname.startswith("χ"):
+                rows_v = [[int(a), int(b)] for a, b in table if (a + b) > 0]
+                col_s  = [sum(r[i] for r in rows_v) for i in range(2)]
+                if len(rows_v) >= 2 and not any(s == 0 for s in col_s):
+                    obs      = np.array(rows_v, dtype=float)
+                    _, _, _, expected = chi2_contingency(obs)
+                    n_total  = obs.sum()
+                    row_sums = obs.sum(axis=1)
+                    cs0      = obs.sum(axis=0)[0]
+                    adj_res  = []
+                    for j in range(len(rows_v)):
+                        o, e, rs = obs[j, 0], expected[j, 0], row_sums[j]
+                        denom = (e * (1 - rs / n_total) * (1 - cs0 / n_total)) ** 0.5
+                        adj_res.append(round(float((o - e) / denom), 3) if denom > 0 else None)
+                    raw_ps = [float(2 * (1 - _norm.cdf(abs(r)))) if r is not None else None
+                              for r in adj_res]
+                    adj_ps = _holm_correct(raw_ps)
+                    valid_idx = [idx for idx, (a, b) in zip(data.index, table) if (a + b) > 0]
+                    for idx, res, ap in zip(valid_idx, adj_res, adj_ps):
+                        df.at[idx, "adj_residual"] = res
+                        df.at[idx, "post_hoc_p"]   = ap
 
     return df
 
@@ -865,7 +935,7 @@ def build_crosstab(df_with_group, group_col, label1, label0):
         col_n1, f"% ({label1})",
         col_n0, f"% ({label0})",
         f"N ({label1})", f"N ({label0})",
-        "p_value", "test",
+        "p_value", "test", "adj_residual", "post_hoc_p",
     ]
     return merged[[c for c in col_order if c in merged.columns]]
 
