@@ -142,33 +142,48 @@ fmt_p <- function(p) {
          ifelse(as.numeric(p) < 0.001, "< 0.001", sprintf("%.3f", as.numeric(p))))
 }
 
-# Cross-tab table for one question: Response | n/% for each group | p_value | test
-# N values go in the footer so they don't repeat per row.
+# Cross-tab table for one question.
+# Layout: Response | n/% per group | p_value | test
+# Bottom row: "Total" with N1 and N0 under the n columns (% and p blank)
+# Footer: total N = N1 + N0
 make_crosstab_table <- function(df, label1, label0) {
   N1_col <- paste0("N (", label1, ")")
   N0_col <- paste0("N (", label0, ")")
   N1 <- if (N1_col %in% names(df)) as.integer(df[[N1_col]][1]) else NA_integer_
   N0 <- if (N0_col %in% names(df)) as.integer(df[[N0_col]][1]) else NA_integer_
 
-  col_n1  <- paste0("n (", label1, ")")
+  col_n1   <- paste0("n (", label1, ")")
   col_pct1 <- paste0("% (", label1, ")")
-  col_n0  <- paste0("n (", label0, ")")
+  col_n0   <- paste0("n (", label0, ")")
   col_pct0 <- paste0("% (", label0, ")")
 
   display <- df %>%
     select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "p_value", "test"))) %>%
     mutate(p_value = fmt_p(p_value))
 
-  footer <- paste0(label1, "  N = ", N1, "     |     ", label0, "  N = ", N0)
+  # Build Total row: N1/N0 under n columns, everything else blank
+  total_row <- tibble(Response = "Total")
+  for (cn in setdiff(names(display), "Response")) {
+    if      (cn == col_n1)                        total_row[[cn]] <- as.numeric(N1)
+    else if (cn == col_n0)                        total_row[[cn]] <- as.numeric(N0)
+    else if (cn %in% c(col_pct1, col_pct0))       total_row[[cn]] <- NA_real_
+    else                                          total_row[[cn]] <- NA_character_
+  }
+  display <- bind_rows(display, total_row)
+  n_rows  <- nrow(display)
 
+  footer   <- paste0("N = ", N1 + N0)
   num_cols  <- intersect(c(col_n1, col_pct1, col_n0, col_pct0), names(display))
   char_cols <- setdiff(names(display), num_cols)
 
   flextable(display) %>%
     theme_booktabs() %>%
     bold(part = "header") %>%
+    bold(i = n_rows, part = "body") %>%
     fontsize(size = 10, part = "all") %>%
     font(fontname = "Calibri", part = "all") %>%
+    colformat_num(na_str  = "") %>%
+    colformat_char(na_str = "") %>%
     align(j = num_cols,  align = "right", part = "all") %>%
     align(j = char_cols, align = "left",  part = "all") %>%
     width(j = "Response",  width = 2.8) %>%
