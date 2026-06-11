@@ -158,8 +158,9 @@ make_crosstab_table <- function(df, label1, label0) {
   col_pct0 <- paste0("% (", label0, ")")
 
   display <- df %>%
-    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "p_value", "test"))) %>%
-    mutate(p_value = fmt_p(p_value))
+    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "p_value", "test")))
+  if ("p_value" %in% names(display))
+    display <- display %>% mutate(p_value = fmt_p(p_value))
 
   # Build Total row: N1/N0 under n columns, everything else blank
   total_row <- tibble(Response = "Total")
