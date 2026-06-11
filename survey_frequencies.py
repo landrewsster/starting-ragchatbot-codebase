@@ -623,31 +623,33 @@ def freq_checkbox_group(df_sub, parent_q, child_cols,
                          n_denom_override=None, include_missing=False):
     """Frequency table for a checkbox group.
 
-    Denominator = rows where at least one child column has a non-blank value,
-    unless n_denom_override is supplied (use for branching questions where the
-    eligible pool > those who answered).
+    Denominator = rows where at least one child column is checked (Checked/1/Yes).
+    Falls back to non-empty string check for exports that don't use Checked/1
+    (e.g. free-text positive values).  This order correctly excludes REDCap's
+    "Unchecked" sentinel from the denominator.
 
     include_missing: if True and n_denom_override is set, append a Missing
                      (skipped) row for those in the eligible pool who left the
                      entire question blank.
     """
+    # Primary: rows with at least one positively-checked option
     has_response = df_sub[child_cols].apply(
-        lambda col: col.str.strip().ne("")
+        lambda col: col.apply(is_checked)
     ).any(axis=1)
     n_answered = has_response.sum()
 
     if n_answered == 0:
-        # Fallback: count every row with at least one "Checked" / "1" value
-        has_checked = df_sub[child_cols].apply(
-            lambda col: col.apply(is_checked)
+        # Fallback: non-empty value that isn't an explicit negative sentinel
+        has_response = df_sub[child_cols].apply(
+            lambda col: col.str.strip().str.lower().isin(
+                ["", "nan", "unchecked", "0", "false", "no"]
+            ).eq(False)
         ).any(axis=1)
-        n_checked_total = has_checked.sum()
-        if n_checked_total == 0:
+        n_answered = has_response.sum()
+        if n_answered == 0:
             print(f"  WARNING: skipping checkbox group (all blank): "
                   f"{short_q(parent_q, 70)}")
             return None
-        n_answered   = n_checked_total
-        has_response = has_checked
 
     n_denom = n_denom_override if n_denom_override is not None else n_answered
 
