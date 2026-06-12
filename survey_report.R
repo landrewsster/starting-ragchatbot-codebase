@@ -92,14 +92,27 @@ make_table <- function(df) {
 
   df <- df %>% select(-any_of(c("N (answered)", "N (denominator)")))
 
+  # Format p_value using fmt_p so tiny values show as "< 0.001" rather than 0
+  if ("p_value" %in% names(df))
+    df <- df %>% mutate(p_value = fmt_p(p_value))
+
+  num_cols  <- intersect(c("n", "%"), names(df))
+  stat_cols <- intersect(c("p_value", "test"), names(df))
+
   ft <- flextable(df) %>%
     theme_booktabs() %>%
     bold(part = "header") %>%
     fontsize(size = 10, part = "all") %>%
     font(fontname = "Calibri", part = "all") %>%
-    align(j = c("n", "%"), align = "right", part = "all") %>%
+    colformat_num(na_str  = "") %>%
+    colformat_char(na_str = "") %>%
+    align(j = num_cols,  align = "right", part = "all") %>%
+    align(j = stat_cols, align = "right", part = "all") %>%
     width(j = "Response", width = 3.5) %>%
-    width(j = c("n", "%"), width = 0.7)
+    width(j = num_cols,   width = 0.7)
+
+  if (length(stat_cols) > 0)
+    ft <- ft %>% width(j = stat_cols, width = 0.8)
 
   if (!is.null(n_note)) {
     ft <- ft %>%

@@ -954,7 +954,7 @@ def _add_likert_tests_crosstab(merged, g1, g0):
             continue
         try:
             _, p = mannwhitneyu(s1, s0, alternative="two-sided")
-            p = round(float(p), 4)
+            p = float(p)   # do not round — fmt_p in R handles display
             tname = "Mann-Whitney U"
         except Exception:
             continue
@@ -995,7 +995,7 @@ def _add_likert_tests_main(freq_df, raw_df):
             continue
         try:
             _, p = wilcoxon(diffs, alternative="two-sided")
-            p = round(float(p), 4)
+            p = float(p)   # do not round — fmt_p in R handles display
         except Exception:
             continue
         q_idx = freq_df.index[q_mask].tolist()
