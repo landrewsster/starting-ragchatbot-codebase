@@ -92,12 +92,22 @@ make_table <- function(df) {
 
   df <- df %>% select(-any_of(c("N (answered)", "N (denominator)")))
 
-  # Format p_value using fmt_p so tiny values show as "< 0.001" rather than 0
-  if ("p_value" %in% names(df))
-    df <- df %>% mutate(p_value = fmt_p(p_value))
+  # Extract omnibus test info from first populated row, then drop stat columns
+  stat_note <- NULL
+  stat_cols_present <- intersect(c("p_value", "test", "stat_value", "stat_df"), names(df))
+  if (length(stat_cols_present) > 0) {
+    row1 <- df %>% filter(!is.na(p_value)) %>% slice(1)
+    if (nrow(row1) > 0)
+      stat_note <- fmt_stat_note(
+        row1$p_value,
+        if ("test"       %in% names(row1)) row1$test       else NA,
+        if ("stat_value" %in% names(row1)) row1$stat_value else NA,
+        if ("stat_df"    %in% names(row1)) row1$stat_df    else NA
+      )
+    df <- df %>% select(-any_of(stat_cols_present))
+  }
 
-  num_cols  <- intersect(c("n", "%"), names(df))
-  stat_cols <- intersect(c("p_value", "test"), names(df))
+  num_cols <- intersect(c("n", "%"), names(df))
 
   ft <- flextable(df) %>%
     theme_booktabs() %>%
@@ -106,17 +116,17 @@ make_table <- function(df) {
     font(fontname = "Calibri", part = "all") %>%
     colformat_num(na_str  = "") %>%
     colformat_char(na_str = "") %>%
-    align(j = num_cols,  align = "right", part = "all") %>%
-    align(j = stat_cols, align = "right", part = "all") %>%
+    align(j = num_cols,              align = "right", part = "all") %>%
+    align(j = setdiff(names(df), num_cols), align = "left", part = "all") %>%
     width(j = "Response", width = 3.5) %>%
     width(j = num_cols,   width = 0.7)
 
-  if (length(stat_cols) > 0)
-    ft <- ft %>% width(j = stat_cols, width = 0.8)
-
-  if (!is.null(n_note)) {
+  footer_lines <- c(n_note, stat_note)
+  footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
+  if (length(footer_lines) > 0) {
+    for (fl in footer_lines)
+      ft <- ft %>% add_footer_lines(fl)
     ft <- ft %>%
-      add_footer_lines(n_note) %>%
       fontsize(size = 9, part = "footer") %>%
       italic(part = "footer") %>%
       align(align = "left", part = "footer")
@@ -155,6 +165,25 @@ fmt_p <- function(p) {
          ifelse(as.numeric(p) < 0.001, "< 0.001", sprintf("%.3f", as.numeric(p))))
 }
 
+# Build a one-line omnibus test note for table footers.
+# p_val, t_name, s_val, s_df may all be NA.
+fmt_stat_note <- function(p_val, t_name, s_val = NA, s_df = NA) {
+  p_val  <- suppressWarnings(as.numeric(p_val))
+  s_val  <- suppressWarnings(as.numeric(s_val))
+  s_df   <- suppressWarnings(as.integer(s_df))
+  if (is.na(p_val) || is.na(t_name)) return(NULL)
+  p_str <- if (p_val < 0.05) "p < .05" else "p > .05"
+  if (isTRUE(str_detect(t_name, "χ²")) && !is.na(s_val) && !is.na(s_df))
+    return(sprintf("Chi-square test statistic = %.2f (df = %d), %s", s_val, s_df, p_str))
+  if (t_name == "Fisher")
+    return(paste0("Fisher's exact test, ", p_str))
+  if (isTRUE(str_detect(t_name, "Mann-Whitney")) && !is.na(s_val))
+    return(sprintf("Mann-Whitney U = %.2f, %s", s_val, p_str))
+  if (isTRUE(str_detect(t_name, "Wilcoxon")) && !is.na(s_val))
+    return(sprintf("Wilcoxon signed rank test statistic = %.2f, %s", s_val, p_str))
+  paste0(t_name, ": ", p_str)
+}
+
 # Cross-tab table for one question.
 # Columns: Response | n/% per group | p (omnibus) | test | post_hoc_p (Holm-corrected)
 # p_value:    omnibus chi-square or Fisher's exact (single-choice questions, first row only)
@@ -172,11 +201,21 @@ make_crosstab_table <- function(df, label1, label0) {
   col_n0   <- paste0("n (", label0, ")")
   col_pct0 <- paste0("% (", label0, ")")
 
+  # Extract omnibus test note before narrowing columns
+  stat_note <- NULL
+  if ("p_value" %in% names(df)) {
+    row1 <- df %>% filter(!is.na(p_value)) %>% slice(1)
+    if (nrow(row1) > 0)
+      stat_note <- fmt_stat_note(
+        row1$p_value,
+        if ("test"       %in% names(row1)) row1$test       else NA,
+        if ("stat_value" %in% names(row1)) row1$stat_value else NA,
+        if ("stat_df"    %in% names(row1)) row1$stat_df    else NA
+      )
+  }
+
   display <- df %>%
-    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0,
-                    "p_value", "test", "post_hoc_p")))
-  if ("p_value"    %in% names(display))
-    display <- display %>% mutate(p_value    = fmt_p(p_value))
+    select(any_of(c("Response", col_n1, col_pct1, col_n0, col_pct0, "post_hoc_p")))
   if ("post_hoc_p" %in% names(display))
     display <- display %>% mutate(post_hoc_p = fmt_p(post_hoc_p))
 
@@ -191,13 +230,17 @@ make_crosstab_table <- function(df, label1, label0) {
   display <- bind_rows(display, total_row)
   n_rows  <- nrow(display)
 
-  footer    <- paste0("N = ", N1 + N0,
-                      "  |  p: omnibus χ²/Fisher's (single-choice/SATA) or Mann-Whitney U (Likert/confidence; Don't Know excluded);",
-                      " post_hoc_p: Holm-corrected (single-choice adj. residual or SATA two-proportion Z-test; not shown for Likert)")
   num_cols  <- intersect(c(col_n1, col_pct1, col_n0, col_pct0), names(display))
   char_cols <- setdiff(names(display), num_cols)
+  post_hoc_present <- intersect("post_hoc_p", names(display))
 
-  flextable(display) %>%
+  n_footer <- paste0("N = ", N1 + N0)
+  post_note <- if (length(post_hoc_present) > 0)
+    "post_hoc_p: Holm-corrected (adj. residual for single-choice; two-proportion Z-test for SATA)" else NULL
+  footer_lines <- c(n_footer, stat_note, post_note)
+  footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
+
+  ft <- flextable(display) %>%
     theme_booktabs() %>%
     bold(part = "header") %>%
     bold(i = n_rows, part = "body") %>%
@@ -207,10 +250,13 @@ make_crosstab_table <- function(df, label1, label0) {
     colformat_char(na_str = "") %>%
     align(j = num_cols,  align = "right", part = "all") %>%
     align(j = char_cols, align = "left",  part = "all") %>%
-    width(j = "Response",  width = 2.8) %>%
-    width(j = num_cols,    width = 0.60) %>%
-    width(j = intersect(c("p_value", "test", "post_hoc_p"), names(display)), width = 0.75) %>%
-    add_footer_lines(footer) %>%
+    width(j = "Response",      width = 2.8) %>%
+    width(j = num_cols,        width = 0.60) %>%
+    width(j = post_hoc_present, width = 0.75)
+
+  for (fl in footer_lines)
+    ft <- ft %>% add_footer_lines(fl)
+  ft %>%
     fontsize(size = 9, part = "footer") %>%
     italic(part = "footer") %>%
     align(align = "left", part = "footer")

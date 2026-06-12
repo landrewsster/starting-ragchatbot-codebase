@@ -825,27 +825,26 @@ def _holm_correct(p_values):
 
 def _stat_test(table):
     """
-    Return (p_value, test_name) for a contingency table (list of [n_g1, n_g0] rows).
-    - 2×2 with any cell < 5 → Fisher's exact
-    - all other cases → chi-square
-    - degenerate table (all-zero row or column) → (None, None)
+    Return (p, test_name, stat_value, stat_df) for a contingency table.
+    - 2×2 with any cell < 5 → Fisher's exact (stat_value=None, stat_df=None)
+    - all other cases → chi-square (stat_value=χ², stat_df=degrees of freedom)
+    - degenerate table → (None, None, None, None)
     """
     if not _SCIPY:
-        return None, None
+        return None, None, None, None
     rows = [[int(a), int(b)] for a, b in table if (a + b) > 0]
     if len(rows) < 2:
-        return None, None
-    # If either group column sums to zero, chi-square / Fisher's are undefined
+        return None, None, None, None
     col_sums = [sum(r[i] for r in rows) for i in range(2)]
     if any(s == 0 for s in col_sums):
-        return None, None
+        return None, None, None, None
     flat = [v for row in rows for v in row]
     if len(rows) == 2 and min(flat) < 5:
         _, p = fisher_exact(rows)
-        return round(p, 4), "Fisher"
-    _, p, _, _ = chi2_contingency(rows)
+        return float(p), "Fisher", None, None
+    stat, p, dof, _ = chi2_contingency(rows)
     note = " (small n)" if min(flat) < 5 else ""
-    return round(p, 4), f"χ²{note}"
+    return float(p), f"χ²{note}", round(float(stat), 2), int(dof)
 
 
 def _add_pvalues(df, N1, N0, col_n1, col_n0):
@@ -863,12 +862,12 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
       that omnibus p < 0.05 are per-option two-proportion Z-tests computed and
       Holm-corrected into post_hoc_p.
 
-    Columns added: p_value, test, adj_residual, post_hoc_p
+    Columns added: p_value, test, stat_value, stat_df, adj_residual, post_hoc_p
     """
     if not _SCIPY:
         return df
     df = df.copy()
-    for col in ("p_value", "test", "adj_residual", "post_hoc_p"):
+    for col in ("p_value", "test", "stat_value", "stat_df", "adj_residual", "post_hoc_p"):
         df[col] = pd.NA
 
     for (q, qtype), grp in df.groupby(["Question", "Type"], sort=False):
@@ -876,29 +875,22 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
         n1s = pd.to_numeric(data[col_n1], errors="coerce").fillna(0).astype(int).tolist()
         n0s = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
 
-        if qtype == "Select all that apply":
-            # Omnibus test on the full k×2 table (each option is one row).
-            # Note: responses are not mutually exclusive, so this is an approximation,
-            # but it provides the required significance gate before post-hoc tests.
-            table = list(zip(n1s, n0s))
-            p_omni, tname = _stat_test(table)
-            for i, idx in enumerate(data.index):
-                df.at[idx, "p_value"] = p_omni if i == 0 else pd.NA
-                df.at[idx, "test"]    = tname  if i == 0 else pd.NA
+        table = list(zip(n1s, n0s))
+        p_omni, tname, s_val, s_df = _stat_test(table)
 
+        for i, idx in enumerate(data.index):
+            df.at[idx, "p_value"]   = p_omni if i == 0 else pd.NA
+            df.at[idx, "test"]      = tname  if i == 0 else pd.NA
+            df.at[idx, "stat_value"] = s_val if i == 0 else pd.NA
+            df.at[idx, "stat_df"]   = s_df   if i == 0 else pd.NA
+
+        if qtype == "Select all that apply":
             # Per-option two-proportion Z-tests with Holm correction — only when significant
             if p_omni is not None and p_omni < 0.05:
                 raw_ps = [_two_prop_z(c1, N1, c0, N0) for c1, c0 in zip(n1s, n0s)]
                 for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
                     df.at[idx, "post_hoc_p"] = adj_p
         else:
-            # Omnibus test on full m×2 table
-            table = list(zip(n1s, n0s))
-            p_omni, tname = _stat_test(table)
-            for i, idx in enumerate(data.index):
-                df.at[idx, "p_value"] = p_omni if i == 0 else pd.NA
-                df.at[idx, "test"]    = tname  if i == 0 else pd.NA
-
             # Post-hoc adjusted residuals when omnibus chi-square is significant
             if p_omni is not None and p_omni < 0.05 and tname and tname.startswith("χ"):
                 rows_v = [[int(a), int(b)] for a, b in table if (a + b) > 0]
@@ -953,15 +945,17 @@ def _add_likert_tests_crosstab(merged, g1, g0):
         if len(s1) < 2 or len(s0) < 2:
             continue
         try:
-            _, p = mannwhitneyu(s1, s0, alternative="two-sided")
-            p = float(p)   # do not round — fmt_p in R handles display
+            u_stat, p = mannwhitneyu(s1, s0, alternative="two-sided")
+            p = float(p)
             tname = "Mann-Whitney U"
         except Exception:
             continue
         q_idx = merged.index[q_mask].tolist()
         for i, idx in enumerate(q_idx):
-            merged.at[idx, "p_value"]     = p      if i == 0 else pd.NA
-            merged.at[idx, "test"]        = tname  if i == 0 else pd.NA
+            merged.at[idx, "p_value"]    = p                         if i == 0 else pd.NA
+            merged.at[idx, "test"]       = tname                     if i == 0 else pd.NA
+            merged.at[idx, "stat_value"] = round(float(u_stat), 2)   if i == 0 else pd.NA
+            merged.at[idx, "stat_df"]    = pd.NA
             merged.at[idx, "adj_residual"] = pd.NA
             merged.at[idx, "post_hoc_p"]   = pd.NA
     return merged
@@ -975,7 +969,7 @@ def _add_likert_tests_main(freq_df, raw_df):
     if not _SCIPY:
         return freq_df
     freq_df = freq_df.copy()
-    for col_name in ("p_value", "test"):
+    for col_name in ("p_value", "test", "stat_value"):
         if col_name not in freq_df.columns:
             freq_df[col_name] = pd.NA
     for col in raw_df.columns:
@@ -994,14 +988,15 @@ def _add_likert_tests_main(freq_df, raw_df):
         if len(diffs) < 5:
             continue
         try:
-            _, p = wilcoxon(diffs, alternative="two-sided")
-            p = float(p)   # do not round — fmt_p in R handles display
+            w_stat, p = wilcoxon(diffs, alternative="two-sided")
+            p = float(p)
         except Exception:
             continue
         q_idx = freq_df.index[q_mask].tolist()
         for i, idx in enumerate(q_idx):
-            freq_df.at[idx, "p_value"] = p          if i == 0 else pd.NA
-            freq_df.at[idx, "test"]    = "Wilcoxon" if i == 0 else pd.NA
+            freq_df.at[idx, "p_value"]   = p                       if i == 0 else pd.NA
+            freq_df.at[idx, "test"]      = "Wilcoxon"              if i == 0 else pd.NA
+            freq_df.at[idx, "stat_value"] = round(float(w_stat), 2) if i == 0 else pd.NA
     return freq_df
 
 
@@ -1054,7 +1049,7 @@ def build_crosstab(df_with_group, group_col, label1, label0):
         col_n1, f"% ({label1})",
         col_n0, f"% ({label0})",
         f"N ({label1})", f"N ({label0})",
-        "p_value", "test", "adj_residual", "post_hoc_p",
+        "p_value", "test", "stat_value", "stat_df", "adj_residual", "post_hoc_p",
     ]
     return merged[[c for c in col_order if c in merged.columns]]
 
