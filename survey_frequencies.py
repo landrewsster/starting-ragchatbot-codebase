@@ -850,10 +850,20 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
         n0s = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
 
         if qtype == "Select all that apply":
-            # Per-option two-proportion Z-tests, Holm-corrected across the option set
-            raw_ps = [_two_prop_z(c1, N1, c0, N0) for c1, c0 in zip(n1s, n0s)]
-            for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
-                df.at[idx, "post_hoc_p"] = adj_p
+            # Omnibus test on the full k×2 table (each option is one row).
+            # Note: responses are not mutually exclusive, so this is an approximation,
+            # but it provides the required significance gate before post-hoc tests.
+            table = list(zip(n1s, n0s))
+            p_omni, tname = _stat_test(table)
+            for i, idx in enumerate(data.index):
+                df.at[idx, "p_value"] = p_omni if i == 0 else pd.NA
+                df.at[idx, "test"]    = tname  if i == 0 else pd.NA
+
+            # Per-option two-proportion Z-tests with Holm correction — only when significant
+            if p_omni is not None and p_omni < 0.05:
+                raw_ps = [_two_prop_z(c1, N1, c0, N0) for c1, c0 in zip(n1s, n0s)]
+                for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
+                    df.at[idx, "post_hoc_p"] = adj_p
         else:
             # Omnibus test on full m×2 table
             table = list(zip(n1s, n0s))
