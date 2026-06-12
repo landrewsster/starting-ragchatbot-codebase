@@ -832,9 +832,10 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
       residuals are computed for each row; their two-tailed p-values are
       Holm-corrected and stored in post_hoc_p alongside adj_residual.
 
-    Select-all-that-apply: no proper single omnibus applies (responses are not
-      mutually exclusive). Per-option two-proportion Z-tests are run with Holm
-      correction across all options in the question; results go in post_hoc_p.
+    Select-all-that-apply: an omnibus chi-square / Fisher's exact is run on the
+      full k×2 table (one row per option) as the significance gate.  Only when
+      that omnibus p < 0.05 are per-option two-proportion Z-tests computed and
+      Holm-corrected into post_hoc_p.
 
     Columns added: p_value, test, adj_residual, post_hoc_p
     """
