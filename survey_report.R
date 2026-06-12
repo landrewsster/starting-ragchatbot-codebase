@@ -139,7 +139,6 @@ make_table <- function(df) {
 make_wide_table <- function(df, footer = NULL) {
   num_cols  <- names(df)[sapply(df, is.numeric)]
   resp_cols <- setdiff(names(df), num_cols)
-  # Fit within a 6.5-inch page: numeric cols narrow, Response column gets the rest
   num_width  <- 0.65
   resp_width <- max(2.5, 6.5 - length(num_cols) * num_width)
   ft <- flextable(df) %>%
@@ -151,9 +150,12 @@ make_wide_table <- function(df, footer = NULL) {
     align(j = resp_cols, align = "left",  part = "all") %>%
     width(j = num_cols,  width = num_width) %>%
     width(j = resp_cols, width = resp_width)
-  if (!is.null(footer)) {
+  # footer may be a single string or a character vector; add each line separately
+  footer_lines <- footer[!is.null(footer) & !is.na(footer) & nchar(footer) > 0]
+  if (length(footer_lines) > 0) {
+    for (fl in footer_lines)
+      ft <- ft %>% add_footer_lines(fl)
     ft <- ft %>%
-      add_footer_lines(footer) %>%
       fontsize(size = 9, part = "footer") %>%
       italic(part = "footer") %>%
       align(align = "left", part = "footer")
@@ -440,9 +442,9 @@ add_main_section <- function(doc, elig_df, heading) {
   doc
 }
 
-# Demographic questions side by side
-add_demo_section <- function(doc, elig_df, inelig_df, heading) {
-  # Collect all unique normalized demographic questions from either group
+# Demographic questions side by side, with optional omnibus test results in footer.
+# ct_elig: the crosstab_eligibility DataFrame (from Excel); NULL = no tests shown.
+add_demo_section <- function(doc, elig_df, inelig_df, heading, ct_elig = NULL) {
   all_qs <- unique(c(
     unique(elig_df$Question)[is_demo_q(unique(elig_df$Question))],
     unique(inelig_df$Question)[is_demo_q(unique(inelig_df$Question))]
@@ -453,7 +455,6 @@ add_demo_section <- function(doc, elig_df, inelig_df, heading) {
   doc <- body_add_par(doc, heading, style = "heading 2")
 
   for (nq in norm_qs) {
-    # Match using normalized question text
     eq <- elig_df   %>% filter(norm_q(Question) == nq)
     iq <- inelig_df %>% filter(norm_q(Question) == nq)
     if (nrow(eq) == 0 && nrow(iq) == 0) next
@@ -465,9 +466,23 @@ add_demo_section <- function(doc, elig_df, inelig_df, heading) {
     res <- side_by_side(elig_df, inelig_df, exact_q = nq)
     if (is.null(res)) next
 
+    # Look up omnibus test result for this question from the eligibility cross-tab
+    stat_note <- NULL
+    if (!is.null(ct_elig) && "Question" %in% names(ct_elig) && "p_value" %in% names(ct_elig)) {
+      ct_q <- ct_elig %>% filter(norm_q(Question) == nq)
+      row1 <- ct_q %>% filter(!is.na(p_value)) %>% slice(1)
+      if (nrow(row1) > 0)
+        stat_note <- fmt_stat_note(
+          row1$p_value,
+          if ("test"       %in% names(row1)) row1$test       else NA,
+          if ("stat_value" %in% names(row1)) row1$stat_value else NA,
+          if ("stat_df"    %in% names(row1)) row1$stat_df    else NA
+        )
+    }
+
     doc <- doc %>%
       body_add_par(paste0(nq, type_note), style = "heading 3") %>%
-      body_add_flextable(make_wide_table(res$tbl, res$footer)) %>%
+      body_add_flextable(make_wide_table(res$tbl, c(res$footer, stat_note))) %>%
       body_add_par("", style = "Normal")
   }
   doc
@@ -512,7 +527,8 @@ doc <- add_screener_section(doc, eligible, ineligible)
 doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
 
 # 4. Demographic questions — eligible + ineligible side by side
-doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — All Respondents")
+doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — All Respondents",
+                        ct_elig = crosstab_elig)
 
 # 4b. Tenure summary (derived binary from years of practice)
 if (!is.null(crosstab_tenure) && nrow(crosstab_tenure) > 0 &&
@@ -640,10 +656,6 @@ if (!is.null(completion_time) && nrow(completion_time) > 0) {
 }
 
 # 7. Cross-tabulations
-doc <- add_crosstab_section(
-  doc, crosstab_elig, "Eligible", "Ineligible",
-  "Cross-Tabulation by Eligibility Status (Demographic Questions)"
-)
 doc <- add_crosstab_section(
   doc, crosstab_metro, "Metro", "Non-metro",
   "Cross-Tabulation by Metro / Non-Metro"

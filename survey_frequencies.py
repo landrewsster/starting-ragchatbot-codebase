@@ -840,8 +840,12 @@ def _stat_test(table):
         return None, None, None, None
     flat = [v for row in rows for v in row]
     if len(rows) == 2 and min(flat) < 5:
+        # Fisher's exact is valid even with zero cells
         _, p = fisher_exact(rows)
         return float(p), "Fisher", None, None
+    # For larger tables, skip chi-square when any cell is zero (too sparse)
+    if min(flat) == 0:
+        return None, None, None, None
     stat, p, dof, _ = chi2_contingency(rows)
     note = " (small n)" if min(flat) < 5 else ""
     return float(p), f"χ²{note}", round(float(stat), 2), int(dof)
