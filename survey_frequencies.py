@@ -1282,19 +1282,40 @@ if years_col:
 else:
     print("  WARNING: years of practice column not found — skipping tenure cross-tab")
 
+# ── Eligibility cross-tab ─────────────────────────────────────────────────────
+# Compare eligible vs ineligible on demographic questions only.
+# Both groups answered these; full-survey questions are intentionally excluded.
+crosstab_elig_df = pd.DataFrame()
+demo_keep = [c for c in df.columns if is_demo_col(c)]
+if demo_keep:
+    combined_elig = pd.concat(
+        [eligible.assign(eligibility=1), ineligible.assign(eligibility=0)],
+        ignore_index=True,
+    )
+    # Retain only demographic columns (single-choice and checkbox) + group indicator
+    keep_set = set(demo_keep) | {"eligibility"}
+    combined_demo = combined_elig[[c for c in combined_elig.columns if c in keep_set]].copy()
+    n_elig   = len(eligible)
+    n_inelig = len(ineligible)
+    print(f"  Eligibility cross-tab: eligible={n_elig}, ineligible={n_inelig}")
+    crosstab_elig_df = build_crosstab(combined_demo, "eligibility", "Eligible", "Ineligible")
+else:
+    print("  WARNING: no demographic columns found — skipping eligibility cross-tab")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
-    "eligible":           elig_freqs,
-    "ineligible":         inelig_freqs,
-    "crosstab_metro":     crosstab_metro_df,
-    "crosstab_tenure":    crosstab_tenure_df,
-    "county_freq":        county_freq_df,
-    "county":             county_df,
-    "free_text":          free_text_df,
-    "completion_time":    completion_time_df,
-    "completion_summary": completion_summary_df,
+    "eligible":             elig_freqs,
+    "ineligible":           inelig_freqs,
+    "crosstab_metro":       crosstab_metro_df,
+    "crosstab_tenure":      crosstab_tenure_df,
+    "crosstab_eligibility": crosstab_elig_df,
+    "county_freq":          county_freq_df,
+    "county":               county_df,
+    "free_text":            free_text_df,
+    "completion_time":      completion_time_df,
+    "completion_summary":   completion_summary_df,
 }
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:

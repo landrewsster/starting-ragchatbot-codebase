@@ -31,6 +31,7 @@ eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
 crosstab_metro   <- read_if("crosstab_metro")
 crosstab_tenure  <- read_if("crosstab_tenure")
+crosstab_elig    <- read_if("crosstab_eligibility")
 county_freq      <- read_if("county_freq")
 county_data      <- read_if("county")
 completion_time  <- read_if("completion_time")
@@ -639,6 +640,10 @@ if (!is.null(completion_time) && nrow(completion_time) > 0) {
 }
 
 # 7. Cross-tabulations
+doc <- add_crosstab_section(
+  doc, crosstab_elig, "Eligible", "Ineligible",
+  "Cross-Tabulation by Eligibility Status (Demographic Questions)"
+)
 doc <- add_crosstab_section(
   doc, crosstab_metro, "Metro", "Non-metro",
   "Cross-Tabulation by Metro / Non-Metro"
