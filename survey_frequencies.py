@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from scipy.stats import chi2_contingency, fisher_exact, norm as _norm
+    from scipy.stats import chi2_contingency, fisher_exact, norm as _norm, mannwhitneyu, wilcoxon
     _SCIPY = True
 except ImportError:
     _SCIPY = False
@@ -298,6 +298,21 @@ ORDERED_LIKERT     = [
     "Disagree", "Strongly disagree", "Don't know",
 ]
 ORDERED_CONFIDENCE = ["Very confident", "Somewhat confident", "Not confident", "Don't know"]
+
+# Numeric scores for ordinal tests (Wilcoxon, Mann-Whitney U).
+# "Don't know" is intentionally absent → becomes NaN → excluded from tests.
+LIKERT_SCORE_MAP = {
+    "strongly agree":             5,
+    "agree":                      4,
+    "neither agree nor disagree": 3,
+    "disagree":                   2,
+    "strongly disagree":          1,
+}
+CONFIDENCE_SCORE_MAP = {
+    "very confident":     3,
+    "somewhat confident": 2,
+    "not confident":      1,
+}
 
 LIKERT_PATTERNS = [
     r"there is no safe level",
@@ -764,6 +779,17 @@ def build_all_frequencies(df_sub):
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
+def _col_scores(series, score_map):
+    """Map a raw response Series to numeric Likert/confidence scores.
+    Values absent from score_map (e.g. 'Don't know') become NaN and are excluded."""
+    def to_num(v):
+        if pd.isna(v) or str(v).strip() in ("", "nan"):
+            return np.nan
+        key = str(v).strip().lower().replace("’", "'")
+        return score_map.get(key, np.nan)
+    return pd.to_numeric(series.apply(to_num), errors="coerce").dropna()
+
+
 def _two_prop_z(n1, N1, n0, N0):
     """Two-proportion Z-test. Returns two-tailed p-value or None if undefined."""
     if N1 == 0 or N0 == 0:
@@ -899,6 +925,86 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
     return df
 
 
+def _score_map_for_col(col):
+    """Return (score_map, null_median) for a Likert/confidence column, or (None, None)."""
+    if any(re.search(p, col, re.IGNORECASE) for p in LIKERT_PATTERNS):
+        return LIKERT_SCORE_MAP, 3          # neutral = "Neither agree nor disagree"
+    if any(re.search(p, col, re.IGNORECASE) for p in CONFIDENCE_PATTERNS):
+        return CONFIDENCE_SCORE_MAP, 2      # midpoint = "Somewhat confident"
+    return None, None
+
+
+def _add_likert_tests_crosstab(merged, g1, g0):
+    """For Likert/confidence questions, overwrite chi-square stats with Mann-Whitney U.
+    'Don't know' responses are excluded.  No post-hoc tests are produced for these
+    questions (Mann-Whitney U is already the complete two-group comparison)."""
+    if not _SCIPY:
+        return merged
+    for col in g1.columns:
+        score_map, _ = _score_map_for_col(col)
+        if score_map is None:
+            continue
+        label = complete_col_labels.get(col, col)
+        q_mask = merged["Question"] == label
+        if not q_mask.any():
+            continue
+        s1 = _col_scores(g1[col], score_map)
+        s0 = _col_scores(g0[col], score_map)
+        if len(s1) < 2 or len(s0) < 2:
+            continue
+        try:
+            _, p = mannwhitneyu(s1, s0, alternative="two-sided")
+            p = round(float(p), 4)
+            tname = "Mann-Whitney U"
+        except Exception:
+            continue
+        q_idx = merged.index[q_mask].tolist()
+        for i, idx in enumerate(q_idx):
+            merged.at[idx, "p_value"]     = p      if i == 0 else pd.NA
+            merged.at[idx, "test"]        = tname  if i == 0 else pd.NA
+            merged.at[idx, "adj_residual"] = pd.NA
+            merged.at[idx, "post_hoc_p"]   = pd.NA
+    return merged
+
+
+def _add_likert_tests_main(freq_df, raw_df):
+    """Add one-sample Wilcoxon signed rank test to the main frequency table for
+    Likert/confidence questions.  Tests whether the median differs from the neutral
+    midpoint (3 for 5-point Likert, 2 for 3-point confidence).  'Don't know'
+    responses are excluded.  p_value is placed on the first response row."""
+    if not _SCIPY:
+        return freq_df
+    freq_df = freq_df.copy()
+    for col_name in ("p_value", "test"):
+        if col_name not in freq_df.columns:
+            freq_df[col_name] = pd.NA
+    for col in raw_df.columns:
+        score_map, null_median = _score_map_for_col(col)
+        if score_map is None:
+            continue
+        scores = _col_scores(raw_df[col], score_map)
+        if len(scores) < 5:
+            continue
+        label = complete_col_labels.get(col, col)
+        q_mask = freq_df["Question"] == label
+        if not q_mask.any():
+            continue
+        diffs = scores - null_median
+        diffs = diffs[diffs != 0]       # Wilcoxon requires non-zero differences
+        if len(diffs) < 5:
+            continue
+        try:
+            _, p = wilcoxon(diffs, alternative="two-sided")
+            p = round(float(p), 4)
+        except Exception:
+            continue
+        q_idx = freq_df.index[q_mask].tolist()
+        for i, idx in enumerate(q_idx):
+            freq_df.at[idx, "p_value"] = p          if i == 0 else pd.NA
+            freq_df.at[idx, "test"]    = "Wilcoxon" if i == 0 else pd.NA
+    return freq_df
+
+
 def build_crosstab(df_with_group, group_col, label1, label0):
     """
     Split df_with_group on binary group_col (1 vs 0), run build_all_frequencies
@@ -906,7 +1012,8 @@ def build_crosstab(df_with_group, group_col, label1, label0):
 
     N is the fixed total group size (same for every row within a group).
     % is recalculated as n / N_group so it is consistent across all questions.
-    p_value / test columns use Fisher's exact (2×2 with any cell < 5) or χ².
+    Single-choice / SATA: chi-square or Fisher's exact + Holm post-hoc.
+    Likert / Confidence: Mann-Whitney U; Don't Know excluded; no post-hoc.
     """
     g1 = df_with_group[df_with_group[group_col] == 1].drop(columns=[group_col]).reset_index(drop=True)
     g0 = df_with_group[df_with_group[group_col] == 0].drop(columns=[group_col]).reset_index(drop=True)
@@ -940,6 +1047,7 @@ def build_crosstab(df_with_group, group_col, label1, label0):
     merged[f"N ({label0})"] = N0
 
     merged = _add_pvalues(merged, N1, N0, col_n1, col_n0)
+    merged = _add_likert_tests_crosstab(merged, g1, g0)
 
     col_order = [
         "Question", "Type", "Response",
@@ -954,6 +1062,7 @@ def build_crosstab(df_with_group, group_col, label1, label0):
 print("\nBuilding frequency tables ...")
 
 elig_freqs   = build_all_frequencies(eligible)
+elig_freqs   = _add_likert_tests_main(elig_freqs, eligible)
 inelig_freqs = build_all_frequencies(ineligible)
 
 # ── Build free-text sheet ─────────────────────────────────────────────────────

@@ -179,8 +179,8 @@ make_crosstab_table <- function(df, label1, label0) {
   n_rows  <- nrow(display)
 
   footer    <- paste0("N = ", N1 + N0,
-                      "  |  p: omnibus χ² or Fisher's exact (single-choice);",
-                      " post_hoc_p: Holm-corrected (adjusted residual or two-proportion Z-test)")
+                      "  |  p: omnibus χ²/Fisher's (single-choice/SATA) or Mann-Whitney U (Likert/confidence; Don't Know excluded);",
+                      " post_hoc_p: Holm-corrected (single-choice adj. residual or SATA two-proportion Z-test; not shown for Likert)")
   num_cols  <- intersect(c(col_n1, col_pct1, col_n0, col_pct0), names(display))
   char_cols <- setdiff(names(display), num_cols)
 
