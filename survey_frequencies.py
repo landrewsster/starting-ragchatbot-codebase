@@ -36,8 +36,7 @@ BASE = Path.home() / "Downloads" / "CRC MDH Project" / "MDH analysis"
 if len(sys.argv) > 1:
     INPUT_FILE = BASE / sys.argv[1]
 else:
-    # Update this to match your actual filename
-    INPUT_FILE = BASE / "survey_data.csv"
+    INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-15_0947_EDITED.xlsx"
 
 OUTPUT_FILE = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies.xlsx")
 
@@ -46,7 +45,10 @@ print(f"Output: {OUTPUT_FILE.name}")
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 try:
-    df = pd.read_csv(INPUT_FILE, dtype=str)
+    if INPUT_FILE.suffix.lower() in (".xlsx", ".xls"):
+        df = pd.read_excel(INPUT_FILE, dtype=str)
+    else:
+        df = pd.read_csv(INPUT_FILE, dtype=str)
 except FileNotFoundError:
     raise SystemExit(f"ERROR: {INPUT_FILE} not found")
 
