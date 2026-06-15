@@ -475,26 +475,43 @@ days_col = next(
 )
 
 if elig_col:
-    said_yes  = df[elig_col].str.strip().str.lower() == "yes"
+    blank_elig = df[elig_col].str.strip() == ""
+    said_yes   = df[elig_col].str.strip().str.lower() == "yes"
 
     # Exclude respondents who answered "0 days" on the follow-up days-per-week
     # question — seeing 0 patients means they do not meet the clinical threshold.
-    zero_days = pd.Series(False, index=df.index)
+    zero_days  = pd.Series(False, index=df.index)
+    blank_days = pd.Series(False, index=df.index)
     if days_col:
-        zero_days = df[days_col].str.strip().str.lower().str.match(r'^0\s*days?$', na=False)
+        days_stripped = df[days_col].str.strip()
+        zero_days  = days_stripped.str.lower().str.match(r'^0\s*days?$', na=False)
+        blank_days = days_stripped == ""
         n_zero = zero_days.sum()
         if n_zero > 0:
             print(f"\nExcluding {n_zero} respondent(s) who said 'Yes' to prenatal care "
                   f"but answered '0 days' on: {short_q(days_col, 70)}")
 
-    eligible   = df[ said_yes & ~zero_days].reset_index(drop=True)
-    ineligible = df[~said_yes |  zero_days].reset_index(drop=True)
+    # Incomplete: didn't answer Q1, OR said yes to Q1 but didn't answer Q2.
+    # These respondents did not complete the screener and are excluded from all tables.
+    if days_col:
+        incomplete_mask = blank_elig | (said_yes & blank_days)
+        eligible_mask   = said_yes & ~zero_days & ~blank_days
+        ineligible_mask = (~said_yes & ~blank_elig) | zero_days
+    else:
+        incomplete_mask = blank_elig
+        eligible_mask   = said_yes
+        ineligible_mask = ~said_yes & ~blank_elig
+
+    incomplete = df[ incomplete_mask].reset_index(drop=True)
+    eligible   = df[ eligible_mask  ].reset_index(drop=True)
+    ineligible = df[ ineligible_mask].reset_index(drop=True)
 
     print(f"\nEligibility split on: {short_q(elig_col, 80)}")
     if days_col:
         print(f"  + '0 days' exclusion on: {short_q(days_col, 70)}")
-    print(f"  Eligible   (full survey) : {len(eligible)}")
-    print(f"  Ineligible (screener + demo only) : {len(ineligible)}")
+    print(f"  Eligible   (full survey)              : {len(eligible)}")
+    print(f"  Ineligible (screener + demo only)     : {len(ineligible)}")
+    print(f"  Incomplete (did not finish screener)  : {len(incomplete)} — excluded from all tables")
 else:
     eligible   = df.copy()
     ineligible = pd.DataFrame(columns=df.columns)
