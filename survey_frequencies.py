@@ -491,12 +491,13 @@ if elig_col:
             print(f"\nExcluding {n_zero} respondent(s) who said 'Yes' to prenatal care "
                   f"but answered '0 days' on: {short_q(days_col, 70)}")
 
-    # Incomplete: didn't answer Q1, OR said yes to Q1 but didn't answer Q2.
-    # These respondents did not complete the screener and are excluded from all tables.
+    # Incomplete: left Q1 blank (answered no questions at all).
+    # Ineligible: answered Q1="No", OR Q1="Yes" but Q2 blank or "0 days".
+    # Eligible:   Q1="Yes" AND Q2 is a non-zero, non-blank value.
     if days_col:
-        incomplete_mask = blank_elig | (said_yes & blank_days)
+        incomplete_mask = blank_elig
         eligible_mask   = said_yes & ~zero_days & ~blank_days
-        ineligible_mask = (~said_yes & ~blank_elig) | zero_days
+        ineligible_mask = (~said_yes & ~blank_elig) | zero_days | (said_yes & blank_days)
     else:
         incomplete_mask = blank_elig
         eligible_mask   = said_yes
