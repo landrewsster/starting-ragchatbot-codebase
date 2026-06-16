@@ -602,6 +602,41 @@ if (!is.null(crosstab_elig) && nrow(crosstab_elig) > 0) {
   }
 }
 
+# 4c. Metro group summary (derived from county of practice)
+if (!is.null(county_data) &&
+    all(c("metro", "county_recoded", "group") %in% names(county_data))) {
+
+  valid_metro <- county_data %>% filter(county_recoded != "")
+  e_metro <- sum(valid_metro$group == "eligible"   & as.integer(valid_metro$metro) == 1L)
+  e_non   <- sum(valid_metro$group == "eligible"   & as.integer(valid_metro$metro) == 0L)
+  i_metro <- sum(valid_metro$group == "ineligible" & as.integer(valid_metro$metro) == 1L)
+  i_non   <- sum(valid_metro$group == "ineligible" & as.integer(valid_metro$metro) == 0L)
+  e_tot_m <- e_metro + e_non
+  i_tot_m <- i_metro + i_non
+
+  if (e_tot_m > 0 || i_tot_m > 0) {
+    metro_summary_tbl <- tibble(
+      Response       = c("Metro (7-county) (metro = 1)", "Non-metro (metro = 0)"),
+      `Eligible n`   = as.integer(c(e_metro, e_non)),
+      `Eligible %`   = round(c(e_metro, e_non)   / max(e_tot_m, 1) * 100, 1),
+      `Ineligible n` = as.integer(c(i_metro, i_non)),
+      `Ineligible %` = round(c(i_metro, i_non) / max(i_tot_m, 1) * 100, 1),
+    )
+    footer_metro <- paste0(
+      if (e_tot_m > 0) paste0("Eligible N = ", e_tot_m) else NULL,
+      if (e_tot_m > 0 && i_tot_m > 0) "   |   " else NULL,
+      if (i_tot_m > 0) paste0("Ineligible N = ", i_tot_m) else NULL
+    )
+    doc <- doc %>%
+      body_add_par("Metro Group (County of Practice)", style = "heading 2") %>%
+      body_add_flextable(make_wide_table(metro_summary_tbl,
+        footer = c(footer_metro,
+                   "Metro = Hennepin, Washington, Carver, Scott, Ramsey, Anoka, Dakota.",
+                   "Only respondents who provided a valid county are included."))) %>%
+      body_add_par("", style = "Normal")
+  }
+}
+
 # 5. County
 if (!is.null(county_freq) && nrow(county_freq) > 0) {
   doc <- doc %>%
