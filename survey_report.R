@@ -29,9 +29,10 @@ read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, shee
 
 eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
-crosstab_metro   <- read_if("crosstab_metro")
-crosstab_tenure  <- read_if("crosstab_tenure")
-crosstab_elig    <- read_if("crosstab_eligibility")
+crosstab_metro     <- read_if("crosstab_metro")
+crosstab_tenure    <- read_if("crosstab_tenure")
+crosstab_no_screen <- read_if("crosstab_no_screen")
+crosstab_elig      <- read_if("crosstab_eligibility")
 county_freq      <- read_if("county_freq")
 county_data      <- read_if("county")
 completion_time  <- read_if("completion_time")
@@ -690,6 +691,11 @@ doc <- add_crosstab_section(
 doc <- add_crosstab_section(
   doc, crosstab_tenure, "20+ years", "<20 years",
   "Cross-Tabulation by Tenure (Years in Practice)"
+)
+doc <- add_crosstab_section(
+  doc, crosstab_no_screen,
+  "No, don’t screen any", "No, only some patients",
+  "Cross-Tabulation: Q1.3.3 by Screening Group (Q1.3.1)"
 )
 
 # ── Save ──────────────────────────────────────────────────────────────────────

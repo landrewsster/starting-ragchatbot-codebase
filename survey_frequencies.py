@@ -1328,6 +1328,46 @@ if years_col:
 else:
     print("  WARNING: years of practice column not found — skipping tenure cross-tab")
 
+# ── No-screen sub-group cross-tab ─────────────────────────────────────────────
+# Split eligible respondents by Q1.3.1 response, then cross-tab Q1.3.3 only.
+#   Group 1 = "No, don't screen any patients"
+#   Group 0 = "No, only some patients"
+crosstab_no_screen_df = pd.DataFrame()
+q131_col = next(
+    (c for c in eligible.columns
+     if re.search(r"screen all patients who are pregnant or breastfeeding for cannabis",
+                  c, re.IGNORECASE)
+     and "(choice=" not in c),
+    None
+)
+if q131_col:
+    dont_mask  = eligible[q131_col].str.strip().str.lower().str.startswith("no, don", na=False)
+    some_mask  = eligible[q131_col].str.strip().str.lower().str.contains("only some", na=False)
+    dont_grp   = eligible[dont_mask].copy()
+    some_grp   = eligible[some_mask].copy()
+    print(f"  No-screen cross-tab: 'No, don't screen any'={len(dont_grp)}, "
+          f"'No, only some patients'={len(some_grp)}")
+    if len(dont_grp) > 0 and len(some_grp) > 0:
+        dont_grp["_no_screen_grp"] = 1
+        some_grp["_no_screen_grp"] = 0
+        eligible_no_screen = pd.concat([dont_grp, some_grp], ignore_index=True)
+        raw_no_screen = build_crosstab(
+            eligible_no_screen, "_no_screen_grp",
+            "No, don't screen any", "No, only some patients"
+        )
+        q133_pat = r"why don.t you or others.+screen all patients"
+        if not raw_no_screen.empty:
+            crosstab_no_screen_df = raw_no_screen[
+                raw_no_screen["Question"].apply(
+                    lambda q: bool(re.search(q133_pat, str(q), re.IGNORECASE))
+                )
+            ].reset_index(drop=True)
+            print(f"    → {len(crosstab_no_screen_df)} rows for Q1.3.3")
+    else:
+        print("  WARNING: one or both sub-groups empty — skipping no-screen cross-tab")
+else:
+    print("  WARNING: Q1.3.1 column not found — skipping no-screen cross-tab")
+
 # ── Eligibility cross-tab ─────────────────────────────────────────────────────
 # Compare eligible vs ineligible on demographic questions only.
 # Both groups answered these; full-survey questions are intentionally excluded.
@@ -1356,6 +1396,7 @@ sheets = {
     "ineligible":           inelig_freqs,
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
+    "crosstab_no_screen":   crosstab_no_screen_df,
     "crosstab_eligibility": crosstab_elig_df,
     "county_freq":          county_freq_df,
     "county":               county_df,
