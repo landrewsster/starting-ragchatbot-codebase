@@ -1091,6 +1091,21 @@ elig_freqs   = build_all_frequencies(eligible)
 elig_freqs   = _add_likert_tests_main(elig_freqs, eligible)
 inelig_freqs = build_all_frequencies(ineligible)
 
+# ── Diagnose demographic question coverage ────────────────────────────────────
+# Print which demo-pattern columns exist in the ineligible group and whether
+# they have any answered data — helps spot form/column label mismatches.
+print("\nDemographic column check (ineligible group):")
+for col in ineligible.columns:
+    if not any(re.search(p, col, re.IGNORECASE) for p in DEMO_PATTERNS):
+        continue
+    n_answered = ineligible[col].apply(norm_val).dropna().__len__()
+    in_freqs   = (inelig_freqs is not None and not inelig_freqs.empty
+                  and any(re.search(p, str(q), re.IGNORECASE)
+                          for q in inelig_freqs["Question"].unique()
+                          for p in DEMO_PATTERNS
+                          if re.search(p, col, re.IGNORECASE)))
+    print(f"  [{n_answered:>3} answered] {'IN freqs' if in_freqs else 'MISSING from freqs'} | {col[:90]}")
+
 # ── Build free-text sheet ─────────────────────────────────────────────────────
 
 # Collect non-empty free-text responses in survey column order.
