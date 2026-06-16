@@ -865,7 +865,7 @@ def _stat_test(table):
     return float(p), f"χ²{note}", round(float(stat), 2), int(dof)
 
 
-def _add_pvalues(df, N1, N0, col_n1, col_n0):
+def _add_pvalues(df, N1, N0, col_n1, col_n0, col_N1=None, col_N0=None):
     """
     Append statistical test columns to a cross-tab DataFrame.
 
@@ -893,6 +893,15 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
         n1s = pd.to_numeric(data[col_n1], errors="coerce").fillna(0).astype(int).tolist()
         n0s = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
 
+        # Use question-specific branching-aware N if provided (cross-tab), else fixed totals
+        q_N1, q_N0 = N1, N0
+        if col_N1 and col_N1 in data.columns:
+            v = pd.to_numeric(data[col_N1], errors="coerce").dropna()
+            if len(v) > 0: q_N1 = int(v.iloc[0])
+        if col_N0 and col_N0 in data.columns:
+            v = pd.to_numeric(data[col_N0], errors="coerce").dropna()
+            if len(v) > 0: q_N0 = int(v.iloc[0])
+
         table = list(zip(n1s, n0s))
         p_omni, tname, s_val, s_df = _stat_test(table)
 
@@ -905,7 +914,7 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0):
         if qtype == "Select all that apply":
             # Per-option two-proportion Z-tests with Holm correction — only when significant
             if p_omni is not None and p_omni < 0.05:
-                raw_ps = [_two_prop_z(c1, N1, c0, N0) for c1, c0 in zip(n1s, n0s)]
+                raw_ps = [_two_prop_z(c1, q_N1, c0, q_N0) for c1, c0 in zip(n1s, n0s)]
                 for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
                     df.at[idx, "post_hoc_p"] = adj_p
         else:
@@ -1023,8 +1032,8 @@ def build_crosstab(df_with_group, group_col, label1, label0):
     Split df_with_group on binary group_col (1 vs 0), run build_all_frequencies
     on each half, and merge side-by-side.
 
-    N is the fixed total group size (same for every row within a group).
-    % is recalculated as n / N_group so it is consistent across all questions.
+    % and N use the branching-aware denominator from build_all_frequencies so
+    cross-tab percentages match the main eligible table and h-bar charts.
     Single-choice / SATA: chi-square or Fisher's exact + Holm post-hoc.
     Likert / Confidence: Mann-Whitney U; Don't Know excluded; no post-hoc.
     """
@@ -1038,28 +1047,32 @@ def build_crosstab(df_with_group, group_col, label1, label0):
     N1, N0 = len(g1), len(g0)
     print(f"  {label1}: N={N1}  |  {label0}: N={N0}")
 
-    f1 = build_all_frequencies(g1).drop(columns=["N (denominator)"], errors="ignore")
-    f0 = build_all_frequencies(g0).drop(columns=["N (denominator)"], errors="ignore")
+    f1 = build_all_frequencies(g1)
+    f0 = build_all_frequencies(g0)
 
     if f1.empty or f0.empty:
         return pd.DataFrame()
 
-    # Recalculate % using fixed group sizes so N is constant across all questions
-    for f, N in [(f1, N1), (f0, N0)]:
+    for f in (f1, f0):
         f["n"] = pd.to_numeric(f["n"], errors="coerce").fillna(0).astype(int)
-        f["%"] = (f["n"] / N * 100).round(1)
 
     col_n1, col_n0 = f"n ({label1})", f"n ({label0})"
-    f1 = f1.rename(columns={"n": col_n1, "%": f"% ({label1})"})
-    f0 = f0.rename(columns={"n": col_n0, "%": f"% ({label0})"})
+    col_N1, col_N0 = f"N ({label1})", f"N ({label0})"
+
+    # Rename columns before merge; branching-aware N (denominator) becomes per-group N column
+    f1 = f1.rename(columns={"n": col_n1, "%": f"% ({label1})", "N (denominator)": col_N1})
+    f0 = f0.rename(columns={"n": col_n0, "%": f"% ({label0})", "N (denominator)": col_N0})
+    # Drop any residual columns that would cause merge key collisions
+    for fi in (f1, f0):
+        fi.drop(columns=[c for c in fi.columns
+                          if c not in ["Question", "Type", "Response"]
+                          and c not in [col_n1, f"% ({label1})", col_N1,
+                                        col_n0, f"% ({label0})", col_N0]],
+                errors="ignore", inplace=True)
 
     merged = f1.merge(f0, on=["Question", "Type", "Response"], how="outer")
 
-    # Fixed N columns — one value per group, same for every row
-    merged[f"N ({label1})"] = N1
-    merged[f"N ({label0})"] = N0
-
-    merged = _add_pvalues(merged, N1, N0, col_n1, col_n0)
+    merged = _add_pvalues(merged, N1, N0, col_n1, col_n0, col_N1=col_N1, col_N0=col_N0)
     merged = _add_likert_tests_crosstab(merged, g1, g0)
 
     col_order = [
