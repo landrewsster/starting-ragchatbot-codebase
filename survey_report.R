@@ -531,23 +531,50 @@ doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — Al
                         ct_elig = crosstab_elig)
 
 # 4b. Tenure summary (derived binary from years of practice)
-if (!is.null(crosstab_tenure) && nrow(crosstab_tenure) > 0 &&
-    all(c("N (20+ years)", "N (<20 years)") %in% names(crosstab_tenure))) {
-  n_high  <- as.integer(crosstab_tenure$`N (20+ years)`[1])
-  n_low   <- as.integer(crosstab_tenure$`N (<20 years)`[1])
-  tot     <- n_high + n_low
-  tenure_summary <- data.frame(
-    Response          = c("20 or more years (tenure = 1)", "Less than 20 years (tenure = 0)"),
-    n                 = c(n_high, n_low),
-    `%`               = round(c(n_high, n_low) / tot * 100, 1),
-    `N (denominator)` = tot,
-    check.names = FALSE
-  )
-  doc <- doc %>%
-    body_add_par("Tenure Group (Years in Practice)", style = "heading 2") %>%
-    body_add_flextable(make_table(tenure_summary)) %>%
-    body_add_par("Tenure = 1 if 20 or more years in practice; tenure = 0 otherwise.", style = "Normal") %>%
-    body_add_par("", style = "Normal")
+# Pull both eligible and ineligible counts from crosstab_eligibility, which
+# already has the original tenure question answered by both groups.
+if (!is.null(crosstab_elig) && nrow(crosstab_elig) > 0) {
+  tenure_q <- crosstab_elig %>%
+    filter(str_detect(str_to_lower(Question), "how long have you been practicing"))
+
+  if (nrow(tenure_q) > 0 &&
+      all(c("n (Eligible)", "n (Ineligible)") %in% names(tenure_q))) {
+
+    high_rows <- tenure_q %>%
+      filter(str_detect(str_to_lower(Response), "20 or more"),
+             Response != "Missing (skipped)")
+    low_rows  <- tenure_q %>%
+      filter(!str_detect(str_to_lower(Response), "20 or more"),
+             Response != "Missing (skipped)")
+
+    e_high <- sum(suppressWarnings(as.integer(high_rows$`n (Eligible)`)),  na.rm = TRUE)
+    e_low  <- sum(suppressWarnings(as.integer(low_rows$`n (Eligible)`)),   na.rm = TRUE)
+    i_high <- sum(suppressWarnings(as.integer(high_rows$`n (Ineligible)`)), na.rm = TRUE)
+    i_low  <- sum(suppressWarnings(as.integer(low_rows$`n (Ineligible)`)),  na.rm = TRUE)
+    e_tot  <- e_high + e_low
+    i_tot  <- i_high + i_low
+
+    if (e_tot > 0 || i_tot > 0) {
+      tenure_summary_tbl <- tibble(
+        Response       = c("20 or more years (tenure = 1)", "Less than 20 years (tenure = 0)"),
+        `Eligible n`   = as.integer(c(e_high, e_low)),
+        `Eligible %`   = round(c(e_high, e_low) / max(e_tot, 1) * 100, 1),
+        `Ineligible n` = as.integer(c(i_high, i_low)),
+        `Ineligible %` = round(c(i_high, i_low) / max(i_tot, 1) * 100, 1),
+      )
+      footer_tenure <- paste0(
+        if (e_tot > 0) paste0("Eligible N = ", e_tot) else NULL,
+        if (e_tot > 0 && i_tot > 0) "   |   " else NULL,
+        if (i_tot > 0) paste0("Ineligible N = ", i_tot) else NULL
+      )
+      doc <- doc %>%
+        body_add_par("Tenure Group (Years in Practice)", style = "heading 2") %>%
+        body_add_flextable(make_wide_table(tenure_summary_tbl,
+          footer = c(footer_tenure,
+                     "Tenure = 1 if 20 or more years in practice; tenure = 0 otherwise."))) %>%
+        body_add_par("", style = "Normal")
+    }
+  }
 }
 
 # 5. County
