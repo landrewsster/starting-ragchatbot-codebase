@@ -446,7 +446,7 @@ make_chart <- function(df_in, collapsed,
       expand = c(0.1, 0.1)
     ) +
     scale_fill_manual(values = ALL_COLORS) +
-    labs(title = title, x = NULL, y = NULL, fill = NULL, caption = caption_text) +
+    labs(title = NULL, x = NULL, y = NULL, fill = NULL, caption = caption_text) +
     theme_minimal(base_size = 11) +
     theme(
       legend.position    = "bottom",

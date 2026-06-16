@@ -129,7 +129,7 @@ make_hbar <- function(df, title = NULL) {
       expand = c(0, 0)
     ) +
     labs(
-      title   = if (!is.null(title)) str_wrap(title, width = 90) else NULL,
+      title   = NULL,
       x       = NULL,
       y       = NULL,
       caption = paste0(
