@@ -730,13 +730,36 @@ def freq_checkbox_group(df_sub, parent_q, child_cols,
     return pd.DataFrame(rows)
 
 def free_text_for_question(df_sub, q_key):
-    """Return a DataFrame of verbatim 'Other, please specify' responses for q_key, or None."""
+    """Return a DataFrame of verbatim 'Other, please specify' responses for q_key, or None.
+
+    For SATA questions, only includes rows where the corresponding 'Other' checkbox
+    is checked — prevents dumping all respondents when only a few selected Other.
+    """
     ft_cols = [c for c in q_free_text_cols.get(q_key, []) if c in df_sub.columns]
     if not ft_cols:
         return None
+
+    # For SATA questions find the "Other, please specify" checkbox column so we
+    # can filter to only respondents who actually selected that option.
+    other_cb_col = None
+    if q_key in checkbox_groups:
+        for cb_col in checkbox_groups[q_key]:
+            if (re.search(r'\bother\b', cb_col, re.IGNORECASE) and
+                    re.search(r'\bspecify\b', cb_col, re.IGNORECASE)):
+                other_cb_col = cb_col
+                break
+        if other_cb_col is None:
+            for cb_col in checkbox_groups[q_key]:
+                if re.search(r'\bother\b', cb_col, re.IGNORECASE):
+                    other_cb_col = cb_col
+                    break
+
     rows = []
     for ft_col in ft_cols:
-        for val in df_sub[ft_col]:
+        sub = (df_sub[df_sub[other_cb_col].apply(is_checked)]
+               if other_cb_col and other_cb_col in df_sub.columns
+               else df_sub)
+        for val in sub[ft_col]:
             v = str(val).strip()
             if v and v.lower() not in ("nan", "", "checked", "unchecked", "0", "1"):
                 rows.append({
@@ -1363,9 +1386,34 @@ if q131_col:
                 )
             ].reset_index(drop=True)
             print(f"    → {len(crosstab_no_screen_df)} rows for Q1.3.3")
+
+        # Collect Q1.3.3 open-text responses by group (separate sheet)
+        q133_q_key = next(
+            (k for k in checkbox_groups
+             if re.search(q133_pat, k, re.IGNORECASE)),
+            None
+        )
+        no_screen_freetext_rows = []
+        for grp_label, grp_df in [
+            ("No, don't screen any patients", dont_grp),
+            ("No, only some patients",        some_grp),
+        ]:
+            if q133_q_key:
+                ft = free_text_for_question(grp_df, q133_q_key)
+                if ft is not None:
+                    ft.insert(1, "Group", grp_label)
+                    no_screen_freetext_rows.append(ft)
+        no_screen_freetext_df = (
+            pd.concat(no_screen_freetext_rows, ignore_index=True)
+            if no_screen_freetext_rows else pd.DataFrame()
+        )
+        if not no_screen_freetext_df.empty:
+            print(f"    → {len(no_screen_freetext_df)} Q1.3.3 open-text responses collected")
     else:
+        no_screen_freetext_df = pd.DataFrame()
         print("  WARNING: one or both sub-groups empty — skipping no-screen cross-tab")
 else:
+    no_screen_freetext_df = pd.DataFrame()
     print("  WARNING: Q1.3.1 column not found — skipping no-screen cross-tab")
 
 # ── Eligibility cross-tab ─────────────────────────────────────────────────────
@@ -1397,6 +1445,7 @@ sheets = {
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
     "crosstab_no_screen":   crosstab_no_screen_df,
+    "no_screen_freetext":   no_screen_freetext_df,
     "crosstab_eligibility": crosstab_elig_df,
     "county_freq":          county_freq_df,
     "county":               county_df,

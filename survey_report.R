@@ -31,7 +31,8 @@ eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
 crosstab_metro     <- read_if("crosstab_metro")
 crosstab_tenure    <- read_if("crosstab_tenure")
-crosstab_no_screen <- read_if("crosstab_no_screen")
+crosstab_no_screen  <- read_if("crosstab_no_screen")
+no_screen_freetext  <- read_if("no_screen_freetext")
 crosstab_elig      <- read_if("crosstab_eligibility")
 county_freq      <- read_if("county_freq")
 county_data      <- read_if("county")
@@ -756,6 +757,25 @@ doc <- add_crosstab_section(
   "No, don’t screen any", "No, only some patients",
   "Cross-Tabulation: Q1.3.3 by Screening Group (Q1.3.1)"
 )
+
+# Q1.3.3 open-text responses by no-screen group
+if (!is.null(no_screen_freetext) && nrow(no_screen_freetext) > 0 &&
+    all(c("Group", "Response") %in% names(no_screen_freetext))) {
+  ft_nsft <- flextable(no_screen_freetext %>% select(Group, Response)) %>%
+    theme_booktabs() %>%
+    bold(part = "header") %>%
+    fontsize(size = 10, part = "all") %>%
+    font(fontname = "Calibri", part = "all") %>%
+    set_column_labels(Group = "Screening Group", Response = "Open-Text Response") %>%
+    width(j = 1, width = 2) %>%
+    width(j = 2, width = 4.5) %>%
+    hrule(rule = "auto") %>%
+    autofit()
+  doc <- doc %>%
+    body_add_par("Q1.3.3 Open-Text Responses by Screening Group", style = "heading 3") %>%
+    body_add_flextable(ft_nsft) %>%
+    body_add_par("", style = "Normal")
+}
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 print(doc, target = OUTPUT_FILE)
