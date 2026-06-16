@@ -443,6 +443,26 @@ add_main_section <- function(doc, elig_df, heading) {
   doc
 }
 
+add_elig_demo_section <- function(doc, elig_df, heading) {
+  df <- elig_df %>% filter(is_demo_q(Question))
+  if (nrow(df) == 0) return(doc)
+
+  doc <- body_add_par(doc, heading, style = "heading 2")
+
+  for (q in unique(norm_q(df$Question))) {
+    q_rows    <- df %>% filter(norm_q(Question) == q)
+    q_type    <- if ("Type" %in% names(q_rows)) unique(q_rows$Type)[1] else ""
+    type_note <- if (isTRUE(q_type == "Select all that apply")) " (select all that apply)" else ""
+    q_rows    <- q_rows %>% select(-Question, -any_of("Type"))
+
+    doc <- doc %>%
+      body_add_par(paste0(q, type_note), style = "heading 3") %>%
+      body_add_flextable(make_table(q_rows)) %>%
+      body_add_par("", style = "Normal")
+  }
+  doc
+}
+
 # Demographic questions side by side, with optional omnibus test results in footer.
 # ct_elig: the crosstab_eligibility DataFrame (from Excel); NULL = no tests shown.
 add_demo_section <- function(doc, elig_df, inelig_df, heading, ct_elig = NULL) {
@@ -527,7 +547,11 @@ doc <- add_screener_section(doc, eligible, ineligible)
 # 3. Full survey — eligible respondents only
 doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
 
-# 4. Demographic questions — eligible + ineligible side by side
+# 4. Demographic questions — eligible respondents only
+doc <- add_elig_demo_section(doc, eligible,
+                             "Demographic Questions — Eligible Respondents Only")
+
+# 4a. Demographic questions — eligible + ineligible side by side
 doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — All Respondents",
                         ct_elig = crosstab_elig)
 
