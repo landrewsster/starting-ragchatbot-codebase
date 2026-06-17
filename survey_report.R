@@ -241,7 +241,7 @@ make_crosstab_table <- function(df, label1, label0) {
 
   n_footer <- paste0("N = ", N1 + N0)
   post_note <- if (length(post_hoc_present) > 0)
-    "post_hoc_p: Holm-corrected (adj. residual for single-choice; two-proportion Z-test for SATA and Likert/ordinal when omnibus p < .05)" else NULL
+    "post_hoc_p: Holm-corrected (adj. residual for single-choice; two-proportion Z-test for SATA). Likert/ordinal questions show Mann-Whitney U only — no post-hoc needed for a 2-group comparison." else NULL
   footer_lines <- c(n_footer, stat_note, post_note)
   footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
 
