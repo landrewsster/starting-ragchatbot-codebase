@@ -880,11 +880,8 @@ def _stat_test(table):
         # Fisher's exact is valid even with zero cells
         _, p = fisher_exact(rows)
         return float(p), "Fisher", None, None
-    # For larger tables, skip chi-square when any cell is zero (too sparse)
-    if min(flat) == 0:
-        return None, None, None, None
-    stat, p, dof, _ = chi2_contingency(rows)
-    note = " (small n)" if min(flat) < 5 else ""
+    stat, p, dof, expected = chi2_contingency(rows)
+    note = " (small n)" if expected.min() < 5 else ""
     return float(p), f"χ²{note}", round(float(stat), 2), int(dof)
 
 
@@ -935,11 +932,12 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0, col_N1=None, col_N0=None):
             df.at[idx, "stat_df"]   = s_df   if i == 0 else pd.NA
 
         if qtype == "Select all that apply":
-            # Per-option two-proportion Z-tests with Holm correction — only when significant
-            if p_omni is not None and p_omni < 0.05:
-                raw_ps = [_two_prop_z(c1, q_N1, c0, q_N0) for c1, c0 in zip(n1s, n0s)]
-                for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
-                    df.at[idx, "post_hoc_p"] = adj_p
+            # Per-option Holm-corrected two-proportion Z-tests — always run for SATA.
+            # SATA responses are not mutually exclusive so the omnibus chi-square is
+            # conceptually inappropriate as a gate; per-option tests are the primary analysis.
+            raw_ps = [_two_prop_z(c1, q_N1, c0, q_N0) for c1, c0 in zip(n1s, n0s)]
+            for idx, adj_p in zip(data.index, _holm_correct(raw_ps)):
+                df.at[idx, "post_hoc_p"] = adj_p
         else:
             # Post-hoc adjusted residuals when omnibus chi-square is significant
             if p_omni is not None and p_omni < 0.05 and tname and tname.startswith("χ"):
