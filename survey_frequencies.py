@@ -991,16 +991,19 @@ def _add_likert_tests_crosstab(merged, g1, g0,
         label = complete_col_labels.get(col, col)
         q_mask = merged["Question"] == label
         if not q_mask.any():
+            print(f"  [MW skip] no Question match for label: {short_q(label, 80)}")
             continue
         s1 = _col_scores(g1[col], score_map)
         s0 = _col_scores(g0[col], score_map)
         if len(s1) < 2 or len(s0) < 2:
+            print(f"  [MW skip] too few scores — s1={len(s1)}, s0={len(s0)} for: {short_q(label, 80)}")
             continue
         try:
             u_stat, p = mannwhitneyu(s1, s0, alternative="two-sided")
             p = float(p)
             tname = "Mann-Whitney U"
-        except Exception:
+        except Exception as _mw_err:
+            print(f"  [MW skip] exception for {short_q(label, 80)}: {_mw_err}")
             continue
         q_idx = merged.index[q_mask].tolist()
         for i, idx in enumerate(q_idx):
