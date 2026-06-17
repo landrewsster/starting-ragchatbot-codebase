@@ -976,12 +976,15 @@ def _score_map_for_col(col):
     return None, None
 
 
-def _add_likert_tests_crosstab(merged, g1, g0):
+def _add_likert_tests_crosstab(merged, g1, g0,
+                               col_n1=None, col_n0=None, col_N1=None, col_N0=None):
     """For Likert/confidence questions, overwrite chi-square stats with Mann-Whitney U.
-    'Don't know' responses are excluded.  No post-hoc tests are produced for these
-    questions (Mann-Whitney U is already the complete two-group comparison)."""
+    When Mann-Whitney is significant, also runs per-row Holm-corrected two-proportion
+    Z-tests so post_hoc_p is populated consistently with single-choice and SATA tables.
+    'Don't know' and 'Missing' rows are excluded from the Z-tests."""
     if not _SCIPY:
         return merged
+    N1, N0 = len(g1), len(g0)
     for col in g1.columns:
         score_map, _ = _score_map_for_col(col)
         if score_map is None:
@@ -1000,14 +1003,47 @@ def _add_likert_tests_crosstab(merged, g1, g0):
             tname = "Mann-Whitney U"
         except Exception:
             continue
+
         q_idx = merged.index[q_mask].tolist()
+
+        # Use branching-aware N if provided
+        q_N1, q_N0 = N1, N0
+        if col_N1 and col_N1 in merged.columns:
+            v = pd.to_numeric(merged.loc[q_mask, col_N1], errors="coerce").dropna()
+            if len(v) > 0:
+                q_N1 = int(v.iloc[0])
+        if col_N0 and col_N0 in merged.columns:
+            v = pd.to_numeric(merged.loc[q_mask, col_N0], errors="coerce").dropna()
+            if len(v) > 0:
+                q_N0 = int(v.iloc[0])
+
+        # Per-row Holm-corrected two-proportion Z-tests when omnibus is significant
+        post_hoc_ps = [pd.NA] * len(q_idx)
+        if (p < 0.05 and col_n1 and col_n0
+                and col_n1 in merged.columns and col_n0 in merged.columns):
+            data = merged.loc[q_mask]
+            n1s  = pd.to_numeric(data[col_n1], errors="coerce").fillna(0).astype(int).tolist()
+            n0s  = pd.to_numeric(data[col_n0], errors="coerce").fillna(0).astype(int).tolist()
+            resp = data["Response"].tolist()
+            raw_ps = [
+                (_two_prop_z(c1, q_N1, c0, q_N0)
+                 if not re.search(r'\bmissing\b|\btotal\b', str(r), re.IGNORECASE)
+                 else None)
+                for c1, c0, r in zip(n1s, n0s, resp)
+            ]
+            adj_ps = _holm_correct(raw_ps)
+            post_hoc_ps = [
+                (float(a) if a is not None else pd.NA)
+                for a in adj_ps
+            ]
+
         for i, idx in enumerate(q_idx):
-            merged.at[idx, "p_value"]    = p                         if i == 0 else pd.NA
-            merged.at[idx, "test"]       = tname                     if i == 0 else pd.NA
-            merged.at[idx, "stat_value"] = round(float(u_stat), 2)   if i == 0 else pd.NA
-            merged.at[idx, "stat_df"]    = pd.NA
+            merged.at[idx, "p_value"]      = p                       if i == 0 else pd.NA
+            merged.at[idx, "test"]         = tname                   if i == 0 else pd.NA
+            merged.at[idx, "stat_value"]   = round(float(u_stat), 2) if i == 0 else pd.NA
+            merged.at[idx, "stat_df"]      = pd.NA
             merged.at[idx, "adj_residual"] = pd.NA
-            merged.at[idx, "post_hoc_p"]   = pd.NA
+            merged.at[idx, "post_hoc_p"]   = post_hoc_ps[i]
     return merged
 
 
@@ -1096,7 +1132,9 @@ def build_crosstab(df_with_group, group_col, label1, label0):
     merged = f1.merge(f0, on=["Question", "Type", "Response"], how="outer")
 
     merged = _add_pvalues(merged, N1, N0, col_n1, col_n0, col_N1=col_N1, col_N0=col_N0)
-    merged = _add_likert_tests_crosstab(merged, g1, g0)
+    merged = _add_likert_tests_crosstab(merged, g1, g0,
+                                         col_n1=col_n1, col_n0=col_n0,
+                                         col_N1=col_N1, col_N0=col_N0)
 
     col_order = [
         "Question", "Type", "Response",
