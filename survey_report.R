@@ -464,6 +464,65 @@ add_elig_demo_section <- function(doc, elig_df, heading) {
   doc
 }
 
+# Single combined table for all demographic variables (eligible respondents).
+# Bold shaded rows = question labels; response rows show n, %, and N (which varies by question).
+make_elig_demo_combined_table <- function(elig_df) {
+  df <- elig_df %>% filter(is_demo_q(Question))
+  if (nrow(df) == 0) return(NULL)
+
+  rows           <- list()
+  header_indices <- integer(0)
+
+  for (q in unique(norm_q(df$Question))) {
+    q_rows <- df %>% filter(norm_q(Question) == q)
+
+    n_val <- NA_real_
+    for (.col in c("N (answered)", "N (denominator)")) {
+      if (.col %in% names(q_rows)) {
+        .vals <- suppressWarnings(as.numeric(q_rows[[.col]]))
+        if (any(!is.na(.vals))) { n_val <- max(.vals, na.rm = TRUE); break }
+      }
+    }
+
+    q_type    <- if ("Type" %in% names(q_rows)) unique(q_rows$Type)[1] else ""
+    type_note <- if (isTRUE(q_type == "Select all that apply")) " (select all that apply)" else ""
+
+    header_indices <- c(header_indices, length(rows) + 1L)
+    rows[[length(rows) + 1L]] <- tibble(
+      Response = paste0(q, type_note), n = NA_real_, `%` = NA_real_, N = NA_real_
+    )
+
+    for (i in seq_len(nrow(q_rows))) {
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = q_rows$Response[i],
+        n        = suppressWarnings(as.numeric(q_rows$n[i])),
+        `%`      = suppressWarnings(as.numeric(q_rows$`%`[i])),
+        N        = n_val
+      )
+    }
+  }
+
+  combined <- bind_rows(rows)
+
+  flextable(combined) %>%
+    theme_booktabs() %>%
+    bold(part = "header") %>%
+    bold(i = header_indices, part = "body") %>%
+    bg(i = header_indices, bg = "#D9D9D9", part = "body") %>%
+    fontsize(size = 10, part = "all") %>%
+    font(fontname = "Calibri", part = "all") %>%
+    colformat_num(na_str = "") %>%
+    colformat_char(na_str = "") %>%
+    align(j = c("n", "%", "N"), align = "right", part = "all") %>%
+    align(j = "Response",       align = "left",  part = "all") %>%
+    width(j = "Response",       width = 4.2) %>%
+    width(j = c("n", "%", "N"), width = 0.65) %>%
+    add_footer_lines("N = denominator for each question; may vary across questions due to branching or skipped items.") %>%
+    fontsize(size = 9, part = "footer") %>%
+    italic(part = "footer") %>%
+    align(align = "left", part = "footer")
+}
+
 # Demographic questions side by side, with optional omnibus test results in footer.
 # ct_elig: the crosstab_eligibility DataFrame (from Excel); NULL = no tests shown.
 add_demo_section <- function(doc, elig_df, inelig_df, heading, ct_elig = NULL) {
@@ -548,9 +607,14 @@ doc <- add_screener_section(doc, eligible, ineligible)
 # 3. Full survey — eligible respondents only
 doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
 
-# 4. Demographic questions — eligible respondents only
-doc <- add_elig_demo_section(doc, eligible,
-                             "Demographic Questions — Eligible Respondents Only")
+# 4. Demographic questions — eligible respondents only (single combined table)
+ft_elig_demo <- make_elig_demo_combined_table(eligible)
+if (!is.null(ft_elig_demo)) {
+  doc <- doc %>%
+    body_add_par("Demographic Questions — Eligible Respondents Only", style = "heading 2") %>%
+    body_add_flextable(ft_elig_demo) %>%
+    body_add_par("", style = "Normal")
+}
 
 # 4a. Demographic questions — eligible + ineligible side by side
 doc <- add_demo_section(doc, eligible, ineligible, "Demographic Questions — All Respondents",
