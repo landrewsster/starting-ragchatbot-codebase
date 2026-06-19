@@ -119,9 +119,10 @@ make_hbar <- function(df, title = NULL) {
     geom_col(fill = "#4472C4", width = 0.65) +
     geom_text(
       aes(label = paste0(round(pct, 0), "%  (n=", n, ")")),
-      hjust  = -0.08,
-      size   = 3.2,
-      color  = "gray25"
+      hjust    = -0.08,
+      size     = 4.5,
+      color    = "gray25",
+      fontface = "bold"
     ) +
     scale_x_continuous(
       limits = c(0, x_max * 1.45),
@@ -138,16 +139,16 @@ make_hbar <- function(df, title = NULL) {
         " totals may exceed 100%"
       )
     ) +
-    theme_minimal(base_size = 11) +
+    theme_minimal(base_size = 13) +
     theme(
-      plot.title            = element_text(size = 11, face = "bold", hjust = 0,
+      plot.title            = element_text(size = 13, face = "bold", hjust = 0,
                                            margin = margin(b = 8)),
-      axis.text.y           = element_text(size = 9,  hjust = 1),
-      axis.text.x           = element_text(size = 9,  color = "gray50"),
+      axis.text.y           = element_text(size = 12, hjust = 1, face = "bold"),
+      axis.text.x           = element_text(size = 12, color = "gray50", face = "bold"),
       panel.grid.major.y    = element_blank(),
       panel.grid.minor      = element_blank(),
       panel.grid.major.x    = element_line(color = "gray90", linewidth = 0.4),
-      plot.caption          = element_text(size = 8, color = "gray60", hjust = 0.5),
+      plot.caption          = element_text(size = 9, color = "gray60", hjust = 0.5),
       plot.caption.position = "plot",
       plot.margin           = margin(10, 30, 10, 10)
     )

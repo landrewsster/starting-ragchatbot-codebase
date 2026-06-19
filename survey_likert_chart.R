@@ -429,37 +429,37 @@ make_chart <- function(df_in, collapsed,
     geom_text(
       data = plot_df %>% filter(bar_width >= MIN_W_N, !is.na(n_count)),
       aes(x = xcenter, y = y, label = n_count),
-      color = "white", size = 3, fontface = "bold"
+      color = "white", size = 4.2, fontface = "bold"
     ) +
     geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
     geom_text(
       data = anchors,
       aes(x = n_x_pos, y = y, label = paste0("n=", n_all)),
-      hjust = 0, size = 2.8, color = "gray40"
+      hjust = 0, size = 4, color = "gray40", fontface = "bold"
     ) +
     annotate("text", x = -78, y = n_q + 0.75, label = neg_ann,
-             hjust = 0, size = 3, color = "gray40", fontface = "italic") +
+             hjust = 0, size = 4, color = "gray40", fontface = "bold.italic") +
     annotate("text", x = 78,  y = n_q + 0.75, label = pos_ann,
-             hjust = 1, size = 3, color = "gray40", fontface = "italic") +
+             hjust = 1, size = 4, color = "gray40", fontface = "bold.italic") +
     scale_y_continuous(
       breaks = seq_along(q_order), labels = q_order,
       expand = c(0.1, 0.1)
     ) +
     scale_fill_manual(values = ALL_COLORS) +
     labs(title = NULL, x = NULL, y = NULL, fill = NULL, caption = caption_text) +
-    theme_minimal(base_size = 11) +
+    theme_minimal(base_size = 13) +
     theme(
       legend.position    = "bottom",
-      legend.key.size    = unit(0.45, "cm"),
-      legend.text        = element_text(size = 9),
+      legend.key.size    = unit(0.55, "cm"),
+      legend.text        = element_text(size = 12, face = "bold"),
       panel.grid.major.y = element_blank(),
       panel.grid.minor   = element_blank(),
       panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
-      axis.text.y        = element_text(size = 7.5, lineheight = 1.2),
-      axis.text.x.bottom = element_text(size = 9),
-      axis.text.x.top    = element_text(size = 8, color = "gray50"),
-      plot.title            = element_text(face = "bold", size = 12),
-      plot.caption          = element_text(size = 8, color = "gray60", hjust = 0.5),
+      axis.text.y        = element_text(size = 12, lineheight = 1.2, face = "bold"),
+      axis.text.x.bottom = element_text(size = 12, face = "bold"),
+      axis.text.x.top    = element_text(size = 11, color = "gray50"),
+      plot.title            = element_text(face = "bold", size = 14),
+      plot.caption          = element_text(size = 9, color = "gray60", hjust = 0.5),
       plot.caption.position = "plot",
       plot.margin           = margin(10, 20, 10, 5)
     ) +
@@ -473,8 +473,8 @@ make_chart <- function(df_in, collapsed,
       geom_vline(xintercept = DK_START + c(25, 50, 75, 100),
                  color = "gray88", linewidth = 0.3) +
       annotate("text", x = DK_START + 1, y = n_q + 0.75,
-               label = "Don't know →", hjust = 0, size = 3,
-               color = "gray40", fontface = "italic") +
+               label = "Don't know →", hjust = 0, size = 4,
+               color = "gray40", fontface = "bold.italic") +
       scale_x_continuous(
         limits = c(-100, x_right_lim),
         breaks = c(-100, -75, -50, -25, 0, 25, 50, 75, 100),
