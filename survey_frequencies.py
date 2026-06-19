@@ -905,8 +905,9 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0, col_N1=None, col_N0=None):
     if not _SCIPY:
         return df
     df = df.copy()
-    for col in ("p_value", "test", "stat_value", "stat_df", "adj_residual", "post_hoc_p"):
-        df[col] = pd.NA
+    for col in ("p_value", "stat_value", "stat_df", "adj_residual", "post_hoc_p"):
+        df[col] = np.nan   # float NaN; avoids pd.NA dtype coercion issues in pandas 2.x
+    df["test"] = None
 
     for (q, qtype), grp in df.groupby(["Question", "Type"], sort=False):
         data = grp[grp["Response"] != "Missing (skipped)"]
@@ -1097,6 +1098,16 @@ def build_crosstab(df_with_group, group_col, label1, label0):
                 errors="ignore", inplace=True)
 
     merged = f1.merge(f0, on=["Question", "Type", "Response"], how="outer")
+
+    # After an outer merge, rows present in only one side have NaN in "Type".
+    # Groupby in _add_pvalues silently drops NaN-key groups, so SATA Z-tests
+    # would never run for those rows.  Fill from the non-NaN sibling within
+    # each Question block.
+    if "Type" in merged.columns:
+        merged["Type"] = (
+            merged.groupby("Question", sort=False)["Type"]
+            .transform(lambda x: x.ffill().bfill())
+        )
 
     merged = _add_pvalues(merged, N1, N0, col_n1, col_n0, col_N1=col_N1, col_N0=col_N0)
     merged = _add_likert_tests_crosstab(merged, g1, g0)
