@@ -412,6 +412,34 @@ def ordered_for_col(col):
         return ORDERED_CONFIDENCE
     return None
 
+def _branching_eligibility(df_sub, question_label):
+    """Return (boolean_mask, n) for respondents eligible for question_label.
+    Mask is None and n = len(df_sub) when no branching rule applies."""
+    for rule in BRANCHING_RULES:
+        if any(re.search(p, question_label, re.IGNORECASE) for p in rule["child_patterns"]):
+            parent_col = next(
+                (c for c in df_sub.columns
+                 if re.search(rule["parent_pattern"], c, re.IGNORECASE)
+                 and "(choice=" not in c),
+                None
+            )
+            if parent_col:
+                col_lower = df_sub[parent_col].str.strip().str.lower()
+                non_empty = col_lower[col_lower != ""]
+                if len(non_empty) == 0:
+                    return None, len(df_sub)
+                pv = rule["parent_value"]
+                if isinstance(pv, list):
+                    mask = col_lower.isin([v.lower() for v in pv])
+                else:
+                    mask = col_lower == pv.lower()
+                n = int(mask.sum())
+                if n == 0:
+                    return None, 0
+                return mask, n
+    return None, len(df_sub)
+
+
 def get_branching_denom(df_sub, question_label):
     """Return parent-eligible count if question_label matches a branching rule, else None."""
     for rule in BRANCHING_RULES:
@@ -816,6 +844,60 @@ def build_all_frequencies(df_sub):
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
+
+def build_missingness(df_sub):
+    """
+    One row per survey question: N eligible (branching-aware), N answered,
+    N missing, and % missing.  Skips free-text, system, and county columns.
+
+    Single-choice / Likert: answered = non-empty response among eligible rows.
+    Select all that apply  : answered = at least one option checked among eligible rows.
+    """
+    rows = []
+    emitted = set()
+    checkbox_set = set(checkbox_cols)
+    total_n = len(df_sub)
+
+    for col in df_sub.columns:
+        if col in free_text_cols or col in system_cols or col in county_skip_cols:
+            continue
+
+        if col in checkbox_set:
+            parent = parent_question(col)
+            if parent in emitted:
+                continue
+            emitted.add(parent)
+            child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
+            if not child_cols:
+                continue
+            mask, n_elig = _branching_eligibility(df_sub, parent)
+            elig_sub = df_sub[mask] if mask is not None else df_sub
+            has_any = elig_sub[child_cols].apply(lambda c: c.apply(is_checked)).any(axis=1)
+            n_answered = int(has_any.sum())
+            q_label = re.sub(r'\s+', ' ', str(parent)).strip()
+            q_type = "Select all that apply"
+        else:
+            label = complete_col_labels.get(col, col)
+            mask, n_elig = _branching_eligibility(df_sub, label)
+            elig_sub = df_sub[mask] if mask is not None else df_sub
+            n_answered = int(elig_sub[col].str.strip().ne("").sum())
+            q_label = re.sub(r'\s+', ' ', str(label)).strip()
+            q_type = "Single choice / Likert"
+
+        n_missing = max(0, n_elig - n_answered)
+        pct_missing = round(n_missing / n_elig * 100, 1) if n_elig > 0 else None
+        rows.append({
+            "Question":   q_label,
+            "Type":       q_type,
+            "N eligible": n_elig,
+            "N answered": n_answered,
+            "N missing":  n_missing,
+            "% missing":  pct_missing,
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
 def _col_scores(series, score_map):
     """Map a raw response Series to numeric Likert/confidence scores.
     Values absent from score_map (e.g. 'Don't know') become NaN and are excluded."""
@@ -1127,6 +1209,7 @@ print("\nBuilding frequency tables ...")
 elig_freqs   = build_all_frequencies(eligible)
 elig_freqs   = _add_likert_tests_main(elig_freqs, eligible)
 inelig_freqs = build_all_frequencies(ineligible)
+missingness_df = build_missingness(eligible)
 
 # ── Diagnose demographic question coverage ────────────────────────────────────
 # Print which demo-pattern columns exist in the ineligible group and whether
@@ -1456,6 +1539,7 @@ print(f"\nWriting: {OUTPUT_FILE.name}")
 sheets = {
     "eligible":             elig_freqs,
     "ineligible":           inelig_freqs,
+    "missingness":          missingness_df,
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
     "crosstab_no_screen":   crosstab_no_screen_df,
