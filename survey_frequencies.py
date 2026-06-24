@@ -845,26 +845,49 @@ def build_all_frequencies(df_sub):
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
-def build_missingness(df_sub):
+def detect_started_n(df_sub, screener_cols=None):
+    """Count eligible respondents who answered at least one non-screener, non-system column.
+    These are respondents who actually started the full survey (vs. only completing screener).
+    screener_cols: set of column names to exclude (screener / eligibility questions)."""
+    skip = (free_text_cols | system_cols | county_skip_cols |
+            (screener_cols or set()))
+    main_cols = [c for c in df_sub.columns if c not in skip]
+    if not main_cols:
+        return len(df_sub)
+    answered_any = df_sub[main_cols].apply(
+        lambda c: c.str.strip().ne("")
+    ).any(axis=1)
+    return int(answered_any.sum())
+
+
+def build_missingness(df_sub, started_n=None):
     """
-    One row per survey question with columns:
-      Question | Type | N total eligible | N not asked (branched away) |
-      N routed to question | N answered | N skipped (true missing) |
-      % skipped | Flag (>20% skipped)
+    One row per survey question.  Call twice — once without started_n (uses
+    len(df_sub) as the base) and once with started_n (e.g. 97) to produce a
+    version that treats the non-starters as a separate 'never started' group
+    rather than lumping them into 'not asked (branched)'.
 
-    'N not asked' are respondents branched away from the question — they are
-    NOT counted as missing.  'N skipped' is true missingness: respondents who
-    were routed to the question but gave no response.
+    Columns:
+      Question | Type | N total eligible | N never started | N not asked (branched) |
+      N routed to question | N answered | N skipped (true missing) | % skipped | Flag
 
-    Single-choice / Likert : answered = non-empty response among routed rows.
-    Select all that apply   : answered = at least one option checked among routed rows.
+    'N never started'    : eligible respondents who never opened the main survey
+                           (only present when started_n is supplied).
+    'N not asked (branched)': respondents routed away by branch logic — not missing.
+    'N skipped (true missing)': routed but gave no response — true missingness.
+    Flag: 'NOT IN THIS FORM' when N answered = 0 with no branching (wrong instrument);
+          'FLAG >20%' when % skipped > 20 among those routed.
 
-    Output is sorted by % skipped descending so high-missingness items appear first.
+    Output sorted by % skipped descending.
     """
     rows = []
     emitted = set()
     checkbox_set = set(checkbox_cols)
     total_n = len(df_sub)
+    # When started_n is provided, unbranched questions use it as their denominator
+    # (the 9 non-starters are surfaced as 'N never started', not as skips).
+    base_n = started_n if started_n is not None else total_n
+    n_never_started = (total_n - started_n) if started_n is not None else 0
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -878,7 +901,9 @@ def build_missingness(df_sub):
             child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if not child_cols:
                 continue
-            mask, n_routed = _branching_eligibility(df_sub, parent)
+            mask, n_routed_raw = _branching_eligibility(df_sub, parent)
+            # Cap routed N at base_n so non-starters don't inflate it
+            n_routed = min(n_routed_raw, base_n) if mask is not None else base_n
             elig_sub = df_sub[mask] if mask is not None else df_sub
             has_any = elig_sub[child_cols].apply(lambda c: c.apply(is_checked)).any(axis=1)
             n_answered = int(has_any.sum())
@@ -886,33 +911,45 @@ def build_missingness(df_sub):
             q_type = "Select all that apply"
         else:
             label = complete_col_labels.get(col, col)
-            mask, n_routed = _branching_eligibility(df_sub, label)
+            mask, n_routed_raw = _branching_eligibility(df_sub, label)
+            n_routed = min(n_routed_raw, base_n) if mask is not None else base_n
             elig_sub = df_sub[mask] if mask is not None else df_sub
             n_answered = int(elig_sub[col].str.strip().ne("").sum())
             q_label = re.sub(r'\s+', ' ', str(label)).strip()
             q_type = "Single choice / Likert"
 
-        n_not_asked = total_n - n_routed   # branched away — not true missing
+        n_not_asked = base_n - n_routed   # branched away — not true missing
         n_skipped   = max(0, n_routed - n_answered)
         pct_skipped = round(n_skipped / n_routed * 100, 1) if n_routed > 0 else None
-        rows.append({
+
+        row = {
             "Question":                 q_label,
             "Type":                     q_type,
             "N total eligible":         total_n,
-            "N not asked (branched)":   n_not_asked,
             "N routed to question":     n_routed,
             "N answered":               n_answered,
             "N skipped (true missing)": n_skipped,
             "% skipped":                pct_skipped,
-            # n_answered == 0 with no branching means this column belongs to a
-            # different REDCap instrument (e.g. ineligible-only demographics form)
-            # and was never shown to this group — not true missingness.
             "Flag": ("NOT IN THIS FORM" if n_answered == 0 and n_not_asked == 0
+                                            and n_never_started == 0
                      else "FLAG >20%"   if (pct_skipped or 0) > 20
                      else ""),
-        })
+        }
+        # Insert contextual N columns in a readable order
+        if started_n is not None:
+            row["N never started"] = n_never_started
+        row["N not asked (branched)"] = n_not_asked
+        rows.append(row)
 
     df_out = pd.DataFrame(rows) if rows else pd.DataFrame()
+    # Reorder columns for readability
+    col_order = (
+        ["Question", "Type", "N total eligible"]
+        + (["N never started"] if started_n is not None else [])
+        + ["N not asked (branched)", "N routed to question",
+           "N answered", "N skipped (true missing)", "% skipped", "Flag"]
+    )
+    df_out = df_out.reindex(columns=[c for c in col_order if c in df_out.columns])
     if not df_out.empty and "% skipped" in df_out.columns:
         df_out = df_out.sort_values("% skipped", ascending=False, na_position="last"
                                     ).reset_index(drop=True)
@@ -1230,7 +1267,18 @@ print("\nBuilding frequency tables ...")
 elig_freqs   = build_all_frequencies(eligible)
 elig_freqs   = _add_likert_tests_main(elig_freqs, eligible)
 inelig_freqs = build_all_frequencies(ineligible)
-missingness_df = build_missingness(eligible)
+
+# Missingness — two versions:
+#   missingness         : denominator = all 106 eligible (screener-qualified)
+#   missingness_started : denominator = those who actually started the full survey
+#     Non-starters (eligible but never opened the survey) are shown separately
+#     so they don't inflate the skipped count for every question.
+_screener_cols = {c for c in (elig_col, days_col) if c}
+_started_n = detect_started_n(eligible, screener_cols=_screener_cols)
+print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
+      f"  non-starters = {len(eligible) - _started_n})")
+missingness_df         = build_missingness(eligible)
+missingness_started_df = build_missingness(eligible, started_n=_started_n)
 
 # ── Diagnose demographic question coverage ────────────────────────────────────
 # Print which demo-pattern columns exist in the ineligible group and whether
@@ -1561,6 +1609,7 @@ sheets = {
     "eligible":             elig_freqs,
     "ineligible":           inelig_freqs,
     "missingness":          missingness_df,
+    "missingness_started":  missingness_started_df,
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
     "crosstab_no_screen":   crosstab_no_screen_df,
