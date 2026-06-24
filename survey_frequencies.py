@@ -845,19 +845,44 @@ def build_all_frequencies(df_sub):
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
+_DEMO_AND_SCREENER_PATTERNS = [
+    r"provide prenatal|prenatal.*delivery.*postpartum",
+    r"how many days.*see patients|average week.*how many",
+    r"what is your profession",
+    r"do you primarily see pregnant",
+    r"how long have you been practicing",
+    r"what is your primary specialty",
+    r"what is your secondary or sub.specialty",
+    r"which of the following best describes your primary practice setting",
+    r"how would you describe the insurance status",
+    r"what is your gender",
+    r"what is your age",
+    r"what is your race",
+    r"which county",
+]
+
+
 def detect_started_n(df_sub, screener_cols=None):
-    """Count eligible respondents who answered at least one non-screener, non-system column.
-    These are respondents who actually started the full survey (vs. only completing screener).
-    screener_cols: set of column names to exclude (screener / eligibility questions)."""
+    """Count eligible respondents who answered at least one full-survey question.
+    Excludes screener, demographic, system, and free-text columns so that
+    respondents who only completed the screener/demographics section (and never
+    opened the main survey) are not counted as starters."""
     skip = (free_text_cols | system_cols | county_skip_cols |
             (screener_cols or set()))
-    main_cols = [c for c in df_sub.columns if c not in skip]
+    main_cols = [
+        c for c in df_sub.columns
+        if c not in skip
+        and not any(re.search(p, c, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS)
+    ]
     if not main_cols:
         return len(df_sub)
     answered_any = df_sub[main_cols].apply(
         lambda c: c.str.strip().ne("")
     ).any(axis=1)
-    return int(answered_any.sum())
+    n = int(answered_any.sum())
+    print(f"  detect_started_n: {len(main_cols)} main-survey cols checked, "
+          f"{n} respondents answered at least one")
+    return n
 
 
 def build_missingness(df_sub, started_n=None):
