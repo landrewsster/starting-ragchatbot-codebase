@@ -1302,8 +1302,25 @@ _screener_cols = {c for c in (elig_col, days_col) if c}
 _started_n = detect_started_n(eligible, screener_cols=_screener_cols)
 print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
       f"  non-starters = {len(eligible) - _started_n})")
-missingness_df         = build_missingness(eligible)
-missingness_started_df = build_missingness(eligible, started_n=_started_n)
+
+# Completers: eligible respondents marked Complete in the main survey instrument.
+_survey_complete_col = next(
+    (c for c in eligible.columns
+     if re.search(r'^survey_complete$', c.strip(), re.IGNORECASE)),
+    None
+)
+if _survey_complete_col:
+    completers = eligible[
+        eligible[_survey_complete_col].str.strip().str.lower() == "complete"
+    ].reset_index(drop=True)
+    print(f"  Completers (Survey_complete = Complete): N = {len(completers)}")
+else:
+    completers = eligible.copy()
+    print("  WARNING: Survey_complete column not found — completer missingness = eligible missingness")
+
+missingness_df           = build_missingness(eligible)
+missingness_started_df   = build_missingness(eligible, started_n=_started_n)
+missingness_complete_df  = build_missingness(completers)
 
 # ── Diagnose demographic question coverage ────────────────────────────────────
 # Print which demo-pattern columns exist in the ineligible group and whether
@@ -1635,6 +1652,7 @@ sheets = {
     "ineligible":           inelig_freqs,
     "missingness":          missingness_df,
     "missingness_started":  missingness_started_df,
+    "missingness_complete": missingness_complete_df,
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
     "crosstab_no_screen":   crosstab_no_screen_df,
