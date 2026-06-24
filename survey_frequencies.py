@@ -981,6 +981,102 @@ def build_missingness(df_sub, started_n=None):
     return df_out
 
 
+def build_respondent_completeness(df_sub):
+    """
+    Respondent-level completion analysis.
+
+    For each respondent, counts:
+      N questions routed   — questions this person was eligible to answer
+      N answered           — of those, how many they answered
+      N skipped            — routed but no response (true missing)
+
+    Skips columns where nobody in df_sub answered (wrong-instrument columns)
+    and demographic / screener columns so the count reflects main-survey
+    questions only.
+
+    Returns (summary_df, per_respondent_df):
+      summary_df       — distribution of skip counts across respondents
+      per_respondent_df— one row per respondent
+    """
+    total_n = len(df_sub)
+    n_routed_arr  = np.zeros(total_n, dtype=int)
+    n_skipped_arr = np.zeros(total_n, dtype=int)
+
+    emitted = set()
+    checkbox_set = set(checkbox_cols)
+    n_questions = 0
+
+    for col in df_sub.columns:
+        if col in free_text_cols or col in system_cols or col in county_skip_cols:
+            continue
+
+        if col in checkbox_set:
+            parent = parent_question(col)
+            if parent in emitted:
+                continue
+            emitted.add(parent)
+            child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
+            if not child_cols:
+                continue
+            answered_series = df_sub[child_cols].apply(
+                lambda c: c.apply(is_checked)
+            ).any(axis=1)
+            if answered_series.sum() == 0:
+                continue   # nobody answered — wrong instrument
+            mask, _ = _branching_eligibility(df_sub, parent)
+            routed_series = mask if mask is not None else pd.Series(True, index=df_sub.index)
+
+        else:
+            label = complete_col_labels.get(col, col)
+            if any(re.search(p, label, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS):
+                continue
+            answered_series = df_sub[col].str.strip().ne("")
+            if answered_series.sum() == 0:
+                continue   # nobody answered — wrong instrument
+            mask, _ = _branching_eligibility(df_sub, label)
+            routed_series = mask if mask is not None else pd.Series(True, index=df_sub.index)
+
+        routed   = routed_series.reindex(df_sub.index).fillna(False).to_numpy(dtype=bool)
+        answered = answered_series.reindex(df_sub.index).fillna(False).to_numpy(dtype=bool)
+
+        n_routed_arr  += routed.astype(int)
+        n_skipped_arr += (routed & ~answered).astype(int)
+        n_questions   += 1
+
+    print(f"  Respondent completeness: {n_questions} questions assessed, "
+          f"{total_n} respondents")
+
+    n_answered_arr = n_routed_arr - n_skipped_arr
+    per_resp = pd.DataFrame({
+        "N questions routed": n_routed_arr,
+        "N answered":         n_answered_arr,
+        "N skipped":          n_skipped_arr,
+        "% of routed answered": np.where(
+            n_routed_arr > 0,
+            np.round(n_answered_arr / n_routed_arr * 100, 1),
+            np.nan
+        ),
+    })
+
+    # Distribution: how many respondents had 0 skips, 1 skip, etc.
+    skip_dist = (
+        per_resp["N skipped"]
+        .value_counts()
+        .sort_index()
+        .reset_index()
+    )
+    skip_dist.columns = ["N questions skipped", "N respondents"]
+    skip_dist["% of respondents"] = round(
+        skip_dist["N respondents"] / total_n * 100, 1
+    )
+    skip_dist["Cumulative N"] = skip_dist["N respondents"].cumsum()
+    skip_dist["Cumulative %"] = round(
+        skip_dist["Cumulative N"] / total_n * 100, 1
+    )
+
+    return skip_dist, per_resp
+
+
 def _col_scores(series, score_map):
     """Map a raw response Series to numeric Likert/confidence scores.
     Values absent from score_map (e.g. 'Don't know') become NaN and are excluded."""
@@ -1322,6 +1418,13 @@ missingness_df           = build_missingness(eligible)
 missingness_started_df   = build_missingness(eligible, started_n=_started_n)
 missingness_complete_df  = build_missingness(completers)
 
+# Respondent-level completeness — how many questions each person skipped
+print("\nBuilding respondent-level completeness ...")
+resp_complete_summary_df, resp_complete_detail_df = build_respondent_completeness(completers)
+print(f"  Respondents with 0 skips: "
+      f"{int((resp_complete_detail_df['N skipped'] == 0).sum())} "
+      f"of {len(completers)}")
+
 # ── Diagnose demographic question coverage ────────────────────────────────────
 # Print which demo-pattern columns exist in the ineligible group and whether
 # they have any answered data — helps spot form/column label mismatches.
@@ -1650,9 +1753,11 @@ print(f"\nWriting: {OUTPUT_FILE.name}")
 sheets = {
     "eligible":             elig_freqs,
     "ineligible":           inelig_freqs,
-    "missingness":          missingness_df,
-    "missingness_started":  missingness_started_df,
-    "missingness_complete": missingness_complete_df,
+    "missingness":            missingness_df,
+    "missingness_started":    missingness_started_df,
+    "missingness_complete":   missingness_complete_df,
+    "resp_complete_summary":  resp_complete_summary_df,
+    "resp_complete_detail":   resp_complete_detail_df,
     "crosstab_metro":       crosstab_metro_df,
     "crosstab_tenure":      crosstab_tenure_df,
     "crosstab_no_screen":   crosstab_no_screen_df,
