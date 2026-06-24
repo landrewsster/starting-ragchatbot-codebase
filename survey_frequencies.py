@@ -847,11 +847,19 @@ def build_all_frequencies(df_sub):
 
 def build_missingness(df_sub):
     """
-    One row per survey question: N eligible (branching-aware), N answered,
-    N missing, and % missing.  Skips free-text, system, and county columns.
+    One row per survey question with columns:
+      Question | Type | N total eligible | N not asked (branched away) |
+      N routed to question | N answered | N skipped (true missing) |
+      % skipped | Flag (>20% skipped)
 
-    Single-choice / Likert: answered = non-empty response among eligible rows.
-    Select all that apply  : answered = at least one option checked among eligible rows.
+    'N not asked' are respondents branched away from the question — they are
+    NOT counted as missing.  'N skipped' is true missingness: respondents who
+    were routed to the question but gave no response.
+
+    Single-choice / Likert : answered = non-empty response among routed rows.
+    Select all that apply   : answered = at least one option checked among routed rows.
+
+    Output is sorted by % skipped descending so high-missingness items appear first.
     """
     rows = []
     emitted = set()
@@ -870,7 +878,7 @@ def build_missingness(df_sub):
             child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if not child_cols:
                 continue
-            mask, n_elig = _branching_eligibility(df_sub, parent)
+            mask, n_routed = _branching_eligibility(df_sub, parent)
             elig_sub = df_sub[mask] if mask is not None else df_sub
             has_any = elig_sub[child_cols].apply(lambda c: c.apply(is_checked)).any(axis=1)
             n_answered = int(has_any.sum())
@@ -878,24 +886,32 @@ def build_missingness(df_sub):
             q_type = "Select all that apply"
         else:
             label = complete_col_labels.get(col, col)
-            mask, n_elig = _branching_eligibility(df_sub, label)
+            mask, n_routed = _branching_eligibility(df_sub, label)
             elig_sub = df_sub[mask] if mask is not None else df_sub
             n_answered = int(elig_sub[col].str.strip().ne("").sum())
             q_label = re.sub(r'\s+', ' ', str(label)).strip()
             q_type = "Single choice / Likert"
 
-        n_missing = max(0, n_elig - n_answered)
-        pct_missing = round(n_missing / n_elig * 100, 1) if n_elig > 0 else None
+        n_not_asked = total_n - n_routed   # branched away — not true missing
+        n_skipped   = max(0, n_routed - n_answered)
+        pct_skipped = round(n_skipped / n_routed * 100, 1) if n_routed > 0 else None
         rows.append({
-            "Question":   q_label,
-            "Type":       q_type,
-            "N eligible": n_elig,
-            "N answered": n_answered,
-            "N missing":  n_missing,
-            "% missing":  pct_missing,
+            "Question":                 q_label,
+            "Type":                     q_type,
+            "N total eligible":         total_n,
+            "N not asked (branched)":   n_not_asked,
+            "N routed to question":     n_routed,
+            "N answered":               n_answered,
+            "N skipped (true missing)": n_skipped,
+            "% skipped":                pct_skipped,
+            "Flag":                     "FLAG >20%" if (pct_skipped or 0) > 20 else "",
         })
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    df_out = pd.DataFrame(rows) if rows else pd.DataFrame()
+    if not df_out.empty and "% skipped" in df_out.columns:
+        df_out = df_out.sort_values("% skipped", ascending=False, na_position="last"
+                                    ).reset_index(drop=True)
+    return df_out
 
 
 def _col_scores(series, score_map):
