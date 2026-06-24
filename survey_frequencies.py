@@ -904,7 +904,12 @@ def build_missingness(df_sub):
             "N answered":               n_answered,
             "N skipped (true missing)": n_skipped,
             "% skipped":                pct_skipped,
-            "Flag":                     "FLAG >20%" if (pct_skipped or 0) > 20 else "",
+            # n_answered == 0 with no branching means this column belongs to a
+            # different REDCap instrument (e.g. ineligible-only demographics form)
+            # and was never shown to this group — not true missingness.
+            "Flag": ("NOT IN THIS FORM" if n_answered == 0 and n_not_asked == 0
+                     else "FLAG >20%"   if (pct_skipped or 0) > 20
+                     else ""),
         })
 
     df_out = pd.DataFrame(rows) if rows else pd.DataFrame()
