@@ -950,7 +950,7 @@ def build_missingness(df_sub, started_n=None):
         row = {
             "Question":                 q_label,
             "Type":                     q_type,
-            "N total eligible":         total_n,
+            "N total eligible":         base_n,
             "N routed to question":     n_routed,
             "N answered":               n_answered,
             "N skipped (true missing)": n_skipped,
@@ -1075,6 +1075,148 @@ def build_respondent_completeness(df_sub):
     )
 
     return skip_dist, per_resp
+
+
+def build_mcar_analysis(df_sub, min_pct_missing=5.0):
+    """
+    Test whether question-level missingness is associated with respondent
+    demographics (MCAR = Missing Completely At Random analysis).
+
+    For each main-survey question where ≥min_pct_missing% of routed respondents
+    gave no response, builds a contingency table of [answered vs skipped] ×
+    [demographic category] and runs chi-square or Fisher's exact.
+
+    Demographic variables tested: Gender, Age, Profession, Tenure,
+    Practice setting (whichever columns are present in df_sub).
+
+    Returns a DataFrame sorted significant-first, then by p-value.
+    Columns: Question | % skipped | N skipped | N routed |
+             Demographic var | Test | p-value | Significant (p<.05)
+    """
+    if not _SCIPY:
+        print("  MCAR analysis skipped — scipy not installed")
+        return pd.DataFrame()
+
+    DEMO_TEST_PATTERNS = [
+        (r"what is your gender",                                              "Gender"),
+        (r"what is your age",                                                 "Age"),
+        (r"what is your profession",                                          "Profession"),
+        (r"how long have you been practicing",                                "Tenure"),
+        (r"which of the following best describes your primary practice setting", "Practice setting"),
+    ]
+    demo_cols = []
+    for pattern, display_name in DEMO_TEST_PATTERNS:
+        col = next(
+            (c for c in df_sub.columns
+             if re.search(pattern, c, re.IGNORECASE) and "(choice=" not in c),
+            None,
+        )
+        if col:
+            demo_cols.append((col, display_name))
+
+    if not demo_cols:
+        print("  MCAR analysis: no demographic columns found")
+        return pd.DataFrame()
+
+    print(f"  MCAR analysis: testing against {len(demo_cols)} demographic variable(s)")
+
+    rows = []
+    emitted = set()
+    checkbox_set = set(checkbox_cols)
+
+    for col in df_sub.columns:
+        if col in free_text_cols or col in system_cols or col in county_skip_cols:
+            continue
+
+        if col in checkbox_set:
+            parent = parent_question(col)
+            if parent in emitted:
+                continue
+            emitted.add(parent)
+            child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
+            if not child_cols:
+                continue
+            q_label = re.sub(r'\s+', ' ', str(parent)).strip()
+            if any(re.search(p, q_label, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS):
+                continue
+            mask, _ = _branching_eligibility(df_sub, parent)
+            elig_sub = df_sub[mask] if mask is not None else df_sub
+            answered_series = elig_sub[child_cols].apply(
+                lambda c: c.apply(is_checked)
+            ).any(axis=1)
+            if answered_series.sum() == 0:
+                continue  # wrong instrument — nobody answered
+        else:
+            label = complete_col_labels.get(col, col)
+            if any(re.search(p, label, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS):
+                continue
+            mask, _ = _branching_eligibility(df_sub, label)
+            q_label = re.sub(r'\s+', ' ', str(label)).strip()
+            elig_sub = df_sub[mask] if mask is not None else df_sub
+            answered_series = elig_sub[col].str.strip().ne("")
+            if answered_series.sum() == 0:
+                continue  # wrong instrument
+
+        n_routed   = len(elig_sub)
+        n_answered = int(answered_series.sum())
+        n_skipped  = n_routed - n_answered
+        pct_skipped = round(n_skipped / n_routed * 100, 1) if n_routed > 0 else 0.0
+
+        if pct_skipped < min_pct_missing:
+            continue
+
+        # Binary missing indicator (index = elig_sub.index)
+        missing_indicator = (~answered_series.astype(bool)).astype(int)
+        routed_idx = elig_sub.index
+
+        for demo_col, demo_name in demo_cols:
+            if demo_col not in df_sub.columns:
+                continue
+            routed_demo = df_sub.loc[routed_idx, demo_col].str.strip()
+            has_demo    = routed_demo.ne("")
+            valid_idx   = routed_demo[has_demo].index
+            if len(valid_idx) < 4:
+                continue
+
+            demo_sub    = routed_demo.loc[valid_idx]
+            missing_sub = missing_indicator.reindex(valid_idx).fillna(0).astype(int)
+            categories  = sorted(demo_sub.unique())
+            if len(categories) < 2:
+                continue
+
+            table = []
+            for cat in categories:
+                cat_mask = demo_sub == cat
+                n_miss   = int(missing_sub[cat_mask].sum())
+                n_ans    = int(cat_mask.sum()) - n_miss
+                table.append([n_ans, n_miss])
+
+            p_val, test_name, _, _ = _stat_test(table)
+            if p_val is None:
+                continue
+
+            rows.append({
+                "Question":             q_label,
+                "% skipped":            pct_skipped,
+                "N skipped":            n_skipped,
+                "N routed":             n_routed,
+                "Demographic var":      demo_name,
+                "Test":                 test_name,
+                "p-value":              round(p_val, 4),
+                "Significant (p<.05)": "Yes" if p_val < 0.05 else "No",
+            })
+
+    if not rows:
+        print(f"  MCAR analysis: no questions with ≥{min_pct_missing}% missingness found")
+        return pd.DataFrame()
+
+    mcar_df = pd.DataFrame(rows).sort_values(
+        ["Significant (p<.05)", "p-value"],
+        ascending=[False, True],  # "Yes" before "No"; smallest p first within each group
+    ).reset_index(drop=True)
+    n_sig = int((mcar_df["Significant (p<.05)"] == "Yes").sum())
+    print(f"  MCAR analysis: {len(mcar_df)} tests, {n_sig} significant at p < .05")
+    return mcar_df
 
 
 def _col_scores(series, score_map):
@@ -1418,6 +1560,10 @@ missingness_df           = build_missingness(eligible)
 missingness_started_df   = build_missingness(eligible, started_n=_started_n)
 missingness_complete_df  = build_missingness(completers)
 
+# MCAR analysis — is missingness associated with respondent demographics?
+print("\nRunning MCAR analysis ...")
+mcar_df = build_mcar_analysis(eligible)
+
 # Respondent-level completeness — how many questions each person skipped
 print("\nBuilding respondent-level completeness ...")
 resp_complete_summary_df, resp_complete_detail_df = build_respondent_completeness(completers)
@@ -1756,6 +1902,7 @@ sheets = {
     "missingness":            missingness_df,
     "missingness_started":    missingness_started_df,
     "missingness_complete":   missingness_complete_df,
+    "mcar_analysis":          mcar_df,
     "resp_complete_summary":  resp_complete_summary_df,
     "resp_complete_detail":   resp_complete_detail_df,
     "crosstab_metro":       crosstab_metro_df,
