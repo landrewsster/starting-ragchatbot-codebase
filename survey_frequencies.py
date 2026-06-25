@@ -612,8 +612,10 @@ if _survey_complete_col:
     _raw_completers = eligible[
         eligible[_survey_complete_col].str.strip().str.lower() == "complete"
     ].reset_index(drop=True)
-    # Exclude "ghost completers" — records marked Complete but with fewer than
-    # _MIN_MAIN_Q main-survey questions answered (data quality exclusion).
+    # Exclude "ghost completers" — records marked Complete but who answered
+    # fewer than _MIN_MAIN_Q_PCT of main-survey questions (data quality exclusion).
+    # Branching means not every question is shown to every respondent, so we use
+    # total main-survey column count as a conservative denominator.
     _screener_col_set = {c for c in (elig_col, days_col) if c}
     _main_q_cols = [
         c for c in _raw_completers.columns
@@ -624,12 +626,15 @@ if _survey_complete_col:
         and c not in county_skip_cols
         and not COMPLETE_RE.search(c.strip())
     ]
-    _MIN_MAIN_Q = 2   # must answer at least this many main-survey questions
+    _MIN_MAIN_Q_PCT  = 0.50   # must answer ≥50 % of main-survey questions
+    _min_main_thresh = max(2, round(_MIN_MAIN_Q_PCT * len(_main_q_cols)))
+    print(f"  Ghost-completer threshold: ≥{_min_main_thresh} of {len(_main_q_cols)} "
+          f"main-survey questions ({int(_MIN_MAIN_Q_PCT*100)}%)")
     if _main_q_cols:
         _n_main = _raw_completers[_main_q_cols].apply(
             lambda c: c.str.strip().ne("")
         ).sum(axis=1)
-        completers = _raw_completers[_n_main >= _MIN_MAIN_Q].reset_index(drop=True)
+        completers = _raw_completers[_n_main >= _min_main_thresh].reset_index(drop=True)
         n_ghost = len(_raw_completers) - len(completers)
     else:
         completers = _raw_completers
