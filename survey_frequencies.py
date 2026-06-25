@@ -617,12 +617,14 @@ if _survey_complete_col:
     # Branching means not every question is shown to every respondent, so we use
     # total main-survey column count as a conservative denominator.
     _screener_col_set = {c for c in (elig_col, days_col) if c}
-    # Use _DEMO_AND_SCREENER_PATTERNS (not is_demo_col) so the broad r"specialty"
-    # catch-all in DEMO_PATTERNS does not shrink the main-question count.
+    # Exclude the broad r"specialty" catch-all from DEMO_PATTERNS when building
+    # _main_q_cols so it doesn't misclassify main-survey question columns as
+    # demographic and artificially shrink the 50% threshold.
+    _ghost_demo_pats = [p for p in DEMO_PATTERNS if p != r"specialty"]
     _main_q_cols = [
         c for c in _raw_completers.columns
         if c not in _screener_col_set
-        and not any(re.search(p, c, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS)
+        and not any(re.search(p, c, re.IGNORECASE) for p in _ghost_demo_pats)
         and c not in free_text_cols
         and c not in system_cols
         and c not in county_skip_cols
