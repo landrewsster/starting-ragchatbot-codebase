@@ -300,13 +300,21 @@ if _spec_cols:
 else:
     print("  (no columns with 'specialty' in their name)")
 
-# Print columns around the ineligible-form specialty columns (GM and GN)
-# to confirm what GN contains and check for a secondary specialty column.
-_TARGET_LETTERS = {'GK','GL','GM','GN','GO','GP','GQ','GR'}
+# Dump every column from FT through GS to find the ineligible-form secondary
+# specialty column (which may not have "specialty" in its label).
+def _excel_col_index(letters):
+    """Return 1-based column index from Excel-style letter string."""
+    n = 0
+    for ch in letters.upper():
+        n = n * 26 + (ord(ch) - ord('A') + 1)
+    return n
+
+_RANGE_START = _excel_col_index('FT')
+_RANGE_END   = _excel_col_index('GS')
 _target_rows = [(i+1, c) for i, c in enumerate(df.columns)
-                if _excel_col_letter(i+1) in _TARGET_LETTERS]
+                if _RANGE_START <= i+1 <= _RANGE_END]
 if _target_rows:
-    print("\nColumns GK–GR by position (looking for ineligible-form specialty cols):")
+    print(f"\nAll columns FT–GS by position (finding ineligible secondary specialty):")
     for _i, _c in _target_rows:
         _ltr = _excel_col_letter(_i)
         _n   = df[_c].str.strip().ne("").sum()
