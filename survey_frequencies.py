@@ -59,7 +59,7 @@ print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
 _df_cols = set(df.columns)
 _single_dedup: list[tuple[str, str]] = []
 for _c in list(df.columns):
-    _m = re.match(r'^(.+?)\.\d+$', _c)
+    _m = re.match(r'^(.+?)\s*\.\d+$', _c)  # \s* handles space-before-.N from REDCap exports
     if _m and _m.group(1) in _df_cols and '(choice=' not in _c:
         _single_dedup.append((_m.group(1), _c))
 
