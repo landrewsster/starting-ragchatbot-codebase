@@ -269,24 +269,46 @@ skip = set(checkbox_cols) | free_text_cols | system_cols | county_skip_cols
 single_cols = [c for c in df.columns if c not in skip]
 
 # ── Specialty column diagnostics ─────────────────────────────────────────────
-# Printed once on startup to show how each specialty-related column is classified.
-# If GS/GQ (or their equivalents) appear as FREE_TEXT here, add their question
-# text to DEMO_PATTERNS above so they are protected from free-text detection.
+# Two-part diagnostic:
+#   Part 1 — every column whose name contains "specialty", with its classification.
+#   Part 2 — columns GQ–GU by Excel-letter position, to find the main-survey
+#             secondary specialty column (GS) whose label may not include the word
+#             "specialty" and therefore doesn't appear in Part 1.
+def _excel_col_letter(n):   # n is 1-based column index
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+def _col_class(c):
+    if c in free_text_cols:  return "FREE_TEXT (excluded from freq/missingness)"
+    if c in checkbox_cols:   return "checkbox"
+    if c in system_cols:     return "system (excluded)"
+    return "single-choice"
+
 _spec_cols = [c for c in df.columns
               if re.search(r"specialty|sub.specialty", c, re.IGNORECASE)]
+print("\nSpecialty column classification (by name):")
 if _spec_cols:
-    print("\nSpecialty column classification:")
     for _sc in _spec_cols:
-        if _sc in free_text_cols:
-            _cls = "FREE_TEXT (excluded from freq/missingness)"
-        elif _sc in checkbox_cols:
-            _cls = "checkbox"
-        elif _sc in system_cols:
-            _cls = "system (excluded)"
-        else:
-            _cls = "single-choice"
         _n = df[_sc].str.strip().ne("").sum()
-        print(f"  [{_cls}] n={_n:>3}  {_sc[:90]}")
+        print(f"  [{_col_class(_sc)}] n={_n:>3}  {_sc[:90]}")
+else:
+    print("  (no columns with 'specialty' in their name)")
+
+# Target Excel columns GN–GW (a 10-column window centred on GQ–GT)
+_TARGET_LETTERS = {'GN','GO','GP','GQ','GR','GS','GT','GU','GV','GW'}
+print("\nColumns GN–GW (positional lookup for main-survey specialty columns):")
+_found_any = False
+for _i, _c in enumerate(df.columns, start=1):
+    _ltr = _excel_col_letter(_i)
+    if _ltr in _TARGET_LETTERS:
+        _n = df[_c].str.strip().ne("").sum()
+        print(f"  [{_ltr}] [{_col_class(_c)}] n={_n:>3}  {_c[:90]}")
+        _found_any = True
+if not _found_any:
+    print("  (fewer than ~200 columns in export — GQ–GT not present)")
 
 # ── Free-text column associations ─────────────────────────────────────────────
 # Walk columns in survey order; each named free-text column (specify/describe)
