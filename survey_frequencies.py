@@ -134,6 +134,7 @@ DEMO_PATTERNS = [
     r"what is your secondary or sub.specialty",
     r"secondary.{0,30}specialty",       # "secondary specialty", "secondary or sub-specialty, if any", etc.
     r"sub.specialty",                   # "sub-specialty" alone
+    r"specialty",                       # catch-all: any specialty/subspecialty column
     r"which of the following best describes your primary practice setting",
     r"how would you describe the insurance status",
     r"what is the county of your practice",
@@ -1013,6 +1014,7 @@ _DEMO_AND_SCREENER_PATTERNS = [
     r"what is your secondary or sub.specialty",
     r"secondary.{0,30}specialty",
     r"sub.specialty",
+    r"specialty",                       # catch-all: any specialty/subspecialty column
     r"which of the following best describes your primary practice setting",
     r"how would you describe the insurance status",
     r"what is your gender",
@@ -1045,19 +1047,26 @@ def detect_started_n(df_sub, screener_cols=None):
     return n
 
 
-def build_missingness(df_sub, started_n=None):
+def build_missingness(df_sub, started_n=None, total_eligible_n=None):
     """
-    One row per survey question.  Call twice — once without started_n (uses
-    len(df_sub) as the base) and once with started_n (e.g. 97) to produce a
-    version that treats the non-starters as a separate 'never started' group
-    rather than lumping them into 'not asked (branched)'.
+    One row per survey question.
+
+    Parameters
+    ----------
+    df_sub           : respondents to analyse (eligible, or completers subset).
+    started_n        : if provided, treat (len(df_sub) - started_n) as never-starters
+                       so they appear in 'N never started' rather than in missingness.
+    total_eligible_n : if provided (e.g. len(eligible) when df_sub=completers), this
+                       overrides len(df_sub) as the value shown in 'N total eligible'
+                       and the difference appears in 'N never started' as non-completers.
 
     Columns:
       Question | Type | N total eligible | N never started | N not asked (branched) |
       N routed to question | N answered | N skipped (true missing) | % skipped | Flag
 
     'N never started'    : eligible respondents who never opened the main survey
-                           (only present when started_n is supplied).
+                           (started_n supplied), OR who did not complete it
+                           (total_eligible_n supplied with df_sub=completers).
     'N not asked (branched)': respondents routed away by branch logic — not missing.
     'N skipped (true missing)': routed but gave no response — true missingness.
     Flag: 'NOT IN THIS FORM' when N answered = 0 with no branching (wrong instrument);
@@ -1068,11 +1077,17 @@ def build_missingness(df_sub, started_n=None):
     rows = []
     emitted = set()
     checkbox_set = set(checkbox_cols)
-    total_n = len(df_sub)
-    # When started_n is provided, unbranched questions use it as their denominator
-    # (the 9 non-starters are surfaced as 'N never started', not as skips).
-    base_n = started_n if started_n is not None else total_n
-    n_never_started = (total_n - started_n) if started_n is not None else 0
+    actual_n = len(df_sub)
+    total_n  = total_eligible_n if total_eligible_n is not None else actual_n
+    # base_n = denominator for question-level calculations (routed/answered/skipped)
+    base_n = started_n if started_n is not None else actual_n
+    # n_never_started = eligible not in this analysis group
+    if started_n is not None:
+        n_never_started = total_n - started_n
+    elif total_eligible_n is not None:
+        n_never_started = total_eligible_n - actual_n   # non-completers
+    else:
+        n_never_started = 0
     preferred = _preferred_single_cols(df_sub)
 
     for col in df_sub.columns:
@@ -1113,7 +1128,7 @@ def build_missingness(df_sub, started_n=None):
         row = {
             "Question":                 q_label,
             "Type":                     q_type,
-            "N total eligible":         base_n,
+            "N total eligible":         total_n,
             "N routed to question":     n_routed,
             "N answered":               n_answered,
             "N skipped (true missing)": n_skipped,
@@ -1124,16 +1139,18 @@ def build_missingness(df_sub, started_n=None):
                      else ""),
         }
         # Insert contextual N columns in a readable order
-        if started_n is not None:
+        _show_excluded = (started_n is not None) or (total_eligible_n is not None)
+        if _show_excluded:
             row["N never started"] = n_never_started
         row["N not asked (branched)"] = n_not_asked
         rows.append(row)
 
     df_out = pd.DataFrame(rows) if rows else pd.DataFrame()
     # Reorder columns for readability
+    _show_excluded = (started_n is not None) or (total_eligible_n is not None)
     col_order = (
         ["Question", "Type", "N total eligible"]
-        + (["N never started"] if started_n is not None else [])
+        + (["N never started"] if _show_excluded else [])
         + ["N not asked (branched)", "N routed to question",
            "N answered", "N skipped (true missing)", "% skipped", "Flag"]
     )
@@ -1712,7 +1729,7 @@ print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
 
 missingness_df           = build_missingness(eligible)
 missingness_started_df   = build_missingness(eligible, started_n=_started_n)
-missingness_complete_df  = build_missingness(completers)
+missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible))
 
 # MCAR analysis — is missingness associated with respondent demographics?
 print("\nRunning MCAR analysis ...")
