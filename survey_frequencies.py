@@ -1022,12 +1022,10 @@ _DEMO_AND_SCREENER_PATTERNS = [
     r"what is your profession",
     r"do you primarily see pregnant",
     r"how long have you been practicing",
-    r"what is your primary specialty",
+    # All primary specialty variants → one key so eligible (FU) and ineligible (GM) compete
     r"primary specialty",
-    r"what is your secondary or sub.specialty",
-    r"secondary.{0,30}specialty",
-    r"sub.specialty",
-    r"specialty",                       # catch-all: any specialty/subspecialty column
+    # All secondary / sub-specialty variants → one key so eligible and ineligible compete
+    r"secondary.{0,30}specialty|sub.specialty",
     r"which of the following best describes your primary practice setting",
     r"how would you describe the insurance status",
     r"what is your gender",
