@@ -553,12 +553,35 @@ _survey_complete_col = next(
     None
 )
 if _survey_complete_col:
-    completers = eligible[
+    _raw_completers = eligible[
         eligible[_survey_complete_col].str.strip().str.lower() == "complete"
     ].reset_index(drop=True)
+    # Exclude "ghost completers" — records marked Complete but with fewer than
+    # _MIN_MAIN_Q main-survey questions answered (data quality exclusion).
+    _screener_col_set = {c for c in (elig_col, days_col) if c}
+    _main_q_cols = [
+        c for c in _raw_completers.columns
+        if c not in _screener_col_set
+        and not is_demo_col(c)
+        and c not in free_text_cols
+        and c not in system_cols
+        and c not in county_skip_cols
+        and not COMPLETE_RE.search(c.strip())
+    ]
+    _MIN_MAIN_Q = 2   # must answer at least this many main-survey questions
+    if _main_q_cols:
+        _n_main = _raw_completers[_main_q_cols].apply(
+            lambda c: c.str.strip().ne("")
+        ).sum(axis=1)
+        completers = _raw_completers[_n_main >= _MIN_MAIN_Q].reset_index(drop=True)
+        n_ghost = len(_raw_completers) - len(completers)
+    else:
+        completers = _raw_completers
+        n_ghost = 0
     n_partial = len(eligible) - len(completers)
     print(f"\nAnalytic sample (Survey_complete = Complete): N = {len(completers)} "
-          f"({n_partial} partial completes excluded)")
+          f"({len(eligible) - len(_raw_completers)} partial completes excluded"
+          + (f", {n_ghost} near-blank ghost completer(s) excluded)" if n_ghost else ")"))
 else:
     completers = eligible.copy()
     print(f"\nWARNING: Survey_complete column not found — "
@@ -825,14 +848,16 @@ def _preferred_single_cols(df_sub):
     df_sub, return the set of column names to USE — one per unique label,
     chosen as the column with the most non-empty values.
 
-    This prevents questions that live in both the main-survey instrument and
-    the ineligible-only instrument from appearing twice: for a given respondent
-    group (e.g. completers) only the version with real answers is kept.
+    Columns whose label matches a _DEMO_AND_SCREENER_PATTERNS pattern are
+    grouped by their matched pattern (not by exact label).  This handles the
+    common REDCap export case where the same demographic question lives in both
+    the ineligible-demographics instrument and the main survey instrument under
+    slightly different column names: for completers, the main-survey column
+    (which has real answers) wins; for ineligibles, their form's column wins.
 
-    Checkbox columns are unaffected (they are deduplicated via parent-question
-    tracking in each caller).
+    Checkbox columns are unaffected (deduplicated via parent-question tracking).
     """
-    label_best: dict[str, tuple[str, int]] = {}  # label → (col, n_answered)
+    label_best: dict[str, tuple[str, int]] = {}  # key → (col, n_answered)
     checkbox_set = set(checkbox_cols)
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -841,8 +866,15 @@ def _preferred_single_cols(df_sub):
             continue
         label = complete_col_labels.get(col, col)
         n = int(df_sub[col].astype(str).str.strip().ne("").sum())
-        if label not in label_best or n > label_best[label][1]:
-            label_best[label] = (col, n)
+        # Group demographic questions by matched pattern so that the same concept
+        # appearing in multiple instruments resolves to one winner per concept.
+        key = label
+        for p in _DEMO_AND_SCREENER_PATTERNS:
+            if re.search(p, label, re.IGNORECASE):
+                key = p
+                break
+        if key not in label_best or n > label_best[key][1]:
+            label_best[key] = (col, n)
     return {col for col, _ in label_best.values()}
 
 
