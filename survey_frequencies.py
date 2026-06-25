@@ -636,6 +636,16 @@ if _survey_complete_col:
     _raw_completers = eligible[
         eligible[_survey_complete_col].str.strip().str.lower() == "complete"
     ].reset_index(drop=True)
+    # Diagnostic: show Record ID 489's completion status to verify ghost exclusion
+    _rid_col_diag = next((c for c in eligible.columns if c.strip() == "Record ID"), None)
+    if _rid_col_diag:
+        _r489 = eligible[eligible[_rid_col_diag].astype(str).str.strip() == "489"]
+        if not _r489.empty:
+            _r489_status = _r489[_survey_complete_col].iloc[0]
+            _r489_in_raw = any(_raw_completers[_rid_col_diag].astype(str).str.strip() == "489")
+            print(f"  Record ID 489: Survey_complete={repr(_r489_status)!s}  in_raw_completers={_r489_in_raw}")
+        else:
+            print("  Record ID 489: NOT FOUND in eligible subset")
     # Exclude "ghost completers" — records marked Complete but who answered
     # fewer than _MIN_MAIN_Q_PCT of main-survey questions (data quality exclusion).
     # Branching means not every question is shown to every respondent, so we use
