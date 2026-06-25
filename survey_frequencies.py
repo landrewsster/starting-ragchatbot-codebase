@@ -471,6 +471,22 @@ BRANCHING_RULES = [
     },
 ]
 
+# ── Per-question denominator overrides ────────────────────────────────────────
+# Use when REDCap exports a valid response option as a blank cell, causing the
+# script to undercount respondents who actually answered that question.
+# Keys are regex patterns matched against the column/question label.
+# Values map group name ("eligible", "ineligible") to either:
+#   - an int: the true denominator N
+#   - a dict with "n" (denominator) and optional "missing_label" (label for the
+#     skipped/None row that appears when include_missing=True)
+QUESTION_DENOM_OVERRIDES = {
+    # "None (no secondary specialty)" is a valid radio option but REDCap exports
+    # it as a blank cell.  72 eligible completers answered; 56 said "None".
+    r"secondary.{0,30}specialty|sub.specialty": {
+        "eligible": {"n": 72, "missing_label": "None (no secondary specialty)"},
+    },
+}
+
 def ordered_for_col(col):
     if any(re.search(p, col, re.IGNORECASE) for p in LIKERT_PATTERNS):
         return ORDERED_LIKERT
@@ -506,8 +522,21 @@ def _branching_eligibility(df_sub, question_label):
     return None, len(df_sub)
 
 
-def get_branching_denom(df_sub, question_label):
-    """Return parent-eligible count if question_label matches a branching rule, else None."""
+def get_branching_denom(df_sub, question_label, group=None):
+    """Return (N, missing_label) if question_label matches an override or branching
+    rule, or None if neither applies.
+
+    group: "eligible" or "ineligible" — enables QUESTION_DENOM_OVERRIDES lookup.
+    """
+    # QUESTION_DENOM_OVERRIDES: questions where a valid response is stored as
+    # blank in the REDCap export (e.g. radio "None" options).
+    if group is not None:
+        for pat, group_map in QUESTION_DENOM_OVERRIDES.items():
+            if re.search(pat, question_label, re.IGNORECASE) and group in group_map:
+                entry = group_map[group]
+                if isinstance(entry, dict):
+                    return (entry["n"], entry.get("missing_label", "Missing (skipped)"))
+                return (int(entry), "Missing (skipped)")
     for rule in BRANCHING_RULES:
         if any(re.search(p, question_label, re.IGNORECASE) for p in rule["child_patterns"]):
             parent_col = next(
@@ -538,7 +567,7 @@ def get_branching_denom(df_sub, question_label):
                           f"    Actual values: {actual[:10]}\n"
                           f"    → update BRANCHING_RULES parent_value to match")
                     return None
-                return n
+                return (n, "Missing (skipped)")
     return None
 
 print(f"\nColumn types detected:")
@@ -867,12 +896,16 @@ if not completion_time_df.empty:
     )
 
 # ── Frequency functions ───────────────────────────────────────────────────────
-def freq_single(series, question_text, ordered=None, n_denom=None, include_missing=False):
+def freq_single(series, question_text, ordered=None, n_denom=None, include_missing=False,
+                missing_label="Missing (skipped)"):
     """Frequency table for a single-choice column.
 
     n_denom: override denominator (use for branching questions where eligible
              pool > those who answered).  When None, denominator = answered.
-    include_missing: if True and n_denom is set, append a Missing (skipped) row.
+    include_missing: if True and n_denom is set, append a row for respondents
+                     who did not give a non-blank answer.
+    missing_label: label for that row (default "Missing (skipped)"; override
+                   when blanks represent a valid option, e.g. "None").
     """
     vals = series.apply(norm_val).dropna()
     n_answered = len(vals)
@@ -895,7 +928,7 @@ def freq_single(series, question_text, ordered=None, n_denom=None, include_missi
             missing_row = pd.DataFrame([{
                 "Question":        re.sub(r'\s+', ' ', str(question_text)).strip(),
                 "Type":            "Single choice",
-                "Response":        "Missing (skipped)",
+                "Response":        missing_label,
                 "n":               n_missing,
                 "%":               round(n_missing / denom * 100, 1),
                 "N (denominator)": denom,
@@ -1059,11 +1092,14 @@ def _preferred_single_cols(df_sub):
     return preferred
 
 
-def build_all_frequencies(df_sub):
+def build_all_frequencies(df_sub, group=None):
     """
     Build one combined frequency table for df_sub, processing columns in the
     order they appear in the original data (single-choice and checkbox groups
     are interleaved to match the survey flow).
+
+    group: "eligible" or "ineligible" — enables QUESTION_DENOM_OVERRIDES lookup
+           for questions where REDCap stores a valid response (e.g. "None") as blank.
     """
     parts = []
     emitted_checkbox_parents = set()
@@ -1082,7 +1118,8 @@ def build_all_frequencies(df_sub):
             emitted_checkbox_parents.add(parent)
             child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if child_cols:
-                n_br = get_branching_denom(df_sub, parent)
+                _br = get_branching_denom(df_sub, parent, group=group)
+                n_br = _br[0] if _br is not None else None
                 t = freq_checkbox_group(df_sub, parent, child_cols,
                                         n_denom_override=n_br,
                                         include_missing=(n_br is not None))
@@ -1097,9 +1134,12 @@ def build_all_frequencies(df_sub):
             # Single-choice — use disambiguated label for Complete? columns
             label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
-            n_br    = get_branching_denom(df_sub, label)
+            _br     = get_branching_denom(df_sub, label, group=group)
+            n_br    = _br[0] if _br is not None else None
+            _mlabel = _br[1] if _br is not None else "Missing (skipped)"
             t = freq_single(df_sub[col], label, ordered,
-                            n_denom=n_br, include_missing=(n_br is not None))
+                            n_denom=n_br, include_missing=(n_br is not None),
+                            missing_label=_mlabel)
             if t is not None:
                 parts.append(t)
                 ft = free_text_for_question(df_sub, label)
@@ -1817,9 +1857,9 @@ def build_crosstab(df_with_group, group_col, label1, label0):
 # ── Build sheets ──────────────────────────────────────────────────────────────
 print("\nBuilding frequency tables ...")
 
-elig_freqs   = build_all_frequencies(completers)
+elig_freqs   = build_all_frequencies(completers,  group="eligible")
 elig_freqs   = _add_likert_tests_main(elig_freqs, completers)
-inelig_freqs = build_all_frequencies(ineligible)
+inelig_freqs = build_all_frequencies(ineligible, group="ineligible")
 
 # Missingness — three versions (all use `eligible` N=106 as the baseline so
 # the full attrition picture is visible alongside the analytic sample):
