@@ -288,7 +288,7 @@ def _col_class(c):
     return "single-choice"
 
 _spec_cols = [c for c in df.columns
-              if re.search(r"specialty|sub.specialty", c, re.IGNORECASE)]
+              if re.search(r"specialty|sub-specialty|sub\.specialty", c, re.IGNORECASE)]
 # Build position index so we can show Excel column letter alongside each column
 _col_position = {c: i+1 for i, c in enumerate(df.columns)}
 print("\nSpecialty column classification (with Excel column position):")
