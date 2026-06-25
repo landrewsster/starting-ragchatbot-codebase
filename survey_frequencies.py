@@ -543,6 +543,27 @@ else:
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
 
+# ── Analytic sample: completers only ─────────────────────────────────────────
+# Eligible respondents who actually submitted the survey (Survey_complete = "Complete").
+# Partial completers (started but never hit Submit) are excluded from all
+# frequency tables and cross-tabulations.
+_survey_complete_col = next(
+    (c for c in eligible.columns
+     if re.search(r'^survey_complete$', c.strip(), re.IGNORECASE)),
+    None
+)
+if _survey_complete_col:
+    completers = eligible[
+        eligible[_survey_complete_col].str.strip().str.lower() == "complete"
+    ].reset_index(drop=True)
+    n_partial = len(eligible) - len(completers)
+    print(f"\nAnalytic sample (Survey_complete = Complete): N = {len(completers)} "
+          f"({n_partial} partial completes excluded)")
+else:
+    completers = eligible.copy()
+    print(f"\nWARNING: Survey_complete column not found — "
+          f"analytic sample = all eligible (N={len(eligible)})")
+
 # Record ID column (needed in both timestamp and free-text sections)
 record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
 
@@ -1527,34 +1548,19 @@ def build_crosstab(df_with_group, group_col, label1, label0):
 # ── Build sheets ──────────────────────────────────────────────────────────────
 print("\nBuilding frequency tables ...")
 
-elig_freqs   = build_all_frequencies(eligible)
-elig_freqs   = _add_likert_tests_main(elig_freqs, eligible)
+elig_freqs   = build_all_frequencies(completers)
+elig_freqs   = _add_likert_tests_main(elig_freqs, completers)
 inelig_freqs = build_all_frequencies(ineligible)
 
-# Missingness — two versions:
+# Missingness — three versions (all use `eligible` N=106 as the baseline so
+# the full attrition picture is visible alongside the analytic sample):
 #   missingness         : denominator = all 106 eligible (screener-qualified)
 #   missingness_started : denominator = those who actually started the full survey
-#     Non-starters (eligible but never opened the survey) are shown separately
-#     so they don't inflate the skipped count for every question.
+#   missingness_complete: denominator = 82 completers (analytic sample)
 _screener_cols = {c for c in (elig_col, days_col) if c}
 _started_n = detect_started_n(eligible, screener_cols=_screener_cols)
 print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
       f"  non-starters = {len(eligible) - _started_n})")
-
-# Completers: eligible respondents marked Complete in the main survey instrument.
-_survey_complete_col = next(
-    (c for c in eligible.columns
-     if re.search(r'^survey_complete$', c.strip(), re.IGNORECASE)),
-    None
-)
-if _survey_complete_col:
-    completers = eligible[
-        eligible[_survey_complete_col].str.strip().str.lower() == "complete"
-    ].reset_index(drop=True)
-    print(f"  Completers (Survey_complete = Complete): N = {len(completers)}")
-else:
-    completers = eligible.copy()
-    print("  WARNING: Survey_complete column not found — completer missingness = eligible missingness")
 
 missingness_df           = build_missingness(eligible)
 missingness_started_df   = build_missingness(eligible, started_n=_started_n)
@@ -1562,7 +1568,7 @@ missingness_complete_df  = build_missingness(completers)
 
 # MCAR analysis — is missingness associated with respondent demographics?
 print("\nRunning MCAR analysis ...")
-mcar_df = build_mcar_analysis(eligible)
+mcar_df = build_mcar_analysis(completers)
 
 # Respondent-level completeness — how many questions each person skipped
 print("\nBuilding respondent-level completeness ...")
@@ -1773,14 +1779,14 @@ if not county_df.empty and record_id_col:
         county_df[county_df["group"] == "eligible"][["record_id", "metro"]]
         .rename(columns={"record_id": record_id_col})
     )
-    eligible_geo = eligible.merge(elig_county, on=record_id_col, how="left")
+    eligible_geo = completers.merge(elig_county, on=record_id_col, how="left")
     eligible_geo["metro"] = pd.to_numeric(eligible_geo["metro"], errors="coerce")
     eligible_geo = eligible_geo[eligible_geo["metro"].isin([0, 1])].copy()
     eligible_geo["metro"] = eligible_geo["metro"].astype(int)
     n_metro    = (eligible_geo["metro"] == 1).sum()
     n_nonmetro = (eligible_geo["metro"] == 0).sum()
     print(f"  Metro cross-tab: metro={n_metro}, non-metro={n_nonmetro} "
-          f"({len(eligible) - len(eligible_geo)} excluded — no county recorded)")
+          f"({len(completers) - len(eligible_geo)} excluded — no county recorded)")
     crosstab_metro_df = build_crosstab(eligible_geo, "metro", "Metro", "Non-metro")
 else:
     print("  Skipping metro cross-tab — county data not available")
@@ -1788,12 +1794,12 @@ else:
 # ── Tenure cross-tab ───────────────────────────────────────────────────────────
 crosstab_tenure_df = pd.DataFrame()
 years_col = next(
-    (c for c in eligible.columns
+    (c for c in completers.columns
      if re.search(r"how long have you been practicing", c, re.IGNORECASE)),
     None
 )
 if years_col:
-    eligible_tenure = eligible.copy()
+    eligible_tenure = completers.copy()
     eligible_tenure["tenure"] = eligible_tenure[years_col].apply(
         lambda v: 1 if re.search(TENURE_HIGH_PATTERN, str(v), re.IGNORECASE)
                   else (0 if str(v).strip() not in ("", "nan") else pd.NA)
@@ -1803,7 +1809,7 @@ if years_col:
     n_high = (eligible_tenure["tenure"] == 1).sum()
     n_low  = (eligible_tenure["tenure"] == 0).sum()
     print(f"  Tenure cross-tab: 20+ yrs={n_high}, <20 yrs={n_low} "
-          f"({len(eligible) - len(eligible_tenure)} excluded — did not answer)")
+          f"({len(completers) - len(eligible_tenure)} excluded — did not answer)")
     crosstab_tenure_df = build_crosstab(eligible_tenure, "tenure", "20+ years", "<20 years")
 else:
     print("  WARNING: years of practice column not found — skipping tenure cross-tab")
@@ -1814,17 +1820,17 @@ else:
 #   Group 0 = "No, only some patients"
 crosstab_no_screen_df = pd.DataFrame()
 q131_col = next(
-    (c for c in eligible.columns
+    (c for c in completers.columns
      if re.search(r"screen all patients who are pregnant or breastfeeding for cannabis",
                   c, re.IGNORECASE)
      and "(choice=" not in c),
     None
 )
 if q131_col:
-    dont_mask  = eligible[q131_col].str.strip().str.lower().str.startswith("no, don", na=False)
-    some_mask  = eligible[q131_col].str.strip().str.lower().str.contains("only some", na=False)
-    dont_grp   = eligible[dont_mask].copy()
-    some_grp   = eligible[some_mask].copy()
+    dont_mask  = completers[q131_col].str.strip().str.lower().str.startswith("no, don", na=False)
+    some_mask  = completers[q131_col].str.strip().str.lower().str.contains("only some", na=False)
+    dont_grp   = completers[dont_mask].copy()
+    some_grp   = completers[some_mask].copy()
     print(f"  No-screen cross-tab: 'No, don't screen any'={len(dont_grp)}, "
           f"'No, only some patients'={len(some_grp)}")
     if len(dont_grp) > 0 and len(some_grp) > 0:
