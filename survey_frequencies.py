@@ -167,6 +167,16 @@ free_text_cols = {
     )
 }
 
+# Diagnostic: show all free_text_cols with their answer counts in the full dataset.
+# Helps identify any column with many answers that shouldn't be free text (e.g. specialty).
+print("\nAll free_text_cols with ≥1 answer (n in full dataset):")
+for _fc in sorted(free_text_cols, key=lambda c: -int(df[c].astype(str).str.strip().ne("").sum())):
+    _fn_all = int(df[_fc].astype(str).str.strip().ne("").sum())
+    if _fn_all == 0:
+        continue
+    _ft_flag = " *** SPECIALTY?" if re.search(r"specialty|sub.specialty|sub-specialty", _fc, re.IGNORECASE) else ""
+    print(f"  n={_fn_all:>5}  {_fc[:100]}{_ft_flag}")
+
 # "Other, please specify" columns — detected by name, not cardinality.
 # These are shown inline in the frequency tables directly below their parent question.
 # High-cardinality free-text columns (open-ended questions) stay in the free_text sheet only.
@@ -598,6 +608,20 @@ else:
     eligible   = df.copy()
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
+
+# Diagnostic: show free_text_cols answer counts per group to identify the
+# eligible secondary specialty column hiding in free_text_cols.
+_ft_with_elig = [
+    (c,
+     int(df[c].astype(str).str.strip().ne("").sum()),
+     int(eligible[c].astype(str).str.strip().ne("").sum()) if c in eligible.columns else 0,
+     int(ineligible[c].astype(str).str.strip().ne("").sum()) if c in ineligible.columns else 0)
+    for c in free_text_cols
+    if int(df[c].astype(str).str.strip().ne("").sum()) > 0
+]
+print("\nfree_text_cols by group (n_all / n_elig / n_inelig  |  label):")
+for _fc, _fall, _felig, _finelig in sorted(_ft_with_elig, key=lambda x: -x[2]):
+    print(f"  {_fall:>4} / {_felig:>4} / {_finelig:>4}  {_fc[:100]}")
 
 # ── Analytic sample: completers only ─────────────────────────────────────────
 # Eligible respondents who actually submitted the survey (Survey_complete = "Complete").
