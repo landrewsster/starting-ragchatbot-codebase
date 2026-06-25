@@ -297,9 +297,11 @@ if _spec_cols:
 else:
     print("  (no columns with 'specialty' in their name)")
 
-# Target Excel columns GN–GW (a 10-column window centred on GQ–GT)
-_TARGET_LETTERS = {'GN','GO','GP','GQ','GR','GS','GT','GU','GV','GW'}
-print("\nColumns GN–GW (positional lookup for main-survey specialty columns):")
+# Positional lookup — exact ranges provided by analyst:
+#   GQ–GT : main-survey (eligible) primary and secondary specialty columns
+#   HT–HW : ineligible-form specialty columns
+_TARGET_LETTERS = {'GQ','GR','GS','GT', 'HT','HU','HV','HW'}
+print("\nColumns GQ–GT (eligible specialty) and HT–HW (ineligible specialty):")
 _found_any = False
 for _i, _c in enumerate(df.columns, start=1):
     _ltr = _excel_col_letter(_i)
@@ -308,7 +310,7 @@ for _i, _c in enumerate(df.columns, start=1):
         print(f"  [{_ltr}] [{_col_class(_c)}] n={_n:>3}  {_c[:90]}")
         _found_any = True
 if not _found_any:
-    print("  (fewer than ~200 columns in export — GQ–GT not present)")
+    print("  (column range not reached — fewer columns than expected)")
 
 # ── Free-text column associations ─────────────────────────────────────────────
 # Walk columns in survey order; each named free-text column (specify/describe)
