@@ -617,10 +617,12 @@ if _survey_complete_col:
     # Branching means not every question is shown to every respondent, so we use
     # total main-survey column count as a conservative denominator.
     _screener_col_set = {c for c in (elig_col, days_col) if c}
+    # Use _DEMO_AND_SCREENER_PATTERNS (not is_demo_col) so the broad r"specialty"
+    # catch-all in DEMO_PATTERNS does not shrink the main-question count.
     _main_q_cols = [
         c for c in _raw_completers.columns
         if c not in _screener_col_set
-        and not is_demo_col(c)
+        and not any(re.search(p, c, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS)
         and c not in free_text_cols
         and c not in system_cols
         and c not in county_skip_cols
@@ -637,6 +639,16 @@ if _survey_complete_col:
         completers = _raw_completers[_n_main >= _min_main_thresh].reset_index(drop=True)
         n_ghost = len(_raw_completers) - len(completers)
         _rid_col = next((c for c in _raw_completers.columns if c.strip() == "Record ID"), None)
+        # Print n_main for any near-threshold records so threshold can be verified
+        if _rid_col:
+            _near = _raw_completers[_n_main <= _min_main_thresh + 2]
+            if not _near.empty:
+                print(f"  Near/below threshold (n_main ≤ {_min_main_thresh + 2}):")
+                for _, _row in _near.iterrows():
+                    _rid_val = _row[_rid_col]
+                    _nm_val  = int(_n_main[_row.name])
+                    _status  = "EXCLUDED" if _nm_val < _min_main_thresh else "kept"
+                    print(f"    Record ID {_rid_val}: n_main={_nm_val} ({_status})")
         if n_ghost > 0 and _rid_col:
             _ghost_ids = _raw_completers.loc[_n_main < _min_main_thresh, _rid_col].tolist()
             print(f"  Ghost completer(s) excluded — Record ID(s): {_ghost_ids}")
@@ -963,7 +975,17 @@ def _preferred_single_cols(df_sub):
                 break
         if key not in label_best or n > label_best[key][1]:
             label_best[key] = (col, n)
-    return {col for col, _ in label_best.values()}
+    preferred = {col for col, _ in label_best.values()}
+    # Diagnostic: show which column wins for each specialty concept
+    _spec_keys = [k for k in label_best
+                  if re.search(r"specialty|sub.specialty", str(k), re.IGNORECASE)]
+    if _spec_keys:
+        n_sub = len(df_sub)
+        print(f"  _preferred_single_cols (n={n_sub}): specialty winners:")
+        for _sk in _spec_keys:
+            _win_col, _win_n = label_best[_sk]
+            print(f"    key={str(_sk)[:60]}  →  col={_win_col[:70]}  n={_win_n}")
+    return preferred
 
 
 def build_all_frequencies(df_sub):
