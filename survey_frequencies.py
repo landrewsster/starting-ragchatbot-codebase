@@ -819,6 +819,33 @@ def free_text_for_question(df_sub, q_key):
     return pd.DataFrame(rows) if rows else None
 
 
+def _preferred_single_cols(df_sub):
+    """
+    For single-choice columns that share the same resolved question label in
+    df_sub, return the set of column names to USE — one per unique label,
+    chosen as the column with the most non-empty values.
+
+    This prevents questions that live in both the main-survey instrument and
+    the ineligible-only instrument from appearing twice: for a given respondent
+    group (e.g. completers) only the version with real answers is kept.
+
+    Checkbox columns are unaffected (they are deduplicated via parent-question
+    tracking in each caller).
+    """
+    label_best: dict[str, tuple[str, int]] = {}  # label → (col, n_answered)
+    checkbox_set = set(checkbox_cols)
+    for col in df_sub.columns:
+        if col in free_text_cols or col in system_cols or col in county_skip_cols:
+            continue
+        if col in checkbox_set:
+            continue
+        label = complete_col_labels.get(col, col)
+        n = int(df_sub[col].astype(str).str.strip().ne("").sum())
+        if label not in label_best or n > label_best[label][1]:
+            label_best[label] = (col, n)
+    return {col for col, _ in label_best.values()}
+
+
 def build_all_frequencies(df_sub):
     """
     Build one combined frequency table for df_sub, processing columns in the
@@ -828,6 +855,7 @@ def build_all_frequencies(df_sub):
     parts = []
     emitted_checkbox_parents = set()
     checkbox_set = set(checkbox_cols)   # O(1) membership test
+    preferred = _preferred_single_cols(df_sub)   # one col per label (most answers wins)
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -851,6 +879,8 @@ def build_all_frequencies(df_sub):
                     if ft is not None:
                         parts.append(ft)
         else:
+            if col not in preferred:
+                continue   # another column for this label has more answers — skip
             # Single-choice — use disambiguated label for Complete? columns
             label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
@@ -934,6 +964,7 @@ def build_missingness(df_sub, started_n=None):
     # (the 9 non-starters are surfaced as 'N never started', not as skips).
     base_n = started_n if started_n is not None else total_n
     n_never_started = (total_n - started_n) if started_n is not None else 0
+    preferred = _preferred_single_cols(df_sub)
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -956,6 +987,8 @@ def build_missingness(df_sub, started_n=None):
             q_label = re.sub(r'\s+', ' ', str(parent)).strip()
             q_type = "Select all that apply"
         else:
+            if col not in preferred:
+                continue   # another column for this label has more answers — skip
             label = complete_col_labels.get(col, col)
             mask, n_routed_raw = _branching_eligibility(df_sub, label)
             n_routed = min(n_routed_raw, base_n) if mask is not None else base_n
@@ -1025,6 +1058,7 @@ def build_respondent_completeness(df_sub):
 
     emitted = set()
     checkbox_set = set(checkbox_cols)
+    preferred = _preferred_single_cols(df_sub)
     n_questions = 0
 
     for col in df_sub.columns:
@@ -1048,6 +1082,8 @@ def build_respondent_completeness(df_sub):
             routed_series = mask if mask is not None else pd.Series(True, index=df_sub.index)
 
         else:
+            if col not in preferred:
+                continue   # another column for this label has more answers — skip
             label = complete_col_labels.get(col, col)
             if any(re.search(p, label, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS):
                 continue
@@ -1144,6 +1180,7 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0):
     rows = []
     emitted = set()
     checkbox_set = set(checkbox_cols)
+    preferred = _preferred_single_cols(df_sub)
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -1168,6 +1205,8 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0):
             if answered_series.sum() == 0:
                 continue  # wrong instrument — nobody answered
         else:
+            if col not in preferred:
+                continue   # another column for this label has more answers — skip
             label = complete_col_labels.get(col, col)
             if any(re.search(p, label, re.IGNORECASE) for p in _DEMO_AND_SCREENER_PATTERNS):
                 continue
