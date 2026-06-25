@@ -642,6 +642,25 @@ else:
     print(f"\nWARNING: Survey_complete column not found — "
           f"analytic sample = all eligible (N={len(eligible)})")
 
+# ── Secondary-specialty hunt: find the eligible form's secondary specialty ────
+# FV ("What is your secondary or sub-specialty, if any?") has only n=16 answers
+# in completers, meaning it is the INELIGIBLE form version.  The eligible form's
+# secondary specialty column should have ~60-80 answers in completers.  Dump all
+# single-choice and free-text columns with 40-90 non-empty values in completers
+# so we can see it regardless of what its label is.
+_checkbox_set_diag = set(checkbox_cols)
+print("\nColumns with 40–90 non-empty values in completers (hunting eligible secondary specialty):")
+print(f"  {'Excel':>5}  {'class':<12}  {'n_comp':>6}  label[:90]")
+for _di, _dc in enumerate(completers.columns):
+    _dn = int(completers[_dc].astype(str).str.strip().ne("").sum())
+    if not (40 <= _dn <= 90):
+        continue
+    if _dc in _checkbox_set_diag:
+        continue  # skip checkbox children
+    _dltr = _excel_col_letter(_col_position.get(_dc, _di + 1))
+    _dcls = _col_class(_dc)
+    print(f"  [{_dltr:>5}]  [{_dcls:<12}]  {_dn:>6}  {_dc[:90]}")
+
 # Record ID column (needed in both timestamp and free-text sections)
 record_id_col = next((c for c in df.columns if c.strip() == "Record ID"), None)
 
