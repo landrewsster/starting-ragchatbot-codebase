@@ -617,6 +617,18 @@ for _c in df.columns:
         _ne = int(eligible[_c].astype(str).str.strip().ne("").sum())
         _ni = int(ineligible[_c].astype(str).str.strip().ne("").sum())
         print(f"  n_total={_nt}  n_elig={_ne}  n_inelig={_ni}  [{_col_class(_c)}]  {repr(_c[:100])}")
+        # Show actual value_counts so we can see whether "None" is a string or blank
+        for _grp_name, _grp in [("eligible", eligible), ("ineligible", ineligible)]:
+            _vc = _grp[_c].astype(str).str.strip().value_counts(dropna=False)
+            _total_grp = len(_grp)
+            _blank_n = int((_grp[_c].astype(str).str.strip() == "").sum())
+            print(f"    [{_grp_name} n={_total_grp}, blank={_blank_n}] value_counts:")
+            for _val, _vn in _vc.items():
+                if str(_val).strip() == "":
+                    _val_repr = '""  (blank)'
+                else:
+                    _val_repr = repr(str(_val)[:50])
+                print(f"      {_vn:>4}  {_val_repr}")
 
 # Diagnostic: show free_text_cols answer counts per group to identify the
 # eligible secondary specialty column hiding in free_text_cols.
