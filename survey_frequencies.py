@@ -130,7 +130,10 @@ DEMO_PATTERNS = [
     r"do you primarily see pregnant",
     r"how long have you been practicing",
     r"what is your primary specialty",
+    r"primary specialty",               # catches shorter / differently worded versions
     r"what is your secondary or sub.specialty",
+    r"secondary.{0,30}specialty",       # "secondary specialty", "secondary or sub-specialty, if any", etc.
+    r"sub.specialty",                   # "sub-specialty" alone
     r"which of the following best describes your primary practice setting",
     r"how would you describe the insurance status",
     r"what is the county of your practice",
@@ -264,6 +267,26 @@ skip = set(checkbox_cols) | free_text_cols | system_cols | county_skip_cols
 
 # Single-choice columns (everything not checkbox, free-text, or system)
 single_cols = [c for c in df.columns if c not in skip]
+
+# ── Specialty column diagnostics ─────────────────────────────────────────────
+# Printed once on startup to show how each specialty-related column is classified.
+# If GS/GQ (or their equivalents) appear as FREE_TEXT here, add their question
+# text to DEMO_PATTERNS above so they are protected from free-text detection.
+_spec_cols = [c for c in df.columns
+              if re.search(r"specialty|sub.specialty", c, re.IGNORECASE)]
+if _spec_cols:
+    print("\nSpecialty column classification:")
+    for _sc in _spec_cols:
+        if _sc in free_text_cols:
+            _cls = "FREE_TEXT (excluded from freq/missingness)"
+        elif _sc in checkbox_cols:
+            _cls = "checkbox"
+        elif _sc in system_cols:
+            _cls = "system (excluded)"
+        else:
+            _cls = "single-choice"
+        _n = df[_sc].str.strip().ne("").sum()
+        print(f"  [{_cls}] n={_n:>3}  {_sc[:90]}")
 
 # ── Free-text column associations ─────────────────────────────────────────────
 # Walk columns in survey order; each named free-text column (specify/describe)
@@ -935,7 +958,10 @@ _DEMO_AND_SCREENER_PATTERNS = [
     r"do you primarily see pregnant",
     r"how long have you been practicing",
     r"what is your primary specialty",
+    r"primary specialty",
     r"what is your secondary or sub.specialty",
+    r"secondary.{0,30}specialty",
+    r"sub.specialty",
     r"which of the following best describes your primary practice setting",
     r"how would you describe the insurance status",
     r"what is your gender",
