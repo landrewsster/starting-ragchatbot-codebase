@@ -300,14 +300,13 @@ if _spec_cols:
 else:
     print("  (no columns with 'specialty' in their name)")
 
-# Also print ALL single-choice columns whose Excel position falls in the
-# analyst-supplied ranges.  Update _TARGET_LETTERS if the correct columns
-# are at different positions.
-_TARGET_LETTERS = {'GQ','GR','GS','GT', 'HT','HU','HV','HW'}
+# Print columns around the ineligible-form specialty columns (GM and GN)
+# to confirm what GN contains and check for a secondary specialty column.
+_TARGET_LETTERS = {'GK','GL','GM','GN','GO','GP','GQ','GR'}
 _target_rows = [(i+1, c) for i, c in enumerate(df.columns)
                 if _excel_col_letter(i+1) in _TARGET_LETTERS]
 if _target_rows:
-    print("\nColumns GQ–GT and HT–HW by position:")
+    print("\nColumns GK–GR by position (looking for ineligible-form specialty cols):")
     for _i, _c in _target_rows:
         _ltr = _excel_col_letter(_i)
         _n   = df[_c].str.strip().ne("").sum()
