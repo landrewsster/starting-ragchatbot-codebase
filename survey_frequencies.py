@@ -289,28 +289,29 @@ def _col_class(c):
 
 _spec_cols = [c for c in df.columns
               if re.search(r"specialty|sub.specialty", c, re.IGNORECASE)]
-print("\nSpecialty column classification (by name):")
+# Build position index so we can show Excel column letter alongside each column
+_col_position = {c: i+1 for i, c in enumerate(df.columns)}
+print("\nSpecialty column classification (with Excel column position):")
 if _spec_cols:
     for _sc in _spec_cols:
-        _n = df[_sc].str.strip().ne("").sum()
-        print(f"  [{_col_class(_sc)}] n={_n:>3}  {_sc[:90]}")
+        _n  = df[_sc].str.strip().ne("").sum()
+        _ltr = _excel_col_letter(_col_position[_sc])
+        print(f"  [col {_ltr}] [{_col_class(_sc)}] n={_n:>3}  {_sc[:90]}")
 else:
     print("  (no columns with 'specialty' in their name)")
 
-# Positional lookup — exact ranges provided by analyst:
-#   GQ–GT : main-survey (eligible) primary and secondary specialty columns
-#   HT–HW : ineligible-form specialty columns
+# Also print ALL single-choice columns whose Excel position falls in the
+# analyst-supplied ranges.  Update _TARGET_LETTERS if the correct columns
+# are at different positions.
 _TARGET_LETTERS = {'GQ','GR','GS','GT', 'HT','HU','HV','HW'}
-print("\nColumns GQ–GT (eligible specialty) and HT–HW (ineligible specialty):")
-_found_any = False
-for _i, _c in enumerate(df.columns, start=1):
-    _ltr = _excel_col_letter(_i)
-    if _ltr in _TARGET_LETTERS:
-        _n = df[_c].str.strip().ne("").sum()
+_target_rows = [(i+1, c) for i, c in enumerate(df.columns)
+                if _excel_col_letter(i+1) in _TARGET_LETTERS]
+if _target_rows:
+    print("\nColumns GQ–GT and HT–HW by position:")
+    for _i, _c in _target_rows:
+        _ltr = _excel_col_letter(_i)
+        _n   = df[_c].str.strip().ne("").sum()
         print(f"  [{_ltr}] [{_col_class(_c)}] n={_n:>3}  {_c[:90]}")
-        _found_any = True
-if not _found_any:
-    print("  (column range not reached — fewer columns than expected)")
 
 # ── Free-text column associations ─────────────────────────────────────────────
 # Walk columns in survey order; each named free-text column (specify/describe)
