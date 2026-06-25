@@ -636,6 +636,14 @@ if _survey_complete_col:
         ).sum(axis=1)
         completers = _raw_completers[_n_main >= _min_main_thresh].reset_index(drop=True)
         n_ghost = len(_raw_completers) - len(completers)
+        _rid_col = next((c for c in _raw_completers.columns if c.strip() == "Record ID"), None)
+        if n_ghost > 0 and _rid_col:
+            _ghost_ids = _raw_completers.loc[_n_main < _min_main_thresh, _rid_col].tolist()
+            print(f"  Ghost completer(s) excluded — Record ID(s): {_ghost_ids}")
+            _EXPECTED_GHOST_ID = "489"
+            if not any(str(gid).strip() == _EXPECTED_GHOST_ID for gid in _ghost_ids):
+                print(f"  WARNING: expected Record ID {_EXPECTED_GHOST_ID} in ghost list "
+                      f"but it was not found — check data or threshold")
     else:
         completers = _raw_completers
         n_ghost = 0
