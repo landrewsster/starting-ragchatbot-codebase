@@ -609,6 +609,15 @@ else:
     ineligible = pd.DataFrame(columns=df.columns)
     print("\nWARNING: eligibility column not found — treating all records as eligible")
 
+# ── Secondary specialty columns post-split ────────────────────────────────────
+print("\nSecondary specialty columns (post-split):")
+for _c in df.columns:
+    if re.search(r'secondary', _c, re.IGNORECASE):
+        _nt = int(df[_c].astype(str).str.strip().ne("").sum())
+        _ne = int(eligible[_c].astype(str).str.strip().ne("").sum())
+        _ni = int(ineligible[_c].astype(str).str.strip().ne("").sum())
+        print(f"  n_total={_nt}  n_elig={_ne}  n_inelig={_ni}  [{_col_class(_c)}]  {repr(_c[:100])}")
+
 # Diagnostic: show free_text_cols answer counts per group to identify the
 # eligible secondary specialty column hiding in free_text_cols.
 _ft_with_elig = [
