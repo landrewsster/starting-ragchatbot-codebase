@@ -623,6 +623,20 @@ print("\nfree_text_cols by group (n_all / n_elig / n_inelig  |  label):")
 for _fc, _fall, _felig, _finelig in sorted(_ft_with_elig, key=lambda x: -x[2]):
     print(f"  {_fall:>4} / {_felig:>4} / {_finelig:>4}  {_fc[:100]}")
 
+# ── Raw column scan: find every column where n_elig >> n_inelig ───────────────
+# This finds the eligible secondary specialty regardless of its label or classification.
+# We look for columns where eligible has ≥30 answers AND eligible count is at least
+# 2× the ineligible count (eligible-dominant columns).
+print("\nAll columns where n_elig≥30 AND n_elig ≥ 2×n_inelig (eligible-dominant):")
+print(f"  {'n_elig':>7}  {'n_inelig':>8}  {'class':<22}  label[:80]")
+for _rc in df.columns:
+    _re = int(eligible[_rc].astype(str).str.strip().ne("").sum()) if _rc in eligible.columns else 0
+    _ri = int(ineligible[_rc].astype(str).str.strip().ne("").sum()) if _rc in ineligible.columns else 0
+    if _re < 30 or _ri >= _re / 2:
+        continue
+    _rcls = _col_class(_rc)
+    print(f"  {_re:>7}  {_ri:>8}  {_rcls:<22}  {_rc[:80]}")
+
 # ── Analytic sample: completers only ─────────────────────────────────────────
 # Eligible respondents who actually submitted the survey (Survey_complete = "Complete").
 # Partial completers (started but never hit Submit) are excluded from all
