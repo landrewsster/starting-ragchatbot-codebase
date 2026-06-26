@@ -481,9 +481,12 @@ BRANCHING_RULES = [
 #     skipped/None row that appears when include_missing=True)
 QUESTION_DENOM_OVERRIDES = {
     # "None (no secondary specialty)" is a valid radio option but REDCap exports
-    # it as a blank cell.  72 eligible completers answered; 56 said "None".
+    # it as a blank cell.
+    #   eligible:   72 answered (16 actual specialty + 56 "None")
+    #   ineligible: 233 answered (92 actual specialty + 141 "None")
     r"secondary.{0,30}specialty|sub.specialty": {
-        "eligible": {"n": 72, "missing_label": "None (no secondary specialty)"},
+        "eligible":   {"n": 72,  "missing_label": "None (no secondary specialty)"},
+        "ineligible": {"n": 233, "missing_label": "None (no secondary specialty)"},
     },
 }
 
