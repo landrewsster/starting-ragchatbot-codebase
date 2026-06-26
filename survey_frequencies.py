@@ -1789,10 +1789,15 @@ def _add_likert_tests_crosstab(merged, g1, g0,
 
 
 def _add_likert_tests_main(freq_df, raw_df):
-    """Add one-sample Wilcoxon signed rank test to the main frequency table for
-    Likert/confidence questions.  Tests whether the median differs from the neutral
-    midpoint (3 for 5-point Likert, 2 for 3-point confidence).  'Don't know'
-    responses are excluded.  p_value is placed on the first response row."""
+    """Add one-sample Wilcoxon signed rank test to the main frequency table.
+
+    Only runs when the neutral response (score = null_median) was actually
+    offered and selected by at least one respondent.  Questions that only
+    offered "Don't know" as a non-directional option (no true neutral) are
+    skipped — the null_median would be unachievable and the test misleading.
+    'Don't know' responses are always excluded from scoring.
+    p_value is placed on the first response row.
+    """
     if not _SCIPY:
         return freq_df
     freq_df = freq_df.copy()
@@ -1803,6 +1808,13 @@ def _add_likert_tests_main(freq_df, raw_df):
         score_map, null_median = _score_map_for_col(col)
         if score_map is None:
             continue
+        # Only run if at least one respondent chose the neutral option.
+        # If null_median is unachievable in the data, the test result is
+        # trivially driven by scale range rather than substantive position.
+        neutral_keys = {k for k, v in score_map.items() if v == null_median}
+        raw_lower = raw_df[col].astype(str).str.strip().str.lower()
+        if not raw_lower.isin(neutral_keys).any():
+            continue
         scores = _col_scores(raw_df[col], score_map)
         if len(scores) < 5:
             continue
@@ -1811,7 +1823,7 @@ def _add_likert_tests_main(freq_df, raw_df):
         if not q_mask.any():
             continue
         diffs = scores - null_median
-        diffs = diffs[diffs != 0]       # Wilcoxon requires non-zero differences
+        diffs = diffs[diffs != 0]
         if len(diffs) < 5:
             continue
         try:
