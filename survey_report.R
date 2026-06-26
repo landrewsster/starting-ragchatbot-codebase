@@ -466,14 +466,19 @@ add_elig_demo_section <- function(doc, elig_df, heading) {
 
 # Single combined table for all demographic variables (eligible respondents).
 # Bold shaded rows = question labels; response rows show n, %, and N (which varies by question).
-make_elig_demo_combined_table <- function(elig_df) {
+make_elig_demo_combined_table <- function(elig_df, county_data = NULL) {
   df <- elig_df %>% filter(is_demo_q(Question))
   if (nrow(df) == 0) return(NULL)
+
+  TENURE_PAT <- "how long have you been practicing"
 
   rows           <- list()
   header_indices <- integer(0)
 
   for (q in unique(norm_q(df$Question))) {
+    # Raw tenure question is replaced by the derived binary rows appended below
+    if (str_detect(str_to_lower(q), TENURE_PAT)) next
+
     q_rows <- df %>% filter(norm_q(Question) == q)
 
     n_val <- NA_real_
@@ -502,7 +507,65 @@ make_elig_demo_combined_table <- function(elig_df) {
     }
   }
 
+  # Derived tenure binary (eligible only): replace raw question with ≥20 / <20 split
+  tenure_rows <- df %>%
+    filter(str_detect(str_to_lower(norm_q(Question)), TENURE_PAT),
+           Response != "Missing (skipped)")
+  if (nrow(tenure_rows) > 0) {
+    n_high  <- sum(suppressWarnings(as.numeric(
+                 tenure_rows$n[str_detect(str_to_lower(tenure_rows$Response), "20 or more")])),
+                 na.rm = TRUE)
+    n_low   <- sum(suppressWarnings(as.numeric(
+                 tenure_rows$n[!str_detect(str_to_lower(tenure_rows$Response), "20 or more")])),
+                 na.rm = TRUE)
+    n_tot_t <- n_high + n_low
+    if (n_tot_t > 0) {
+      header_indices <- c(header_indices, length(rows) + 1L)
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "Tenure (years in practice)", n = NA_real_, `%` = NA_real_, N = NA_real_
+      )
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "20 or more years (tenure = 1)",
+        n = n_high, `%` = round(n_high / n_tot_t * 100, 1), N = as.numeric(n_tot_t)
+      )
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "Less than 20 years (tenure = 0)",
+        n = n_low, `%` = round(n_low / n_tot_t * 100, 1), N = as.numeric(n_tot_t)
+      )
+    }
+  }
+
+  # Derived metro binary (eligible only, requires county_data)
+  if (!is.null(county_data) &&
+      all(c("metro", "county_recoded", "group") %in% names(county_data))) {
+    elig_metro <- county_data %>%
+      filter(group == "eligible", county_recoded != "")
+    n_metro   <- sum(as.integer(elig_metro$metro) == 1L)
+    n_non     <- sum(as.integer(elig_metro$metro) == 0L)
+    n_tot_m   <- n_metro + n_non
+    if (n_tot_m > 0) {
+      header_indices <- c(header_indices, length(rows) + 1L)
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "Metro (county of practice)", n = NA_real_, `%` = NA_real_, N = NA_real_
+      )
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "Metro (7-county) (metro = 1)",
+        n = as.numeric(n_metro), `%` = round(n_metro / n_tot_m * 100, 1), N = as.numeric(n_tot_m)
+      )
+      rows[[length(rows) + 1L]] <- tibble(
+        Response = "Non-metro (metro = 0)",
+        n = as.numeric(n_non), `%` = round(n_non / n_tot_m * 100, 1), N = as.numeric(n_tot_m)
+      )
+    }
+  }
+
   combined <- bind_rows(rows)
+
+  footer_lines <- c(
+    "N = denominator for each question; may vary across questions due to branching or skipped items.",
+    "Tenure = 1 if ≥20 years in practice; 0 otherwise.",
+    "Metro = Hennepin, Washington, Carver, Scott, Ramsey, Anoka, or Dakota county."
+  )
 
   flextable(combined) %>%
     theme_booktabs() %>%
@@ -517,7 +580,7 @@ make_elig_demo_combined_table <- function(elig_df) {
     align(j = "Response",       align = "left",  part = "all") %>%
     width(j = "Response",       width = 4.2) %>%
     width(j = c("n", "%", "N"), width = 0.65) %>%
-    add_footer_lines("N = denominator for each question; may vary across questions due to branching or skipped items.") %>%
+    add_footer_lines(footer_lines) %>%
     fontsize(size = 9, part = "footer") %>%
     italic(part = "footer") %>%
     align(align = "left", part = "footer")
@@ -608,7 +671,7 @@ doc <- add_screener_section(doc, eligible, ineligible)
 doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
 
 # 4. Demographic questions — eligible respondents only (single combined table)
-ft_elig_demo <- make_elig_demo_combined_table(eligible)
+ft_elig_demo <- make_elig_demo_combined_table(eligible, county_data = county_data)
 if (!is.null(ft_elig_demo)) {
   doc <- doc %>%
     body_add_par("Demographic Questions — Eligible Respondents Only", style = "heading 2") %>%

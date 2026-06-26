@@ -1414,7 +1414,8 @@ def build_respondent_completeness(df_sub):
     return skip_dist, per_resp
 
 
-def build_mcar_analysis(df_sub, min_pct_missing=5.0):
+def build_mcar_analysis(df_sub, min_pct_missing=5.0, min_demo_completeness=0.70,
+                        extra_demo_cols=None):
     """
     Test whether question-level missingness is associated with respondent
     demographics (MCAR = Missing Completely At Random analysis).
@@ -1423,8 +1424,18 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0):
     gave no response, builds a contingency table of [answered vs skipped] ×
     [demographic category] and runs chi-square or Fisher's exact.
 
-    Demographic variables tested: Gender, Age, Profession, Tenure,
-    Practice setting (whichever columns are present in df_sub).
+    Demographic variables tested: Gender, Age, Profession, Tenure, Practice
+    setting, Race/ethnicity, Primary specialty — plus any extra_demo_cols —
+    filtered to those with ≥min_demo_completeness non-blank values in df_sub.
+
+    Parameters
+    ----------
+    min_pct_missing       : only test questions where this % skipped
+    min_demo_completeness : drop demographic variables with < this fraction
+                            of non-blank values in df_sub (avoids underpowered
+                            tests against low-response demographics)
+    extra_demo_cols       : list of (pd.Series, display_name) for derived demo
+                            variables not present as columns in df_sub (e.g. metro)
 
     Returns a DataFrame sorted significant-first, then by p-value.
     Columns: Question | % skipped | N skipped | N routed |
@@ -1440,8 +1451,12 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0):
         (r"what is your profession",                                          "Profession"),
         (r"how long have you been practicing",                                "Tenure"),
         (r"which of the following best describes your primary practice setting", "Practice setting"),
+        (r"what is your race",                                                "Race/ethnicity"),
+        (r"primary specialty",                                                "Primary specialty"),
+        (r"insurance status of patients",                                     "Patient insurance mix"),
     ]
     demo_cols = []
+    n_sub = len(df_sub)
     for pattern, display_name in DEMO_TEST_PATTERNS:
         col = next(
             (c for c in df_sub.columns
@@ -1449,7 +1464,22 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0):
             None,
         )
         if col:
-            demo_cols.append((col, display_name))
+            completeness = df_sub[col].str.strip().ne("").sum() / n_sub if n_sub else 0
+            if completeness >= min_demo_completeness:
+                demo_cols.append((col, display_name))
+            else:
+                print(f"  MCAR: skipping '{display_name}' — "
+                      f"only {completeness:.0%} non-blank (< {min_demo_completeness:.0%} threshold)")
+
+    # Extra derived columns (e.g. metro binary) — completeness checked on series index
+    for series, display_name in (extra_demo_cols or []):
+        aligned = series.reindex(df_sub.index)
+        completeness = aligned.notna().sum() / n_sub if n_sub else 0
+        if completeness >= min_demo_completeness:
+            demo_cols.append((series, display_name))
+        else:
+            print(f"  MCAR: skipping '{display_name}' (extra) — "
+                  f"only {completeness:.0%} non-blank (< {min_demo_completeness:.0%} threshold)")
 
     if not demo_cols:
         print("  MCAR analysis: no demographic columns found")
@@ -1885,9 +1915,9 @@ missingness_df           = build_missingness(eligible,   group="eligible")
 missingness_started_df   = build_missingness(eligible,   started_n=_started_n, group="eligible")
 missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible), group="eligible")
 
-# MCAR analysis — is missingness associated with respondent demographics?
-print("\nRunning MCAR analysis ...")
-mcar_df = build_mcar_analysis(completers)
+# MCAR analysis is run after metro is computed (further below) so the metro
+# binary can be passed as an extra demographic variable.
+mcar_df = pd.DataFrame()
 
 # Respondent-level completeness — how many questions each person skipped
 print("\nBuilding respondent-level completeness ...")
@@ -2049,6 +2079,28 @@ if county_candidates:
               f"(eligible: {(county_df['group']=='eligible').sum()}, "
               f"ineligible: {(county_df['group']=='ineligible').sum()})")
 
+        # Build metro series aligned to completers.index for MCAR
+        if record_id_col and record_id_col in completers.columns:
+            _elig_metro = (
+                county_df[county_df["group"] == "eligible"]
+                .drop_duplicates("record_id")
+                .set_index("record_id")["metro"]
+            )
+            metro_series = (
+                completers[record_id_col]
+                .map(_elig_metro)
+                .set_axis(completers.index)
+                .rename("Metro")
+            )
+        else:
+            metro_series = pd.Series(dtype=float)
+
+        print("\nRunning MCAR analysis ...")
+        mcar_df = build_mcar_analysis(
+            completers,
+            extra_demo_cols=[(metro_series, "Metro")] if not metro_series.empty else None,
+        )
+
         # Frequency table uses county_recoded; blanks excluded, N/A included
         freq_data     = county_df[county_df["county_recoded"].str.strip().ne("")]
         elig_counts   = freq_data[freq_data["group"]=="eligible"]["county_recoded"].value_counts()
@@ -2087,6 +2139,10 @@ if county_candidates:
         print(f"  County frequency: {len(county_freq_df)-1} unique counties")
 else:
     print("  County column not found — skipping county sheets")
+    # Run MCAR without metro when county data is unavailable
+    if mcar_df.empty:
+        print("\nRunning MCAR analysis ...")
+        mcar_df = build_mcar_analysis(completers)
 
 # ── Cross-tabulations ─────────────────────────────────────────────────────────
 print("\nBuilding cross-tabulations ...")
