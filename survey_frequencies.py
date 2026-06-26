@@ -1977,6 +1977,25 @@ for col in df.columns:
 free_text_df = pd.DataFrame(free_text_rows) if free_text_rows else pd.DataFrame()
 print(f"  Free-text responses collected: {len(free_text_rows)}")
 
+if not free_text_df.empty and "group" in free_text_df.columns:
+    free_text_summary_df = (
+        free_text_df.groupby(["question", "group"], sort=False)
+        .size()
+        .reset_index(name="n")
+        .pivot(index="question", columns="group", values="n")
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
+    for _g in ("eligible", "ineligible"):
+        if _g not in free_text_summary_df.columns:
+            free_text_summary_df[_g] = pd.NA
+    free_text_summary_df = free_text_summary_df[
+        ["question"] + [c for c in ("eligible", "ineligible")
+                        if c in free_text_summary_df.columns]
+    ]
+else:
+    free_text_summary_df = pd.DataFrame()
+
 # ── Build county sheet ────────────────────────────────────────────────────────
 # County is a free-text field and REDCap may duplicate it across arms.
 # Collect individual responses from ALL matching columns across both groups.
@@ -2315,6 +2334,7 @@ sheets = {
     "crosstab_eligibility": crosstab_elig_df,
     "county_freq":          county_freq_df,
     "county":               county_df,
+    "free_text_summary":    free_text_summary_df,
     "free_text":            free_text_df,
     "completion_time":      completion_time_df,
     "completion_summary":   completion_summary_df,
