@@ -2274,12 +2274,34 @@ if demo_keep:
 else:
     print("  WARNING: no demographic columns found — skipping eligibility cross-tab")
 
+# ── Screener frequency table — all screened respondents combined ───────────────
+# Built from eligible + ineligible together so both Q1 (prenatal care) and Q2
+# (days seeing patients, including "0 days" ineligibles) appear in one place.
+# The eligible/ineligible sheets alone cannot reconstruct this because Q2 data
+# for ineligible respondents (those excluded for "0 days") lives in the eligible
+# form's column and is blank in the ineligible subset.
+screener_freq_df = pd.DataFrame()
+if elig_col:
+    _all_screened = pd.concat([eligible, ineligible], ignore_index=True)
+    _screener_parts = []
+    for _scol in [c for c in [elig_col, days_col] if c]:
+        _slabel   = complete_col_labels.get(_scol, _scol)
+        _sordered = ordered_for_col(_scol)
+        t = freq_single(_all_screened[_scol], _slabel, _sordered)
+        if t is not None:
+            _screener_parts.append(t)
+    if _screener_parts:
+        screener_freq_df = pd.concat(_screener_parts, ignore_index=True)
+    print(f"\nScreener freq: {len(screener_freq_df)} rows "
+          f"(N all-screened = {len(_all_screened)})")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
 sheets = {
     "eligible":             elig_freqs,
     "ineligible":           inelig_freqs,
+    "screener":             screener_freq_df,
     "missingness":            missingness_df,
     "missingness_started":    missingness_started_df,
     "missingness_complete":   missingness_complete_df,

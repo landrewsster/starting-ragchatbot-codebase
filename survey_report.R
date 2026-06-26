@@ -29,6 +29,7 @@ read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, shee
 
 eligible         <- read_if("eligible")
 ineligible       <- read_if("ineligible")
+screener_data    <- read_if("screener")
 crosstab_metro     <- read_if("crosstab_metro")
 crosstab_tenure    <- read_if("crosstab_tenure")
 crosstab_no_screen  <- read_if("crosstab_no_screen")
@@ -373,52 +374,43 @@ add_complete_summary <- function(doc, elig_df, inelig_df) {
 }
 
 # Screener questions — combined across all respondents (no eligibility stratification)
-add_screener_section <- function(doc, elig_df, inelig_df) {
+add_screener_section <- function(doc, screener_df) {
+  if (is.null(screener_df) || nrow(screener_df) == 0) return(doc)
   doc <- body_add_par(doc, "Screener Questions", style = "heading 2")
 
-  combine_screener <- function(elig_df, inelig_df, pattern) {
-    get_rows <- function(df) {
-      if (is.null(df) || nrow(df) == 0) return(NULL)
-      df %>%
-        filter(!is_complete_q(Question)) %>%
-        filter(str_detect(str_to_lower(Question), regex(pattern, ignore_case = TRUE)))
-    }
-    eq <- get_rows(elig_df)
-    iq <- get_rows(inelig_df)
-    if (is.null(eq) && is.null(iq)) return(NULL)
-
-    combined <- bind_rows(eq, iq) %>%
-      mutate(Response = str_squish(Response)) %>%
-      group_by(Response) %>%
-      summarise(n = sum(n, na.rm = TRUE), .groups = "drop")
-    total_n <- sum(combined$n)
-    combined %>%
-      mutate(`%` = round(n / total_n * 100, 1)) %>%
-      arrange(desc(n))
-  }
-
   for (i in seq_along(SCREENER_PATTERNS)) {
-    tbl <- combine_screener(elig_df, inelig_df, SCREENER_PATTERNS[i])
-    if (!is.null(tbl)) {
-      total_n <- sum(tbl$n)
-      ft <- flextable(tbl) %>%
-        theme_booktabs() %>%
-        bold(part = "header") %>%
-        fontsize(size = 10, part = "all") %>%
-        font(fontname = "Calibri", part = "all") %>%
-        align(j = c("n", "%"), align = "right", part = "all") %>%
-        width(j = "Response", width = 3.5) %>%
-        width(j = c("n", "%"), width = 0.7) %>%
-        add_footer_lines(paste0("N (denominator) = ", total_n)) %>%
-        fontsize(size = 9, part = "footer") %>%
-        italic(part = "footer") %>%
-        align(align = "left", part = "footer")
+    q_rows <- screener_df %>%
+      filter(str_detect(str_to_lower(Question), regex(SCREENER_PATTERNS[i], ignore_case = TRUE))) %>%
+      mutate(
+        n = suppressWarnings(as.numeric(n)),
+        `%` = suppressWarnings(as.numeric(`%`))
+      )
+    if (nrow(q_rows) == 0) next
 
-      doc <- doc %>%
-        body_add_par(SCREENER_LABELS[i], style = "heading 3") %>%
-        body_add_flextable(ft) %>%
-        body_add_par("", style = "Normal")
-    }
+    total_n <- suppressWarnings(as.numeric(
+      q_rows[["N (denominator)"]][!is.na(q_rows[["N (denominator)"]])][1]
+    ))
+    if (is.na(total_n)) total_n <- sum(q_rows$n, na.rm = TRUE)
+
+    tbl_data <- q_rows %>% select(Response, n, `%`)
+
+    ft <- flextable(tbl_data) %>%
+      theme_booktabs() %>%
+      bold(part = "header") %>%
+      fontsize(size = 10, part = "all") %>%
+      font(fontname = "Calibri", part = "all") %>%
+      align(j = c("n", "%"), align = "right", part = "all") %>%
+      width(j = "Response", width = 3.5) %>%
+      width(j = c("n", "%"), width = 0.7) %>%
+      add_footer_lines(paste0("N (denominator) = ", total_n)) %>%
+      fontsize(size = 9, part = "footer") %>%
+      italic(part = "footer") %>%
+      align(align = "left", part = "footer")
+
+    doc <- doc %>%
+      body_add_par(SCREENER_LABELS[i], style = "heading 3") %>%
+      body_add_flextable(ft) %>%
+      body_add_par("", style = "Normal")
   }
   doc
 }
@@ -665,7 +657,7 @@ doc <- doc %>%
   body_add_par("", style = "Normal")
 
 # 2. Screener questions (eligible + ineligible combined)
-doc <- add_screener_section(doc, eligible, ineligible)
+doc <- add_screener_section(doc, screener_data)
 
 # 3. Full survey — eligible respondents only
 doc <- add_main_section(doc, eligible, "Full Survey — Eligible Respondents")
