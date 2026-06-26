@@ -389,8 +389,7 @@ make_chart <- function(df_in, collapsed,
                         pos_label = "Positive", neg_label = "Negative",
                         neutral_label = "Neither",
                         pos_arrow = NULL, neg_arrow = NULL,
-                        title = "Cannabis Screening Survey",
-                        stat_note = NULL) {
+                        title = "Cannabis Screening Survey") {
 
   d       <- build_plot_data(df_in, collapsed, pos_levels, neg_levels,
                               dk_levels, neutral_levels,
@@ -420,7 +419,6 @@ make_chart <- function(df_in, collapsed,
       "Percentages of all respondents."
     ), sep = "  ")
   }
-  if (!is.null(stat_note)) caption_text <- paste(caption_text, stat_note, sep = "\n")
 
   p <- ggplot(plot_df) +
     geom_rect(aes(
@@ -505,30 +503,6 @@ make_chart <- function(df_in, collapsed,
 # ── Caption helper (avoids importing glue) ────────────────────────────────────
 glue_collapse <- function(x, sep = "") paste(x[nchar(x) > 0], collapse = sep)
 
-# ── Stat-note helper ──────────────────────────────────────────────────────────
-# Extracts p_value / stat_value from df (one row per response level, stat on
-# first row only) and formats a footnote for the chart caption.
-fmt_stat_caption <- function(df) {
-  if (!all(c("p_value", "stat_value", "q_short") %in% names(df))) return(NULL)
-  stat_rows <- df %>%
-    mutate(p_num = suppressWarnings(as.numeric(p_value))) %>%
-    filter(!is.na(p_num)) %>%
-    distinct(q_short, p_num, stat_value) %>%
-    mutate(
-      p_fmt = ifelse(p_num < 0.001, "p < .001",
-                     paste0("p = ", sub("^0\\.", ".", sprintf("%.3f", p_num)))),
-      w_val = suppressWarnings(as.numeric(stat_value)),
-      w_fmt = ifelse(!is.na(w_val), paste0("W = ", w_val, ", "), ""),
-      label = str_replace_all(q_short, "\n", " "),
-      note  = paste0(label, ": ", w_fmt, p_fmt)
-    )
-  if (nrow(stat_rows) == 0) return(NULL)
-  paste(
-    c("Wilcoxon signed-rank test vs. neutral midpoint —",
-      stat_rows$note),
-    collapse = "\n"
-  )
-}
 
 # ── Save charts ───────────────────────────────────────────────────────────────
 LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
@@ -545,8 +519,7 @@ OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
 ggsave(make_out("likert_chart1", "uncollapsed"),
        make_chart(raw1, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE,
-                  stat_note = fmt_stat_caption(raw1)),
+                  title = LIKERT_TITLE),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 
@@ -554,8 +527,7 @@ cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 ggsave(make_out("likert_chart2", "uncollapsed"),
        make_chart(raw2, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE,
-                  stat_note = fmt_stat_caption(raw2)),
+                  title = LIKERT_TITLE),
        width = 13, height = 7, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart2", "uncollapsed")), "\n")
 
@@ -564,8 +536,7 @@ ggsave(make_out("confidence", "uncollapsed"),
        make_chart(raw_conf, FALSE, CONF_POS, CONF_NEG, DK,
                   pos_label = "Confident", neg_label = "Not confident",
                   pos_arrow = "Confident →", neg_arrow = "← Not confident",
-                  title = CONF_TITLE,
-                  stat_note = fmt_stat_caption(raw_conf)),
+                  title = CONF_TITLE),
        width = 12, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("confidence", "uncollapsed")), "\n")
 
@@ -574,13 +545,11 @@ ggsave(make_out("knowledge", "uncollapsed"),
        make_chart(raw_know, FALSE, KNOW_POS, KNOW_NEG, character(0),
                   pos_label = "Knowledgeable", neg_label = "Not knowledgeable",
                   pos_arrow = "Knowledgeable →", neg_arrow = "← Not knowledgeable",
-                  title = KNOW_TITLE,
-                  stat_note = fmt_stat_caption(raw_know)),
+                  title = KNOW_TITLE),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("knowledge", "uncollapsed")), "\n")
 
 # Opinion chart (2 questions, no DK, neutral midpoint centered at zero)
-# No Wilcoxon test applied to opinion items (no neutral midpoint in the scoring)
 ggsave(make_out("opinion", "uncollapsed"),
        make_chart(raw_opinion, FALSE, OPINION_POS, OPINION_NEG, character(0),
                   neutral_levels = OPINION_NEUTRAL,
