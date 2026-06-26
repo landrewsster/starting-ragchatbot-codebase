@@ -523,8 +523,11 @@ fmt_stat_caption <- function(df) {
       note  = paste0(label, ": ", w_fmt, p_fmt)
     )
   if (nrow(stat_rows) == 0) return(NULL)
-  paste0("Wilcoxon signed-rank test vs. neutral midpoint — ",
-         paste(stat_rows$note, collapse = "; "))
+  paste(
+    c("Wilcoxon signed-rank test vs. neutral midpoint —",
+      stat_rows$note),
+    collapse = "\n"
+  )
 }
 
 # ── Save charts ───────────────────────────────────────────────────────────────
