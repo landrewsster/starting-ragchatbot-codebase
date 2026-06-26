@@ -525,11 +525,14 @@ def _branching_eligibility(df_sub, question_label):
     return None, len(df_sub)
 
 
-def get_branching_denom(df_sub, question_label, group=None):
+def get_branching_denom(df_sub, question_label, group=None, override_only=False):
     """Return (N, missing_label) if question_label matches an override or branching
     rule, or None if neither applies.
 
-    group: "eligible" or "ineligible" — enables QUESTION_DENOM_OVERRIDES lookup.
+    group:         "eligible" or "ineligible" — enables QUESTION_DENOM_OVERRIDES lookup.
+    override_only: if True, only check QUESTION_DENOM_OVERRIDES (skip BRANCHING_RULES).
+                   Use in missingness to get the true answered-N without conflating
+                   branching denominators with answered counts.
     """
     # QUESTION_DENOM_OVERRIDES: questions where a valid response is stored as
     # blank in the REDCap export (e.g. radio "None" options).
@@ -540,6 +543,8 @@ def get_branching_denom(df_sub, question_label, group=None):
                 if isinstance(entry, dict):
                     return (entry["n"], entry.get("missing_label", "Missing (skipped)"))
                 return (int(entry), "Missing (skipped)")
+    if override_only:
+        return None
     for rule in BRANCHING_RULES:
         if any(re.search(p, question_label, re.IGNORECASE) for p in rule["child_patterns"]):
             parent_col = next(
@@ -1194,7 +1199,7 @@ def detect_started_n(df_sub, screener_cols=None):
     return n
 
 
-def build_missingness(df_sub, started_n=None, total_eligible_n=None):
+def build_missingness(df_sub, started_n=None, total_eligible_n=None, group=None):
     """
     One row per survey question.
 
@@ -1264,7 +1269,9 @@ def build_missingness(df_sub, started_n=None, total_eligible_n=None):
             mask, n_routed_raw = _branching_eligibility(df_sub, label)
             n_routed = min(n_routed_raw, base_n) if mask is not None else base_n
             elig_sub = df_sub[mask] if mask is not None else df_sub
-            n_answered = int(elig_sub[col].str.strip().ne("").sum())
+            n_answered_raw = int(elig_sub[col].str.strip().ne("").sum())
+            _ov = get_branching_denom(elig_sub, label, group=group, override_only=True)
+            n_answered = _ov[0] if _ov is not None else n_answered_raw
             q_label = re.sub(r'\s+', ' ', str(label)).strip()
             q_type = "Single choice / Likert"
 
@@ -1874,9 +1881,9 @@ _started_n = detect_started_n(eligible, screener_cols=_screener_cols)
 print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
       f"  non-starters = {len(eligible) - _started_n})")
 
-missingness_df           = build_missingness(eligible)
-missingness_started_df   = build_missingness(eligible, started_n=_started_n)
-missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible))
+missingness_df           = build_missingness(eligible,   group="eligible")
+missingness_started_df   = build_missingness(eligible,   started_n=_started_n, group="eligible")
+missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible), group="eligible")
 
 # MCAR analysis — is missingness associated with respondent demographics?
 print("\nRunning MCAR analysis ...")
