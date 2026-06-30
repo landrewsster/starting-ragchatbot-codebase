@@ -162,6 +162,7 @@ make_table <- function(df) {
     df <- df %>% select(-any_of(stat_cols_present))
   }
 
+  df <- df %>% filter(!str_detect(str_to_lower(str_squish(Response)), "^missing"))
   df <- enforce_likert_order(df)
   num_cols <- intersect(c("n", "%"), names(df))
 
@@ -282,6 +283,7 @@ make_crosstab_table <- function(df, label1, label0) {
   if ("post_hoc_p" %in% names(display))
     display <- display %>% mutate(post_hoc_p = fmt_p(post_hoc_p))
 
+  display <- display %>% filter(!str_detect(str_to_lower(str_squish(Response)), "^missing"))
   display <- enforce_likert_order(display)
 
   # Build Total row: N1/N0 under n columns, everything else blank
