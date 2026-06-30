@@ -215,7 +215,7 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     else:
         return lf_keys(col_a, col_b)                 # standard: col A=last, col B=first
 
-# ── Load matched + not_in_master from provider_round3_crossref.xlsx ───────────
+# ── Load matched + not_in_master from crossref file ──────────────────────────
 print(f"\nLoading cross-reference file: {CROSSREF_FILE.name}")
 try:
     _xl = pd.ExcelFile(CROSSREF_FILE)
@@ -223,10 +223,48 @@ except FileNotFoundError:
     raise SystemExit(f"ERROR: {CROSSREF_FILE} not found — run cross_reference_providers.py first")
 print(f"  Sheets: {_xl.sheet_names}")
 
-if "matched" not in _xl.sheet_names:
-    raise SystemExit("ERROR: 'matched' sheet not found in cross-reference file")
-matched = _xl.parse("matched", dtype=str).fillna("")
-print(f"  matched      : {len(matched)} rows | columns: {list(matched.columns)}")
+# Support two formats:
+#   Old format: separate 'matched' and 'not_in_master' sheets
+#   New format: single sheet (e.g. 'manual_list_clean') with a status column
+_STATUS_COL_CANDIDATES = ["status", "match_status", "group", "matched", "in_round3", "round3_match"]
+_MATCHED_VALUES        = {"matched", "yes", "y", "true", "1", "found", "in_round3"}
+_NOT_MATCHED_VALUES    = {"not_in_master", "not_matched", "no", "n", "false", "0", "not_found",
+                          "unmatched", "new"}
+
+if "matched" in _xl.sheet_names:
+    matched = _xl.parse("matched", dtype=str).fillna("")
+    print(f"  matched      : {len(matched)} rows | columns: {list(matched.columns)}")
+else:
+    # Try single-sheet format
+    _single_sheet = next(
+        (s for s in _xl.sheet_names if s.lower() in ("manual_list_clean", "all", "providers", "manual_list")),
+        _xl.sheet_names[0] if _xl.sheet_names else None
+    )
+    if _single_sheet is None:
+        raise SystemExit("ERROR: crossref file is empty")
+    _all = _xl.parse(_single_sheet, dtype=str).fillna("")
+    print(f"  Single sheet '{_single_sheet}': {len(_all)} rows | columns: {list(_all.columns)}")
+
+    _status_col = next((find_col(_all, [c]) for c in _STATUS_COL_CANDIDATES
+                        if find_col(_all, [c])), None)
+    if _status_col:
+        _vals = _all[_status_col].str.strip().str.lower()
+        matched     = _all[_vals.isin(_MATCHED_VALUES)].reset_index(drop=True)
+        not_matched = _all[_vals.isin(_NOT_MATCHED_VALUES)].reset_index(drop=True)
+        _unclassified = _all[~_vals.isin(_MATCHED_VALUES | _NOT_MATCHED_VALUES)]
+        print(f"  Split on column {_status_col!r}:")
+        print(f"    matched      : {len(matched)}")
+        print(f"    not_in_master: {len(not_matched)}")
+        if len(_unclassified):
+            print(f"    *** {len(_unclassified)} row(s) had unrecognised status values "
+                  f"and were EXCLUDED: {_all[_status_col].unique().tolist()}")
+    else:
+        print(f"\n  No status column found. Columns in file: {list(_all.columns)}")
+        raise SystemExit(
+            "ERROR: could not find a status column to split matched vs not_in_master.\n"
+            f"  Add a column named one of: {_STATUS_COL_CANDIDATES}\n"
+            f"  with values like 'matched'/'not_in_master' (or yes/no, 1/0, etc.)"
+        )
 
 m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
 m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
@@ -268,11 +306,13 @@ if not m_addr_sets:
 print(f"  last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
 print(f"  address column sets found: {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
 
-# ── Load not_in_master sheet ──────────────────────────────────────────────────
-if "not_in_master" not in _xl.sheet_names:
-    raise SystemExit("ERROR: 'not_in_master' sheet not found in cross-reference file")
-not_matched = _xl.parse("not_in_master", dtype=str).fillna("")
-print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.columns)}")
+# ── Load not_in_master sheet (old two-sheet format only) ─────────────────────
+if "matched" in _xl.sheet_names:
+    if "not_in_master" not in _xl.sheet_names:
+        raise SystemExit("ERROR: 'not_in_master' sheet not found in cross-reference file")
+    not_matched = _xl.parse("not_in_master", dtype=str).fillna("")
+    print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.columns)}")
+# else: not_matched already set above from single-sheet split
 
 nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
 nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
