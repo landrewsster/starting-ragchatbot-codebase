@@ -232,6 +232,16 @@ m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"])
 m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
 m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_middle_initial"])
 
+# Deduplicate by normalized name
+_m_key = matched[m_last].apply(clean_name) + "|" + matched[m_first].apply(clean_name)
+_m_dups = _m_key.duplicated(keep="first")
+if _m_dups.sum():
+    print(f"  *** {_m_dups.sum()} duplicate name(s) removed from matched sheet:")
+    for _, row in matched[_m_dups].iterrows():
+        print(f"      {row[m_last]}, {row[m_first]}")
+    matched = matched[~_m_dups].reset_index(drop=True)
+    print(f"  matched after dedup: {len(matched)} rows")
+
 # Detect wide-format address columns (address_1, city_1, zip_1, address_2, ...)
 m_addr_sets = []
 i = 1
@@ -267,6 +277,16 @@ _nm_col2 = not_matched.columns[2] if len(not_matched.columns) > 2 else None
 # Only use col C as "third" if it's not already assigned as last or first
 nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
 print(f"  last={nm_last!r}  first={nm_first!r}  third={nm_third!r}")
+
+# Deduplicate by normalized name
+_nm_key = not_matched[nm_last].apply(clean_name) + "|" + not_matched[nm_first].apply(clean_name)
+_nm_dups = _nm_key.duplicated(keep="first")
+if _nm_dups.sum():
+    print(f"  *** {_nm_dups.sum()} duplicate name(s) removed from not_in_master sheet:")
+    for _, row in not_matched[_nm_dups].iterrows():
+        print(f"      {row[nm_last]}, {row[nm_first]}")
+    not_matched = not_matched[~_nm_dups].reset_index(drop=True)
+    print(f"  not_in_master after dedup: {len(not_matched)} rows")
 
 # ── Load Round 3 for address lookup ──────────────────────────────────────────
 print(f"\nLoading Round 3: {ROUND3_FILE.name}")
