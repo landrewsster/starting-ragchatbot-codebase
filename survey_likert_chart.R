@@ -427,8 +427,8 @@ make_chart <- function(df_in, collapsed,
       fill = category
     ), color = "white", linewidth = 0.3) +
     geom_text(
-      data = plot_df %>% filter(bar_width >= MIN_W_N, !is.na(n_count)),
-      aes(x = xcenter, y = y, label = n_count),
+      data = plot_df %>% filter(bar_width >= MIN_W_N),
+      aes(x = xcenter, y = y, label = paste0(round(bar_width), "%")),
       color = "white", size = 4.2, fontface = "bold"
     ) +
     geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
