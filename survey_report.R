@@ -80,6 +80,57 @@ is_main_q      <- function(q) !is_complete_q(q) & !is_screener_q(q) & !is_demo_q
 # Normalize question text: strip trailing pandas-dedup suffixes (.1, .2 …)
 norm_q <- function(q) str_trim(str_remove(q, "\\s*\\.\\d+\\s*$"))
 
+# ── Likert scale response ordering ────────────────────────────────────────────
+# Canonical order matching the survey presentation
+LIKERT_LEVELS <- c("Strongly agree", "Agree", "Don't know", "Disagree", "Strongly disagree")
+
+is_likert_df <- function(df) {
+  if (!"Response" %in% names(df)) return(FALSE)
+  sum(str_to_lower(str_squish(df$Response)) %in% str_to_lower(LIKERT_LEVELS)) >= 2
+}
+
+# Classify a column as "count" (n), "pct" (%), or "other"
+.col_class <- function(col) {
+  if (col == "n"  || grepl("^n \\(",  col)) return("count")
+  if (col == "%"  || grepl("^% \\(",  col)) return("pct")
+  "other"
+}
+
+# Reorder rows to match LIKERT_LEVELS and zero-fill any absent options.
+# Total and Missing rows are preserved at the bottom in their original order.
+enforce_likert_order <- function(df) {
+  if (!is_likert_df(df)) return(df)
+  resp_lower <- str_to_lower(str_squish(df$Response))
+  likert_low <- str_to_lower(LIKERT_LEVELS)
+  total_idx   <- which(resp_lower == "total")
+  missing_idx <- which(str_detect(resp_lower, "^missing"))
+  likert_idx  <- which(resp_lower %in% likert_low)
+  other_idx   <- setdiff(seq_len(nrow(df)), c(likert_idx, total_idx, missing_idx))
+
+  likert_rows <- lapply(LIKERT_LEVELS, function(lv) {
+    idx <- which(str_to_lower(str_squish(df$Response)) == str_to_lower(lv))
+    if (length(idx) > 0) return(df[idx[1], , drop = FALSE])
+    # Zero-filled row for this absent Likert option
+    new_row <- df[1, , drop = FALSE]
+    new_row[["Response"]] <- lv
+    for (col in setdiff(names(new_row), "Response")) {
+      cls <- .col_class(col)
+      if      (cls == "count") new_row[[col]] <- 0L
+      else if (cls == "pct")   new_row[[col]] <- 0.0
+      else if (is.numeric(new_row[[col]])) new_row[[col]] <- NA_real_
+      else                                 new_row[[col]] <- NA_character_
+    }
+    new_row
+  })
+
+  bind_rows(c(
+    likert_rows,
+    if (length(other_idx)   > 0) list(df[other_idx,   ]) else list(),
+    if (length(missing_idx) > 0) list(df[missing_idx, ]) else list(),
+    if (length(total_idx)   > 0) list(df[total_idx,   ]) else list()
+  ))
+}
+
 # ── Flextable helpers ─────────────────────────────────────────────────────────
 # Single-group table: n and % columns, N as footer
 make_table <- function(df) {
@@ -111,6 +162,7 @@ make_table <- function(df) {
     df <- df %>% select(-any_of(stat_cols_present))
   }
 
+  df <- enforce_likert_order(df)
   num_cols <- intersect(c("n", "%"), names(df))
 
   ft <- flextable(df) %>%
@@ -124,6 +176,11 @@ make_table <- function(df) {
     align(j = setdiff(names(df), num_cols), align = "left", part = "all") %>%
     width(j = "Response", width = 3.5) %>%
     width(j = num_cols,   width = 0.7)
+
+  if ("%" %in% names(df))
+    ft <- colformat_double(ft, j = "%", digits = 1, na_str = "")
+  if ("n" %in% names(df))
+    ft <- colformat_double(ft, j = "n", digits = 0, na_str = "")
 
   footer_lines <- c(n_note, stat_note)
   footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
@@ -225,6 +282,8 @@ make_crosstab_table <- function(df, label1, label0) {
   if ("post_hoc_p" %in% names(display))
     display <- display %>% mutate(post_hoc_p = fmt_p(post_hoc_p))
 
+  display <- enforce_likert_order(display)
+
   # Build Total row: N1/N0 under n columns, everything else blank
   total_row <- tibble(Response = "Total")
   for (cn in setdiff(names(display), "Response")) {
@@ -259,6 +318,13 @@ make_crosstab_table <- function(df, label1, label0) {
     width(j = "Response",      width = 2.8) %>%
     width(j = num_cols,        width = 0.60) %>%
     width(j = post_hoc_present, width = 0.75)
+
+  pct_display_cols <- intersect(c(col_pct1, col_pct0), names(display))
+  n_display_cols   <- intersect(c(col_n1,   col_n0),   names(display))
+  if (length(pct_display_cols) > 0)
+    ft <- colformat_double(ft, j = pct_display_cols, digits = 1, na_str = "")
+  if (length(n_display_cols) > 0)
+    ft <- colformat_double(ft, j = n_display_cols, digits = 0, na_str = "")
 
   for (fl in footer_lines)
     ft <- ft %>% add_footer_lines(fl)
@@ -873,7 +939,7 @@ doc <- add_crosstab_section(
 )
 doc <- add_crosstab_section(
   doc, crosstab_no_screen,
-  "No, don’t screen any", "No, only some patients",
+  "No, don't screen any", "No, only some patients",
   "Cross-Tabulation: Q1.3.3 by Screening Group (Q1.3.1)"
 )
 
