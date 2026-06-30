@@ -594,7 +594,7 @@ print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
 for _, row in in_lic_df.iterrows():
     print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
-# ── Write output ──────────────────────────────────────────────────────────────
+# ── Build output subsets and summary ─────────────────────────────────────────
 r3_same        = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
 r3_possible    = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
 r3_diff        = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
@@ -603,8 +603,90 @@ multi_possible = multi_df[multi_df["address_match"] == "possible_match"].reset_i
 multi_diff     = multi_df[multi_df["address_match"] == "different"].reset_index(drop=True)
 multi_notfound = multi_df[multi_df["address_match"] == "not_found"].reset_index(drop=True)
 
+n_matched_provs   = len(r3_same) + len(r3_possible) + len(r3_diff)
+n_multi_checked   = len(multi_same) + len(multi_possible) + len(multi_diff) + len(multi_notfound)
+n_unmatched_provs = len(in_lic_df) + len(not_in_lic_df)
+n_grand_total     = n_matched_provs + n_unmatched_provs
+
+_ok   = lambda n, exp: "OK" if n == exp else f"*** MISMATCH (got {n}, expected {exp}) ***"
+_note = lambda n, exp: f"should = {exp} ({_ok(n, exp)})"
+
+summary_rows = [
+    {"section": "INPUT",
+     "category": "matched sheet (crossref input)",
+     "count": len(matched),
+     "note": "rows in 'matched' sheet of crossref file"},
+    {"section": "",
+     "category": "not_in_master sheet (crossref input)",
+     "count": len(not_matched),
+     "note": "rows in 'not_in_master' sheet of crossref file"},
+    {"section": "",
+     "category": "TOTAL input",
+     "count": len(matched) + len(not_matched),
+     "note": "should equal total unique providers in manual list"},
+    {"section": "", "category": "", "count": "", "note": ""},
+    {"section": "ADDRESS CHECK (matched providers vs Round 3)",
+     "category": "r3_addr_same",
+     "count": len(r3_same),
+     "note": "same address as Round 3 mailing list"},
+    {"section": "",
+     "category": "r3_addr_possible",
+     "count": len(r3_possible),
+     "note": "similar but not identical — review manually"},
+    {"section": "",
+     "category": "r3_addr_different",
+     "count": len(r3_diff),
+     "note": "different or not found in Round 3"},
+    {"section": "",
+     "category": "TOTAL",
+     "count": n_matched_provs,
+     "note": _note(n_matched_provs, len(matched))},
+    {"section": "", "category": "", "count": "", "note": ""},
+    {"section": "ADDRESS CHECK 2 (r3 non-same subset vs multiple_addresses.csv)",
+     "category": "multi_addr_same",
+     "count": len(multi_same),
+     "note": "confirmed same via multiple_addresses.csv"},
+    {"section": "",
+     "category": "multi_addr_possible",
+     "count": len(multi_possible),
+     "note": "similar — review manually"},
+    {"section": "",
+     "category": "multi_addr_different",
+     "count": len(multi_diff),
+     "note": "found in file but address differs"},
+    {"section": "",
+     "category": "multi_addr_not_found",
+     "count": len(multi_notfound),
+     "note": "not found in multiple_addresses.csv"},
+    {"section": "",
+     "category": "TOTAL checked in multi file",
+     "count": n_multi_checked,
+     "note": f"subset of {len(r3_possible) + len(r3_diff)} r3 non-same providers (NOT additive with r3 totals above)"},
+    {"section": "", "category": "", "count": "", "note": ""},
+    {"section": "LICENSE CHECK (not_in_master vs MN license board)",
+     "category": "in_license_board",
+     "count": len(in_lic_df),
+     "note": "found in MN Physician/PA license file"},
+    {"section": "",
+     "category": "not_in_license",
+     "count": len(not_in_lic_df),
+     "note": "not found in license file"},
+    {"section": "",
+     "category": "TOTAL",
+     "count": n_unmatched_provs,
+     "note": _note(n_unmatched_provs, len(not_matched))},
+    {"section": "", "category": "", "count": "", "note": ""},
+    {"section": "GRAND TOTAL",
+     "category": "matched providers + not_in_master providers",
+     "count": n_grand_total,
+     "note": "should equal total unique providers in manual list"},
+]
+summary_df = pd.DataFrame(summary_rows)
+
+# ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
+    summary_df.to_excel(     writer, sheet_name="summary",               index=False)
     r3_same.to_excel(        writer, sheet_name="r3_addr_same",          index=False)
     r3_possible.to_excel(    writer, sheet_name="r3_addr_possible",      index=False)
     r3_diff.to_excel(        writer, sheet_name="r3_addr_different",     index=False)
@@ -614,6 +696,7 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     multi_notfound.to_excel( writer, sheet_name="multi_addr_not_found",  index=False)
     in_lic_df.to_excel(      writer, sheet_name="in_license_board",      index=False)
     not_in_lic_df.to_excel(  writer, sheet_name="not_in_license",        index=False)
+    print(f"  summary              : written")
     print(f"  r3_addr_same         : {len(r3_same)}")
     print(f"  r3_addr_possible     : {len(r3_possible)}  ← review manually")
     print(f"  r3_addr_different    : {len(r3_diff)}")
@@ -624,25 +707,27 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  in_license_board     : {len(in_lic_df)}")
     print(f"  not_in_license       : {len(not_in_lic_df)}")
 
-n_matched_provs   = len(r3_same) + len(r3_possible) + len(r3_diff)
-n_multi_checked   = len(multi_same) + len(multi_possible) + len(multi_diff) + len(multi_notfound)
-n_unmatched_provs = len(in_lic_df) + len(not_in_lic_df)
-n_confirmed_same  = len(r3_same) + len(multi_same)
 print(f"""
 Row count summary:
-  {n_matched_provs} matched providers vs R3:
+  INPUT:
+    {len(matched)} rows in 'matched' sheet
+    {len(not_matched)} rows in 'not_in_master' sheet
+    {len(matched) + len(not_matched)} total
+
+  ADDRESS CHECK (matched providers vs Round 3):
     {len(r3_same)} same  |  {len(r3_possible)} possible  |  {len(r3_diff)} different/not_found
+    Total = {n_matched_provs}  {_ok(n_matched_provs, len(matched))}
 
-  Of those {len(r3_possible) + len(r3_diff)} non-same, {n_multi_checked} were found in multiple_addresses.csv:
+  ADDRESS CHECK 2 (r3 non-same subset vs multiple_addresses.csv):
     {len(multi_same)} same  |  {len(multi_possible)} possible  |  {len(multi_diff)} different  |  {len(multi_notfound)} not in file
+    Checked {n_multi_checked} of {len(r3_possible) + len(r3_diff)} r3 non-same providers
+    NOTE: multi_* sheets are a SUBSET of r3 non-same — do not add to r3 totals
 
-  Address confirmed same (R3 or multi): {len(r3_same)} + {len(multi_same)} = {n_confirmed_same}
-  Still different after both checks   : {len(r3_diff) + len(r3_possible) - n_multi_checked + len(multi_diff) + len(multi_possible)}
-
-  {n_unmatched_provs} not-matched providers vs MN license board:
+  LICENSE CHECK (not_in_master vs MN license board):
     {len(in_lic_df)} found  |  {len(not_in_lic_df)} not found
+    Total = {n_unmatched_provs}  {_ok(n_unmatched_provs, len(not_matched))}
 
-  Unique providers total: {n_matched_provs} matched + {n_unmatched_provs} not matched = {n_matched_provs + n_unmatched_provs}
+  GRAND TOTAL: {n_matched_provs} matched + {n_unmatched_provs} not-matched = {n_grand_total}
 """)
 
 print("Done.")
