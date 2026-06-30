@@ -215,124 +215,116 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     else:
         return lf_keys(col_a, col_b)                 # standard: col A=last, col B=first
 
-# ── Load matched + not_in_master from crossref file ──────────────────────────
+# ── Load crossref file ────────────────────────────────────────────────────────
+# Supports two formats:
+#   Old format: separate 'matched' and 'not_in_master' sheets
+#   New format: single sheet — auto-classifies using Round 3 name lookup
 print(f"\nLoading cross-reference file: {CROSSREF_FILE.name}")
 try:
     _xl = pd.ExcelFile(CROSSREF_FILE)
 except FileNotFoundError:
-    raise SystemExit(f"ERROR: {CROSSREF_FILE} not found — run cross_reference_providers.py first")
+    raise SystemExit(f"ERROR: {CROSSREF_FILE} not found")
 print(f"  Sheets: {_xl.sheet_names}")
 
-# Support two formats:
-#   Old format: separate 'matched' and 'not_in_master' sheets
-#   New format: single sheet (e.g. 'manual_list_clean') with a status column
-_STATUS_COL_CANDIDATES = ["status", "match_status", "group", "matched", "in_round3", "round3_match"]
-_MATCHED_VALUES        = {"matched", "yes", "y", "true", "1", "found", "in_round3"}
-_NOT_MATCHED_VALUES    = {"not_in_master", "not_matched", "no", "n", "false", "0", "not_found",
-                          "unmatched", "new"}
+_auto_classify = False   # will be True for single-sheet format
+_all_df        = None    # holds combined df until R3 lookup is ready
 
 if "matched" in _xl.sheet_names:
+    # ── Old two-sheet format ──────────────────────────────────────────────────
     matched = _xl.parse("matched", dtype=str).fillna("")
     print(f"  matched      : {len(matched)} rows | columns: {list(matched.columns)}")
-else:
-    # Try single-sheet format
-    _single_sheet = next(
-        (s for s in _xl.sheet_names if s.lower() in ("manual_list_clean", "all", "providers", "manual_list")),
-        _xl.sheet_names[0] if _xl.sheet_names else None
-    )
-    if _single_sheet is None:
-        raise SystemExit("ERROR: crossref file is empty")
-    _all = _xl.parse(_single_sheet, dtype=str).fillna("")
-    print(f"  Single sheet '{_single_sheet}': {len(_all)} rows | columns: {list(_all.columns)}")
 
-    _status_col = next((find_col(_all, [c]) for c in _STATUS_COL_CANDIDATES
-                        if find_col(_all, [c])), None)
-    if _status_col:
-        _vals = _all[_status_col].str.strip().str.lower()
-        matched     = _all[_vals.isin(_MATCHED_VALUES)].reset_index(drop=True)
-        not_matched = _all[_vals.isin(_NOT_MATCHED_VALUES)].reset_index(drop=True)
-        _unclassified = _all[~_vals.isin(_MATCHED_VALUES | _NOT_MATCHED_VALUES)]
-        print(f"  Split on column {_status_col!r}:")
-        print(f"    matched      : {len(matched)}")
-        print(f"    not_in_master: {len(not_matched)}")
-        if len(_unclassified):
-            print(f"    *** {len(_unclassified)} row(s) had unrecognised status values "
-                  f"and were EXCLUDED: {_all[_status_col].unique().tolist()}")
+    if "not_in_master" not in _xl.sheet_names:
+        raise SystemExit("ERROR: 'not_in_master' sheet not found in cross-reference file")
+    not_matched = _xl.parse("not_in_master", dtype=str).fillna("")
+    print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.columns)}")
+
+    m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
+    m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
+    m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_middle_initial"])
+
+    # Deduplicate matched by name
+    _m_key  = matched[m_last].apply(clean_name) + "|" + matched[m_first].apply(clean_name)
+    _m_dups = _m_key.duplicated(keep="first")
+    n_matched_dups = int(_m_dups.sum())
+    if n_matched_dups:
+        print(f"  *** {n_matched_dups} duplicate(s) removed from matched:")
+        for _, row in matched[_m_dups].iterrows():
+            print(f"      {row[m_last]}, {row[m_first]}")
+        matched = matched[~_m_dups].reset_index(drop=True)
     else:
-        print(f"\n  No status column found. Columns in file: {list(_all.columns)}")
-        raise SystemExit(
-            "ERROR: could not find a status column to split matched vs not_in_master.\n"
-            f"  Add a column named one of: {_STATUS_COL_CANDIDATES}\n"
-            f"  with values like 'matched'/'not_in_master' (or yes/no, 1/0, etc.)"
-        )
+        print(f"  No duplicates in matched sheet")
 
-m_last  = find_col(matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or matched.columns[0]
-m_first = find_col(matched, ["First_Name", "first_name", "FirstName", "First Name"]) or matched.columns[1]
-m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_middle_initial"])
+    nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
+    nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
+    _nm_col2 = not_matched.columns[2] if len(not_matched.columns) > 2 else None
+    nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
 
-# Deduplicate by normalized name
-_m_key = matched[m_last].apply(clean_name) + "|" + matched[m_first].apply(clean_name)
-_m_dups = _m_key.duplicated(keep="first")
-n_matched_dups = int(_m_dups.sum())
-if n_matched_dups:
-    print(f"  *** {n_matched_dups} duplicate name(s) removed from matched sheet:")
-    for _, row in matched[_m_dups].iterrows():
-        print(f"      {row[m_last]}, {row[m_first]}")
-    matched = matched[~_m_dups].reset_index(drop=True)
-    print(f"  matched after dedup: {len(matched)} rows")
+    # Deduplicate not_matched by name
+    _nm_key  = not_matched[nm_last].apply(clean_name) + "|" + not_matched[nm_first].apply(clean_name)
+    _nm_dups = _nm_key.duplicated(keep="first")
+    n_not_matched_dups = int(_nm_dups.sum())
+    if n_not_matched_dups:
+        print(f"  *** {n_not_matched_dups} duplicate(s) removed from not_in_master:")
+        for _, row in not_matched[_nm_dups].iterrows():
+            print(f"      {row[nm_last]}, {row[nm_first]}")
+        not_matched = not_matched[~_nm_dups].reset_index(drop=True)
+    else:
+        print(f"  No duplicates in not_in_master sheet")
+
 else:
-    print(f"  No duplicates found in matched sheet")
+    # ── New single-sheet format — defer classification until R3 is loaded ─────
+    _single_sheet = _xl.sheet_names[0]
+    _all_df = _xl.parse(_single_sheet, dtype=str).fillna("")
+    print(f"  Single sheet '{_single_sheet}': {len(_all_df)} rows | columns: {list(_all_df.columns)}")
 
-# Detect wide-format address columns (address_1, city_1, zip_1, address_2, ...)
+    m_last  = find_col(_all_df, ["Last_Name", "last_name", "LastName", "Last Name"]) or _all_df.columns[0]
+    m_first = find_col(_all_df, ["First_Name", "first_name", "FirstName", "First Name"]) or _all_df.columns[1]
+    m_mid   = find_col(_all_df, ["Middle_Name", "middle_name", "middle", "middle_initial"])
+    nm_last, nm_first = m_last, m_first
+    _nm_col2 = _all_df.columns[2] if len(_all_df.columns) > 2 else None
+    nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
+
+    # Deduplicate the full list now; matched/not_matched inherit dedup after split
+    _all_key  = _all_df[m_last].apply(clean_name) + "|" + _all_df[m_first].apply(clean_name)
+    _all_dups = _all_key.duplicated(keep="first")
+    n_all_dups = int(_all_dups.sum())
+    if n_all_dups:
+        print(f"  *** {n_all_dups} duplicate(s) removed:")
+        for _, row in _all_df[_all_dups].iterrows():
+            print(f"      {row[m_last]}, {row[m_first]}")
+        _all_df = _all_df[~_all_dups].reset_index(drop=True)
+        print(f"  {len(_all_df)} unique providers remaining")
+    else:
+        print(f"  No duplicates found")
+
+    _auto_classify     = True
+    n_matched_dups     = n_all_dups   # report total dups in summary
+    n_not_matched_dups = 0
+    matched = not_matched = pd.DataFrame()  # placeholders until R3 lookup is ready
+
+# Detect address columns (same logic applies for both formats)
+_addr_src = matched if not _auto_classify else _all_df
 m_addr_sets = []
 i = 1
 while True:
-    a = find_col(matched, [f"address_{i}", f"primary_address_{i}"])
-    c = find_col(matched, [f"city_{i}"])
-    z = find_col(matched, [f"zip_{i}"])
+    a = find_col(_addr_src, [f"address_{i}", f"primary_address_{i}"])
+    c = find_col(_addr_src, [f"city_{i}"])
+    z = find_col(_addr_src, [f"zip_{i}"])
     if a:
         m_addr_sets.append((a, c, z))
         i += 1
     else:
         break
-# Fall back to single address columns if no wide format found
 if not m_addr_sets:
-    a = find_col(matched, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
-    c = find_col(matched, ["primary_city", "Clinic_City", "city", "City"])
-    z = find_col(matched, ["zip5", "Clinic_Zip", "zip", "Zip"])
+    a = find_col(_addr_src, ["primary_address_1", "Clinic_Address", "address", "Address", "address_line1"])
+    c = find_col(_addr_src, ["primary_city", "Clinic_City", "city", "City"])
+    z = find_col(_addr_src, ["zip5", "Clinic_Zip", "zip", "Zip"])
     if a:
         m_addr_sets.append((a, c, z))
 
-print(f"  last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
-print(f"  address column sets found: {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
-
-# ── Load not_in_master sheet (old two-sheet format only) ─────────────────────
-if "matched" in _xl.sheet_names:
-    if "not_in_master" not in _xl.sheet_names:
-        raise SystemExit("ERROR: 'not_in_master' sheet not found in cross-reference file")
-    not_matched = _xl.parse("not_in_master", dtype=str).fillna("")
-    print(f"  not_in_master: {len(not_matched)} rows | columns: {list(not_matched.columns)}")
-# else: not_matched already set above from single-sheet split
-
-nm_last  = find_col(not_matched, ["Last_Name", "last_name", "LastName", "Last Name"]) or not_matched.columns[0]
-nm_first = find_col(not_matched, ["First_Name", "first_name", "FirstName", "First Name"]) or not_matched.columns[1]
-_nm_col2 = not_matched.columns[2] if len(not_matched.columns) > 2 else None
-# Only use col C as "third" if it's not already assigned as last or first
-nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
-print(f"  last={nm_last!r}  first={nm_first!r}  third={nm_third!r}")
-
-# Deduplicate by normalized name
-_nm_key = not_matched[nm_last].apply(clean_name) + "|" + not_matched[nm_first].apply(clean_name)
-_nm_dups = _nm_key.duplicated(keep="first")
-n_not_matched_dups = int(_nm_dups.sum())
-if n_not_matched_dups:
-    print(f"  *** {n_not_matched_dups} duplicate name(s) removed from not_in_master sheet:")
-    for _, row in not_matched[_nm_dups].iterrows():
-        print(f"      {row[nm_last]}, {row[nm_first]}")
-    not_matched = not_matched[~_nm_dups].reset_index(drop=True)
-    print(f"  not_in_master after dedup: {len(not_matched)} rows")
-else:
-    print(f"  No duplicates found in not_in_master sheet")
+print(f"  name cols : last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
+print(f"  addr sets : {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
 
 # ── Load Round 3 for address lookup ──────────────────────────────────────────
 print(f"\nLoading Round 3: {ROUND3_FILE.name}")
@@ -360,6 +352,19 @@ for idx, row in r3.iterrows():
     for key in make_all_keys(row[r3_last], row[r3_first]):
         r3_key_to_idx.setdefault(key, idx)
 print(f"  Unique name keys: {len(r3_key_to_idx)}")
+
+# ── Auto-classify single-sheet providers using Round 3 lookup ────────────────
+if _auto_classify:
+    _in_r3 = _all_df.apply(
+        lambda row: any(k in r3_key_to_idx
+                        for k in make_all_keys(row[m_last], row[m_first])),
+        axis=1
+    )
+    matched     = _all_df[_in_r3].reset_index(drop=True)
+    not_matched = _all_df[~_in_r3].reset_index(drop=True)
+    print(f"\n  Auto-classified {len(_all_df)} providers using Round 3 name lookup:")
+    print(f"    found in Round 3 → matched      : {len(matched)}")
+    print(f"    not in Round 3  → not_in_master : {len(not_matched)}")
 
 # ── Compare addresses for matched providers (manual vs Round 3) ───────────────
 print(f"\nComparing addresses for {len(matched)} matched providers ...")
