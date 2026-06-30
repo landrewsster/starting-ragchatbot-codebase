@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ── Self-update ───────────────────────────────────────────────────────────────
+# ── Self-update ─────────────────────────────────────────────────────────────────────────────
 import os, sys, urllib.request, ssl
 _URL = ("https://raw.githubusercontent.com/landrewsster/"
         "starting-ragchatbot-codebase/claude/clean-sort-merge-npi-GngZZ/"
@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pandas as pd
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────────────
 BASE            = Path.home() / "Downloads" / "CRC MDH Project" / "Current Mailing Files"
 ROUND3_FILE     = BASE / "MailingList_Round3_20260519.xlsx"
 MULTI_ADDR_FILE = BASE / "multiple_addresses.csv"
@@ -65,7 +65,7 @@ else:
 print(f"Crossref file: {CROSSREF_FILE.name}")
 print(f"Output file  : {OUTPUT_FILE.name}")
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────────────
 STRIP_SUFFIXES = re.compile(
     r"\b(jr|sr|ii|iii|iv|md|do|dpm|dds|phd|np|pa|rn|aprn|cnp|cnm|cns|esq|fnp|crna|crnp)\.?\s*$",
     re.IGNORECASE,
@@ -181,7 +181,7 @@ def find_col(df, candidates):
             return low_norm[c.lower().replace(" ", "_")]
     return None
 
-def lf_keys(last: str, first: str) -> set[str]:
+def lf_keys(last: str, first: str) -> set:
     l  = clean_name(last)
     f  = clean_name(first)
     f1 = f.split()[0] if f else ""
@@ -195,7 +195,7 @@ def lf_keys(last: str, first: str) -> set[str]:
         keys.add(f"{l}|~{fi}")      # prefix ~ marks initial-only keys
     return keys
 
-def make_all_keys(col_a: str, col_b: str) -> set[str]:
+def make_all_keys(col_a: str, col_b: str) -> set:
     """
     If col B has no space: col A = last name, col B = first name.
     If col B has a space:  col B = full name (first [middle] last),
@@ -215,10 +215,11 @@ def make_all_keys(col_a: str, col_b: str) -> set[str]:
     else:
         return lf_keys(col_a, col_b)                 # standard: col A=last, col B=first
 
-# ── Load crossref file ────────────────────────────────────────────────────────
+# ── Load crossref file ─────────────────────────────────────────────────────────────────────────────
 # Supports two formats:
 #   Old format: separate 'matched' and 'not_in_master' sheets
-#   New format: single sheet — auto-classifies using Round 3 name lookup
+#   New format: single sheet — pivots multiple address rows into wide format,
+#               then auto-classifies using Round 3 name lookup
 print(f"\nLoading cross-reference file: {CROSSREF_FILE.name}")
 try:
     _xl = pd.ExcelFile(CROSSREF_FILE)
@@ -228,9 +229,10 @@ print(f"  Sheets: {_xl.sheet_names}")
 
 _auto_classify = False   # will be True for single-sheet format
 _all_df        = None    # holds combined df until R3 lookup is ready
+_single_sheet  = None    # name of the single sheet (for reporting)
 
 if "matched" in _xl.sheet_names:
-    # ── Old two-sheet format ──────────────────────────────────────────────────
+    # ── Old two-sheet format ────────────────────────────────────────────────────────────────────
     matched = _xl.parse("matched", dtype=str).fillna("")
     print(f"  matched      : {len(matched)} rows | columns: {list(matched.columns)}")
 
@@ -247,6 +249,8 @@ if "matched" in _xl.sheet_names:
     _m_key  = matched[m_last].apply(clean_name) + "|" + matched[m_first].apply(clean_name)
     _m_dups = _m_key.duplicated(keep="first")
     n_matched_dups = int(_m_dups.sum())
+    _dups_df = matched[_m_dups].copy()
+    _dups_df.insert(0, "source_sheet", "matched")
     if n_matched_dups:
         print(f"  *** {n_matched_dups} duplicate(s) removed from matched:")
         for _, row in matched[_m_dups].iterrows():
@@ -264,6 +268,9 @@ if "matched" in _xl.sheet_names:
     _nm_key  = not_matched[nm_last].apply(clean_name) + "|" + not_matched[nm_first].apply(clean_name)
     _nm_dups = _nm_key.duplicated(keep="first")
     n_not_matched_dups = int(_nm_dups.sum())
+    _nm_dups_df = not_matched[_nm_dups].copy()
+    _nm_dups_df.insert(0, "source_sheet", "not_in_master")
+    _dups_df = pd.concat([_dups_df, _nm_dups_df], ignore_index=True)
     if n_not_matched_dups:
         print(f"  *** {n_not_matched_dups} duplicate(s) removed from not_in_master:")
         for _, row in not_matched[_nm_dups].iterrows():
@@ -271,37 +278,106 @@ if "matched" in _xl.sheet_names:
         not_matched = not_matched[~_nm_dups].reset_index(drop=True)
     else:
         print(f"  No duplicates in not_in_master sheet")
+    _merged_df = pd.DataFrame()  # not used in two-sheet path
 
 else:
-    # ── New single-sheet format — defer classification until R3 is loaded ─────
+    # ── New single-sheet format ────────────────────────────────────────────────────────────────────────
+    # Pivot: collapse multiple rows per provider into one row with numbered address
+    # columns (address_1/city_1/zip_1, address_2/city_2/zip_2, …) so every
+    # address is available for comparison.
     _single_sheet = _xl.sheet_names[0]
-    _all_df = _xl.parse(_single_sheet, dtype=str).fillna("")
-    print(f"  Single sheet '{_single_sheet}': {len(_all_df)} rows | columns: {list(_all_df.columns)}")
+    _all_df_raw   = _xl.parse(_single_sheet, dtype=str).fillna("")
+    print(f"  Single sheet '{_single_sheet}': {len(_all_df_raw)} rows | columns: {list(_all_df_raw.columns)}")
 
-    m_last  = find_col(_all_df, ["Last_Name", "last_name", "LastName", "Last Name"]) or _all_df.columns[0]
-    m_first = find_col(_all_df, ["First_Name", "first_name", "FirstName", "First Name"]) or _all_df.columns[1]
-    m_mid   = find_col(_all_df, ["Middle_Name", "middle_name", "middle", "middle_initial"])
+    m_last  = find_col(_all_df_raw, ["Last_Name", "last_name", "LastName", "Last Name"]) or _all_df_raw.columns[0]
+    m_first = find_col(_all_df_raw, ["First_Name", "first_name", "FirstName", "First Name"]) or _all_df_raw.columns[1]
+    m_mid   = find_col(_all_df_raw, ["Middle_Name", "middle_name", "middle", "middle_initial"])
     nm_last, nm_first = m_last, m_first
-    _nm_col2 = _all_df.columns[2] if len(_all_df.columns) > 2 else None
+    _nm_col2 = _all_df_raw.columns[2] if len(_all_df_raw.columns) > 2 else None
     nm_third = _nm_col2 if _nm_col2 and _nm_col2 not in (nm_last, nm_first) else None
 
-    # Deduplicate the full list now; matched/not_matched inherit dedup after split
-    _all_key  = _all_df[m_last].apply(clean_name) + "|" + _all_df[m_first].apply(clean_name)
-    _all_dups = _all_key.duplicated(keep="first")
-    n_all_dups = int(_all_dups.sum())
-    if n_all_dups:
-        print(f"  *** {n_all_dups} duplicate(s) removed:")
-        for _, row in _all_df[_all_dups].iterrows():
-            print(f"      {row[m_last]}, {row[m_first]}")
-        _all_df = _all_df[~_all_dups].reset_index(drop=True)
-        print(f"  {len(_all_df)} unique providers remaining")
-    else:
-        print(f"  No duplicates found")
+    # Detect address columns before pivot
+    _s_addr   = find_col(_all_df_raw, ["Clinic_Address", "primary_address_1", "address", "Address"])
+    _s_city   = find_col(_all_df_raw, ["Clinic_City", "primary_city", "city", "City"])
+    _s_state  = find_col(_all_df_raw, ["Clinic_State", "state", "State"])
+    _s_zip    = find_col(_all_df_raw, ["Clinic_Zip", "zip5", "zip", "Zip"])
+    _s_clinic = find_col(_all_df_raw, ["Clinic_name_location", "clinic_name", "location"])
+    _s_addr_cols = [c for c in [_s_addr, _s_city, _s_state, _s_zip, _s_clinic] if c]
+    print(f"  Address cols detected: addr={_s_addr!r} city={_s_city!r} state={_s_state!r} zip={_s_zip!r}")
+
+    # Build name key and collect groups in first-occurrence order
+    _all_df_raw["_name_key"] = (
+        _all_df_raw[m_last].apply(clean_name) + "|" + _all_df_raw[m_first].apply(clean_name)
+    )
+    _seen_keys    = list(dict.fromkeys(_all_df_raw["_name_key"]))
+    _pivoted_rows = []
+    _merged_records = []
+    n_collapsed   = 0   # extra rows folded into the first (total_raw - unique_providers)
+
+    for key in _seen_keys:
+        group = _all_df_raw[_all_df_raw["_name_key"] == key]
+
+        # Start from the first row; remove original address cols (replaced by numbered ones)
+        first = group.iloc[0].to_dict()
+        for c in _s_addr_cols:
+            first.pop(c, None)
+        first.pop("_name_key", None)
+
+        # Collect unique addresses across all rows for this provider
+        seen_sigs = set()
+        addr_num  = 0
+        for _, sub_row in group.iterrows():
+            a  = sub_row.get(_s_addr,   "") if _s_addr   else ""
+            c  = sub_row.get(_s_city,   "") if _s_city   else ""
+            st = sub_row.get(_s_state,  "") if _s_state  else ""
+            z  = sub_row.get(_s_zip,    "") if _s_zip    else ""
+            cl = sub_row.get(_s_clinic, "") if _s_clinic else ""
+            if not norm(a):
+                continue
+            sig = f"{norm_addr(a)}|{norm_city(c)}|{zip5(z)}"
+            if sig not in seen_sigs:
+                seen_sigs.add(sig)
+                addr_num += 1
+                first[f"address_{addr_num}"] = a
+                first[f"city_{addr_num}"]    = c
+                first[f"state_{addr_num}"]   = st
+                first[f"zip_{addr_num}"]     = z
+                if _s_clinic:
+                    first[f"clinic_name_{addr_num}"] = cl
+
+        if addr_num == 0:  # provider had no address in any row
+            first["address_1"] = first["city_1"] = first["state_1"] = first["zip_1"] = ""
+
+        extra = len(group) - 1
+        n_collapsed += extra
+        if len(group) > 1:
+            note = ("true duplicate (same address)" if addr_num <= 1
+                    else f"merged {addr_num} unique addresses")
+            _merged_records.append({
+                "name":             f"{group.iloc[0][m_last]}, {group.iloc[0][m_first]}",
+                "rows_in_source":   len(group),
+                "unique_addresses": addr_num,
+                "note":             note,
+            })
+        _pivoted_rows.append(first)
+
+    _all_df    = pd.DataFrame(_pivoted_rows).fillna("").reset_index(drop=True)
+    _merged_df = (pd.DataFrame(_merged_records) if _merged_records
+                  else pd.DataFrame(columns=["name", "rows_in_source", "unique_addresses", "note"]))
+    print(f"  {len(_all_df)} unique providers after pivot ({n_collapsed} extra rows collapsed)")
+    if _merged_records:
+        _show = _merged_records[:20]
+        for rec in _show:
+            print(f"    {rec['name']}: {rec['rows_in_source']} rows → "
+                  f"{rec['unique_addresses']} addr ({rec['note']})")
+        if len(_merged_records) > 20:
+            print(f"    ... and {len(_merged_records)-20} more (see merged_addresses sheet)")
 
     _auto_classify     = True
-    n_matched_dups     = n_all_dups   # report total dups in summary
+    n_matched_dups     = n_collapsed
     n_not_matched_dups = 0
     matched = not_matched = pd.DataFrame()  # placeholders until R3 lookup is ready
+    _dups_df = pd.DataFrame()              # not used in single-sheet path
 
 # Detect address columns (same logic applies for both formats)
 _addr_src = matched if not _auto_classify else _all_df
@@ -326,7 +402,7 @@ if not m_addr_sets:
 print(f"  name cols : last={m_last!r}  first={m_first!r}  mid={m_mid!r}")
 print(f"  addr sets : {len(m_addr_sets)} — {[(a,c,z) for a,c,z in m_addr_sets]}")
 
-# ── Load Round 3 for address lookup ──────────────────────────────────────────
+# ── Load Round 3 for address lookup ──────────────────────────────────────────────────────────────────
 print(f"\nLoading Round 3: {ROUND3_FILE.name}")
 try:
     r3 = pd.read_excel(ROUND3_FILE, dtype=str).fillna("")
@@ -347,13 +423,13 @@ r3_zip   = find_col(r3, ["zip5", "ZIP+4", "zip", "Zip"])
 print(f"  last={r3_last!r}  first={r3_first!r}")
 print(f"  addr_cols={r3_addr_cols}  city={r3_city!r}  zip={r3_zip!r}")
 
-r3_key_to_idx: dict[str, int] = {}
+r3_key_to_idx = {}
 for idx, row in r3.iterrows():
     for key in make_all_keys(row[r3_last], row[r3_first]):
         r3_key_to_idx.setdefault(key, idx)
 print(f"  Unique name keys: {len(r3_key_to_idx)}")
 
-# ── Auto-classify single-sheet providers using Round 3 lookup ────────────────
+# ── Auto-classify single-sheet providers using Round 3 lookup ────────────────────────────────────
 if _auto_classify:
     _in_r3 = _all_df.apply(
         lambda row: any(k in r3_key_to_idx
@@ -366,7 +442,7 @@ if _auto_classify:
     print(f"    found in Round 3 → matched      : {len(matched)}")
     print(f"    not in Round 3  → not_in_master : {len(not_matched)}")
 
-# ── Compare addresses for matched providers (manual vs Round 3) ───────────────
+# ── Compare addresses for matched providers (manual vs Round 3) ─────────────────────────────
 print(f"\nComparing addresses for {len(matched)} matched providers ...")
 
 addr_rows = []
@@ -430,7 +506,7 @@ print(f"  Possible match      : {n_possible}  (similar but not identical — rev
 print(f"  Different address   : {n_diff}")
 print(f"  Not found in Round 3: {n_nf}")
 
-# ── Load multiple_addresses.csv for second address comparison ─────────────────
+# ── Load multiple_addresses.csv for second address comparison ─────────────────────────────
 print(f"\nLoading multiple addresses file: {MULTI_ADDR_FILE.name}")
 try:
     multi = pd.read_csv(MULTI_ADDR_FILE, dtype=str).fillna("")
@@ -462,7 +538,7 @@ print(f"  addr1_lines={ma_addr1_lines}  city1={ma_city1!r}  zip1={ma_zip1!r}")
 print(f"  addr2={ma_addr2!r}  city2={ma_city2!r}  zip2={ma_zip2!r}")
 print(f"  addr3={ma_addr3!r}  city3={ma_city3!r}  zip3={ma_zip3!r}")
 
-multi_key_to_idx: dict[str, int] = {}
+multi_key_to_idx = {}
 for idx, row in multi.iterrows():
     for key in make_all_keys(row[ma_last], row[ma_first]):
         multi_key_to_idx.setdefault(key, idx)
@@ -557,7 +633,7 @@ print(f"  Possible match           : {mn_possible}  (similar but not identical �
 print(f"  Different address        : {mn_diff}")
 print(f"  Not found in multi-addr  : {mn_nf}")
 
-# ── Load MN licensing board ───────────────────────────────────────────────────
+# ── Load MN licensing board ──────────────────────────────────────────────────────────────────────────
 print(f"\nLoading MN licensing board: {LICENSE_FILE.name}")
 try:
     lic_xl = pd.ExcelFile(LICENSE_FILE)
@@ -580,7 +656,7 @@ print(f"  email col            (L): {l_email!r}")
 print(f"  sample last values : {lic_df[l_last].dropna().head(3).tolist()}")
 print(f"  sample first values: {lic_df[l_first].dropna().head(3).tolist()}")
 
-lic_key_to_idx: dict[str, int] = {}
+lic_key_to_idx = {}
 for idx, row in lic_df.iterrows():
     for key in make_all_keys(row[l_last], row[l_first]):
         lic_key_to_idx.setdefault(key, idx)
@@ -592,7 +668,7 @@ _debug_baker_lic_rows  = lic_df[lic_df[l_last].str.lower().str.contains("baker",
                                 | lic_df[l_first].str.lower().str.contains("baker", na=False)]
 _debug_baker_nm_keys   = []
 
-# ── Match not_in_master against licensing board ───────────────────────────────
+# ── Match not_in_master against licensing board ───────────────────────────────────────────────
 print(f"\nChecking {len(not_matched)} not-in-master providers against license board ...")
 
 in_license     = []
@@ -662,7 +738,62 @@ else:
     n_spec_present = 0
     n_spec_missing = 0
 
-# ── Terminal summary ──────────────────────────────────────────────────────────
+# ── Also check matched providers against licensing board ────────────────────────────────────
+print(f"\nChecking {len(matched)} matched providers against license board ...")
+
+matched_in_license     = []
+matched_not_in_license = []
+
+for _, row in matched.iterrows():
+    keys         = make_all_keys(row[m_last], row[m_first])
+    exact_keys   = {k for k in keys if "|~" not in k}
+    initial_keys = {k for k in keys if "|~" in k}
+    found_idx    = next((lic_key_to_idx[k] for k in exact_keys   if k in lic_key_to_idx), None)
+    match_type   = "exact"
+    if found_idx is None:
+        found_idx  = next((lic_key_to_idx[k] for k in initial_keys if k in lic_key_to_idx), None)
+        match_type = "initial_match"
+
+    if found_idx is not None:
+        lic_row   = lic_df.iloc[found_idx]
+        lic_name  = f"{lic_row[l_last]}, {lic_row[l_first]}".strip(", ")
+        specialty = lic_row[l_specialty] if l_specialty else ""
+        cert      = lic_row[l_cert]      if l_cert      else ""
+        email     = lic_row[l_email]     if l_email     else ""
+        row2      = row.copy()
+        row2["license_name_match"]       = lic_name
+        row2["match_type"]               = match_type
+        row2["specialty_boards"]         = specialty
+        row2["certification"]            = cert
+        row2["email"]                    = email
+        row2["specialty_boards_missing"] = "missing" if not norm(specialty) else ""
+        row2["certification_missing"]    = "missing" if not norm(cert)      else ""
+        matched_in_license.append(row2)
+    else:
+        row2 = row.copy()
+        row2["specialty_boards"]         = ""
+        row2["certification"]            = ""
+        row2["email"]                    = ""
+        row2["specialty_boards_missing"] = ""
+        row2["certification_missing"]    = ""
+        matched_not_in_license.append(row2)
+
+m_in_lic_df     = pd.DataFrame(matched_in_license).reset_index(drop=True)
+m_not_in_lic_df = pd.DataFrame(matched_not_in_license).reset_index(drop=True)
+print(f"  Found in license board : {len(m_in_lic_df)}")
+print(f"  Not in license board   : {len(m_not_in_lic_df)}")
+
+if not m_in_lic_df.empty and "specialty_boards" in m_in_lic_df.columns:
+    n_m_spec_present = m_in_lic_df["specialty_boards"].apply(norm).ne("").sum()
+    n_m_spec_missing = len(m_in_lic_df) - n_m_spec_present
+    print(f"\n  Specialty boards (matched_in_license):")
+    print(f"    Has specialty listed : {n_m_spec_present}")
+    print(f"    Blank / missing      : {n_m_spec_missing}")
+else:
+    n_m_spec_present = 0
+    n_m_spec_missing = 0
+
+# ── Terminal summary ────────────────────────────────────────────────────────────────────────────
 print(f"\nProviders with POSSIBLE address match ({n_possible}) — review manually:")
 for _, row in addr_df[addr_df["address_match"] == "possible_match"].iterrows():
     print(f"  {row['manual_name']}")
@@ -676,7 +807,7 @@ print(f"\nNot-in-master found in license board ({len(in_lic_df)}):")
 for _, row in in_lic_df.iterrows():
     print(f"  {row[nm_last]}, {row[nm_first]}  →  {row['license_name_match']}")
 
-# ── Build output subsets and summary ─────────────────────────────────────────
+# ── Build output subsets and summary ─────────────────────────────────────────────────────────────────
 r3_same        = addr_df[addr_df["address_match"] == "same"].reset_index(drop=True)
 r3_possible    = addr_df[addr_df["address_match"] == "possible_match"].reset_index(drop=True)
 r3_diff        = addr_df[addr_df["address_match"].isin(["different", "not_found"])].reset_index(drop=True)
@@ -693,27 +824,55 @@ n_grand_total     = n_matched_provs + n_unmatched_provs
 _ok   = lambda n, exp: "OK" if n == exp else f"*** MISMATCH (got {n}, expected {exp}) ***"
 _note = lambda n, exp: f"should = {exp} ({_ok(n, exp)})"
 
-summary_rows = [
-    {"section": "INPUT",
-     "category": "matched sheet (crossref input)",
-     "count": len(matched),
-     "note": f"rows after removing {n_matched_dups} duplicate(s)"},
-    {"section": "",
-     "category": "  — duplicates removed from matched",
-     "count": n_matched_dups,
-     "note": "same name appeared more than once in matched sheet"},
-    {"section": "",
-     "category": "not_in_master sheet (crossref input)",
-     "count": len(not_matched),
-     "note": f"rows after removing {n_not_matched_dups} duplicate(s)"},
-    {"section": "",
-     "category": "  — duplicates removed from not_in_master",
-     "count": n_not_matched_dups,
-     "note": "same name appeared more than once in not_in_master sheet"},
-    {"section": "",
-     "category": "TOTAL input (unique providers)",
-     "count": len(matched) + len(not_matched),
-     "note": "should equal total unique providers in manual list"},
+# INPUT section varies by format
+if _auto_classify:
+    _input_rows = [
+        {"section": "INPUT",
+         "category": f"source sheet '{_single_sheet}' (raw rows before pivot)",
+         "count": len(_all_df) + n_matched_dups,
+         "note": f"{n_matched_dups} extra rows collapsed → {len(_all_df)} unique providers"},
+        {"section": "",
+         "category": "  — extra rows merged (multiple addresses or true dups)",
+         "count": n_matched_dups,
+         "note": "see merged_addresses sheet for details"},
+        {"section": "",
+         "category": "found in Round 3 (auto-classified → matched)",
+         "count": len(matched),
+         "note": "name matched Round 3 mailing list"},
+        {"section": "",
+         "category": "not in Round 3 (auto-classified → not_in_master)",
+         "count": len(not_matched),
+         "note": "name did not match Round 3"},
+        {"section": "",
+         "category": "TOTAL unique providers",
+         "count": len(matched) + len(not_matched),
+         "note": ""},
+    ]
+else:
+    _input_rows = [
+        {"section": "INPUT",
+         "category": "matched sheet (crossref input)",
+         "count": len(matched),
+         "note": f"rows after removing {n_matched_dups} duplicate(s)"},
+        {"section": "",
+         "category": "  — duplicates removed from matched",
+         "count": n_matched_dups,
+         "note": "same name appeared more than once in matched sheet"},
+        {"section": "",
+         "category": "not_in_master sheet (crossref input)",
+         "count": len(not_matched),
+         "note": f"rows after removing {n_not_matched_dups} duplicate(s)"},
+        {"section": "",
+         "category": "  — duplicates removed from not_in_master",
+         "count": n_not_matched_dups,
+         "note": "same name appeared more than once in not_in_master sheet"},
+        {"section": "",
+         "category": "TOTAL input (unique providers)",
+         "count": len(matched) + len(not_matched),
+         "note": "should equal total unique providers in manual list"},
+    ]
+
+summary_rows = _input_rows + [
     {"section": "", "category": "", "count": "", "note": ""},
     {"section": "ADDRESS CHECK (matched providers vs Round 3)",
      "category": "r3_addr_same",
@@ -753,10 +912,31 @@ summary_rows = [
      "count": n_multi_checked,
      "note": f"subset of {len(r3_possible) + len(r3_diff)} r3 non-same providers (NOT additive with r3 totals above)"},
     {"section": "", "category": "", "count": "", "note": ""},
-    {"section": "LICENSE CHECK (not_in_master vs MN license board)",
+    {"section": "LICENSE CHECK — matched providers (Round 3) vs MN license board",
+     "category": "matched_in_license",
+     "count": len(m_in_lic_df),
+     "note": "matched (R3) providers found in MN Physician/PA license file"},
+    {"section": "",
+     "category": "  — has specialty listed",
+     "count": n_m_spec_present,
+     "note": "specialty_boards column is non-blank"},
+    {"section": "",
+     "category": "  — specialty blank/missing",
+     "count": n_m_spec_missing,
+     "note": "specialty_boards column is blank"},
+    {"section": "",
+     "category": "matched_not_in_license",
+     "count": len(m_not_in_lic_df),
+     "note": "matched (R3) providers not found in license file"},
+    {"section": "",
+     "category": "TOTAL",
+     "count": len(m_in_lic_df) + len(m_not_in_lic_df),
+     "note": _note(len(m_in_lic_df) + len(m_not_in_lic_df), len(matched))},
+    {"section": "", "category": "", "count": "", "note": ""},
+    {"section": "LICENSE CHECK — not_in_master providers vs MN license board",
      "category": "in_license_board",
      "count": len(in_lic_df),
-     "note": "found in MN Physician/PA license file"},
+     "note": "not-in-master providers found in MN Physician/PA license file"},
     {"section": "",
      "category": "  — has specialty listed",
      "count": n_spec_present,
@@ -768,7 +948,7 @@ summary_rows = [
     {"section": "",
      "category": "not_in_license",
      "count": len(not_in_lic_df),
-     "note": "not found in license file"},
+     "note": "not-in-master providers not found in license file"},
     {"section": "",
      "category": "TOTAL",
      "count": n_unmatched_provs,
@@ -781,10 +961,14 @@ summary_rows = [
 ]
 summary_df = pd.DataFrame(summary_rows)
 
-# ── Write output ──────────────────────────────────────────────────────────────
+# ── Write output ───────────────────────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     summary_df.to_excel(     writer, sheet_name="summary",               index=False)
+    if _auto_classify:
+        _merged_df.to_excel( writer, sheet_name="merged_addresses",      index=False)
+    else:
+        _dups_df.to_excel(   writer, sheet_name="duplicates_removed",    index=False)
     r3_same.to_excel(        writer, sheet_name="r3_addr_same",          index=False)
     r3_possible.to_excel(    writer, sheet_name="r3_addr_possible",      index=False)
     r3_diff.to_excel(        writer, sheet_name="r3_addr_different",     index=False)
@@ -792,9 +976,15 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     multi_possible.to_excel( writer, sheet_name="multi_addr_possible",   index=False)
     multi_diff.to_excel(     writer, sheet_name="multi_addr_different",  index=False)
     multi_notfound.to_excel( writer, sheet_name="multi_addr_not_found",  index=False)
+    m_in_lic_df.to_excel(    writer, sheet_name="matched_in_license",    index=False)
+    m_not_in_lic_df.to_excel(writer, sheet_name="matched_not_in_license",index=False)
     in_lic_df.to_excel(      writer, sheet_name="in_license_board",      index=False)
     not_in_lic_df.to_excel(  writer, sheet_name="not_in_license",        index=False)
     print(f"  summary              : written")
+    if _auto_classify:
+        print(f"  merged_addresses     : {len(_merged_df)} providers with multiple rows")
+    else:
+        print(f"  duplicates_removed   : {len(_dups_df)}")
     print(f"  r3_addr_same         : {len(r3_same)}")
     print(f"  r3_addr_possible     : {len(r3_possible)}  ← review manually")
     print(f"  r3_addr_different    : {len(r3_diff)}")
@@ -802,7 +992,9 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     print(f"  multi_addr_possible  : {len(multi_possible)}  ← review manually")
     print(f"  multi_addr_different : {len(multi_diff)}  ← found in multi file but address differs")
     print(f"  multi_addr_not_found : {len(multi_notfound)}  ← not in multiple_addresses file at all")
-    print(f"  in_license_board     : {len(in_lic_df)}")
+    print(f"  matched_in_license   : {len(m_in_lic_df)}  (specialty: {n_m_spec_present} listed, {n_m_spec_missing} blank)")
+    print(f"  matched_not_in_lic   : {len(m_not_in_lic_df)}")
+    print(f"  in_license_board     : {len(in_lic_df)}  (specialty: {n_spec_present} listed, {n_spec_missing} blank)")
     print(f"  not_in_license       : {len(not_in_lic_df)}")
 
 print(f"""
@@ -821,17 +1013,22 @@ Row count summary:
     Checked {n_multi_checked} of {len(r3_possible) + len(r3_diff)} r3 non-same providers
     NOTE: multi_* sheets are a SUBSET of r3 non-same — do not add to r3 totals
 
+  LICENSE CHECK (matched vs MN license board):
+    {len(m_in_lic_df)} found  |  {len(m_not_in_lic_df)} not found
+    Specialty: {n_m_spec_present} listed, {n_m_spec_missing} blank
+
   LICENSE CHECK (not_in_master vs MN license board):
     {len(in_lic_df)} found  |  {len(not_in_lic_df)} not found
     Total = {n_unmatched_provs}  {_ok(n_unmatched_provs, len(not_matched))}
+    Specialty: {n_spec_present} listed, {n_spec_missing} blank
 
   GRAND TOTAL: {n_matched_provs} matched + {n_unmatched_provs} not-matched = {n_grand_total}
 """)
 
 print("Done.")
 
-# ── DEBUG: Baker name matching ────────────────────────────────────────────────
-print("\n── DEBUG: Baker ──────────────────────────────────────────────────────")
+# ── DEBUG: Baker name matching ────────────────────────────────────────────────────────────────────────
+print("\n── DEBUG: Baker ────────────────────────────────────────────────────────────────────────")
 print(f"  License file columns detected: last={l_last!r}  first={l_first!r}")
 print(f"  License keys containing 'baker': {_debug_baker_lic_keys}")
 if not _debug_baker_lic_rows.empty:
