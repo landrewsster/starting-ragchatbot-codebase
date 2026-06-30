@@ -580,6 +580,17 @@ print(f"  Found in license board : {len(in_lic_df)}")
 print(f"  Not in license board   : {len(not_in_lic_df)}")
 print(f"  Total covered          : {len(in_lic_df) + len(not_in_lic_df)}  (should equal {len(not_matched)})")
 
+# Specialty completeness for providers found in license board
+if not in_lic_df.empty and "specialty_boards" in in_lic_df.columns:
+    n_spec_present = in_lic_df["specialty_boards"].apply(norm).ne("").sum()
+    n_spec_missing = len(in_lic_df) - n_spec_present
+    print(f"\n  Specialty boards (in_license_board):")
+    print(f"    Has specialty listed : {n_spec_present}")
+    print(f"    Blank / missing      : {n_spec_missing}")
+else:
+    n_spec_present = 0
+    n_spec_missing = 0
+
 # ── Terminal summary ──────────────────────────────────────────────────────────
 print(f"\nProviders with POSSIBLE address match ({n_possible}) — review manually:")
 for _, row in addr_df[addr_df["address_match"] == "possible_match"].iterrows():
@@ -667,6 +678,14 @@ summary_rows = [
      "category": "in_license_board",
      "count": len(in_lic_df),
      "note": "found in MN Physician/PA license file"},
+    {"section": "",
+     "category": "  — has specialty listed",
+     "count": n_spec_present,
+     "note": "specialty_boards column is non-blank"},
+    {"section": "",
+     "category": "  — specialty blank/missing",
+     "count": n_spec_missing,
+     "note": "specialty_boards column is blank"},
     {"section": "",
      "category": "not_in_license",
      "count": len(not_in_lic_df),
