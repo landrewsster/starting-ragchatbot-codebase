@@ -59,7 +59,7 @@ if len(sys.argv) > 1:
     stem          = Path(sys.argv[1]).stem
     OUTPUT_FILE   = BASE / f"address_and_license_check_{stem}.xlsx"
 else:
-    CROSSREF_FILE = BASE / "provider_round3_crossref.xlsx"
+    CROSSREF_FILE = BASE / "Manual_List_Complete_063026.xlsx"
     OUTPUT_FILE   = BASE / "address_and_license_check.xlsx"
 
 print(f"Crossref file: {CROSSREF_FILE.name}")
@@ -235,12 +235,15 @@ m_mid   = find_col(matched, ["middle_name", "middle", "middle_initial", "manual_
 # Deduplicate by normalized name
 _m_key = matched[m_last].apply(clean_name) + "|" + matched[m_first].apply(clean_name)
 _m_dups = _m_key.duplicated(keep="first")
-if _m_dups.sum():
-    print(f"  *** {_m_dups.sum()} duplicate name(s) removed from matched sheet:")
+n_matched_dups = int(_m_dups.sum())
+if n_matched_dups:
+    print(f"  *** {n_matched_dups} duplicate name(s) removed from matched sheet:")
     for _, row in matched[_m_dups].iterrows():
         print(f"      {row[m_last]}, {row[m_first]}")
     matched = matched[~_m_dups].reset_index(drop=True)
     print(f"  matched after dedup: {len(matched)} rows")
+else:
+    print(f"  No duplicates found in matched sheet")
 
 # Detect wide-format address columns (address_1, city_1, zip_1, address_2, ...)
 m_addr_sets = []
@@ -281,12 +284,15 @@ print(f"  last={nm_last!r}  first={nm_first!r}  third={nm_third!r}")
 # Deduplicate by normalized name
 _nm_key = not_matched[nm_last].apply(clean_name) + "|" + not_matched[nm_first].apply(clean_name)
 _nm_dups = _nm_key.duplicated(keep="first")
-if _nm_dups.sum():
-    print(f"  *** {_nm_dups.sum()} duplicate name(s) removed from not_in_master sheet:")
+n_not_matched_dups = int(_nm_dups.sum())
+if n_not_matched_dups:
+    print(f"  *** {n_not_matched_dups} duplicate name(s) removed from not_in_master sheet:")
     for _, row in not_matched[_nm_dups].iterrows():
         print(f"      {row[nm_last]}, {row[nm_first]}")
     not_matched = not_matched[~_nm_dups].reset_index(drop=True)
     print(f"  not_in_master after dedup: {len(not_matched)} rows")
+else:
+    print(f"  No duplicates found in not_in_master sheet")
 
 # ── Load Round 3 for address lookup ──────────────────────────────────────────
 print(f"\nLoading Round 3: {ROUND3_FILE.name}")
@@ -646,13 +652,21 @@ summary_rows = [
     {"section": "INPUT",
      "category": "matched sheet (crossref input)",
      "count": len(matched),
-     "note": "rows in 'matched' sheet of crossref file"},
+     "note": f"rows after removing {n_matched_dups} duplicate(s)"},
+    {"section": "",
+     "category": "  — duplicates removed from matched",
+     "count": n_matched_dups,
+     "note": "same name appeared more than once in matched sheet"},
     {"section": "",
      "category": "not_in_master sheet (crossref input)",
      "count": len(not_matched),
-     "note": "rows in 'not_in_master' sheet of crossref file"},
+     "note": f"rows after removing {n_not_matched_dups} duplicate(s)"},
     {"section": "",
-     "category": "TOTAL input",
+     "category": "  — duplicates removed from not_in_master",
+     "count": n_not_matched_dups,
+     "note": "same name appeared more than once in not_in_master sheet"},
+    {"section": "",
+     "category": "TOTAL input (unique providers)",
      "count": len(matched) + len(not_matched),
      "note": "should equal total unique providers in manual list"},
     {"section": "", "category": "", "count": "", "note": ""},
