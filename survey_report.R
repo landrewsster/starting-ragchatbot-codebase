@@ -17,7 +17,10 @@ library(tidyr)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
 
-FREQ_FILE   <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-15_0947_EDITED_frequencies.xlsx")
+freq_candidates <- list.files(BASE, pattern = "frequencies.*\\.xlsx$", full.names = TRUE, ignore.case = TRUE)
+if (length(freq_candidates) == 0)
+  stop("No *frequencies*.xlsx file found in: ", BASE)
+FREQ_FILE   <- freq_candidates[which.max(file.mtime(freq_candidates))]
 OUTPUT_FILE <- sub("\\.xlsx$", "_report.docx", FREQ_FILE)
 
 cat("Input :", basename(FREQ_FILE), "\n")
