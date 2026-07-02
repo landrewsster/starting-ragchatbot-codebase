@@ -2407,23 +2407,20 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
             print(f"  {sheet_name:<12}: (empty — skipped)")
 
 # ── Write all-cases output ────────────────────────────────────────────────────
-# Denominators = total respondents in each group (fixed per sheet).
-# Every question includes a 'Missing (skipped)' row for non-respondents.
+# Denominator = len(eligible) for all questions (the max analytic sample).
+# Ineligibles are excluded from denominators; they appear only in the complete-
+# case file above for use in the sample summary section of survey_report.R.
 OUTPUT_FILE_ALLCASES = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies_allcases.xlsx")
-print(f"\nBuilding all-cases frequency tables ...")
-elig_freqs_allcases   = build_all_frequencies_allcases(eligible,   len(eligible))
-inelig_freqs_allcases = build_all_frequencies_allcases(ineligible, len(ineligible))
-print(f"  Eligible   N = {len(eligible)}")
-print(f"  Ineligible N = {len(ineligible)}")
+print(f"\nBuilding all-cases frequency tables (eligible only, N = {len(eligible)}) ...")
+elig_freqs_allcases = build_all_frequencies_allcases(eligible, len(eligible))
 
 print(f"\nWriting all-cases file: {OUTPUT_FILE_ALLCASES.name}")
 sheets_allcases = {
-    "eligible":        elig_freqs_allcases,
-    "ineligible":      inelig_freqs_allcases,
-    "county_freq":     county_freq_df,
-    "county":          county_df,
-    "free_text":       free_text_df,
-    "completion_time": completion_time_df,
+    "eligible":          elig_freqs_allcases,
+    "county_freq":       county_freq_df,
+    "county":            county_df,
+    "free_text":         free_text_df,
+    "completion_time":   completion_time_df,
     "completion_summary": completion_summary_df,
 }
 
