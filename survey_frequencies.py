@@ -916,6 +916,10 @@ def freq_single(series, question_text, ordered=None, n_denom=None, include_missi
                    when blanks represent a valid option, e.g. "None").
     """
     vals = series.apply(norm_val).dropna()
+    # Treat literal "Missing (skipped)" responses as non-answers so they don't
+    # appear as a response row or inflate n_answered; they roll into the
+    # include_missing count when n_denom is provided.
+    vals = vals[~vals.str.strip().str.lower().str.startswith("missing")]
     n_answered = len(vals)
     if n_answered == 0 and not (n_denom and n_denom > 0):
         return None
@@ -1153,6 +1157,48 @@ def build_all_frequencies(df_sub, group=None):
                 ft = free_text_for_question(df_sub, label)
                 if ft is not None:
                     parts.append(ft)
+
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def build_all_frequencies_allcases(df_sub, n_total):
+    """Like build_all_frequencies but uses n_total as the fixed denominator for
+    every question and always appends a 'Missing (skipped)' row.
+
+    Used to produce the all-respondents file where N is constant (total group
+    size) rather than varying by question.  Bypasses get_branching_denom so
+    branching questions share the same denominator as non-branching ones.
+    """
+    parts = []
+    emitted_checkbox_parents = set()
+    checkbox_set = set(checkbox_cols)
+    preferred = _preferred_single_cols(df_sub)
+
+    for col in df_sub.columns:
+        if col in free_text_cols or col in system_cols or col in county_skip_cols:
+            continue
+
+        if col in checkbox_set:
+            parent = parent_question(col)
+            if parent in emitted_checkbox_parents:
+                continue
+            emitted_checkbox_parents.add(parent)
+            child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
+            if child_cols:
+                t = freq_checkbox_group(df_sub, parent, child_cols,
+                                        n_denom_override=n_total,
+                                        include_missing=True)
+                if t is not None:
+                    parts.append(t)
+        else:
+            if col not in preferred:
+                continue
+            label   = complete_col_labels.get(col, col)
+            ordered = ordered_for_col(col)
+            t = freq_single(df_sub[col], label, ordered,
+                            n_denom=n_total, include_missing=True)
+            if t is not None:
+                parts.append(t)
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
@@ -2354,6 +2400,35 @@ sheets = {
 
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     for sheet_name, data in sheets.items():
+        if data is not None and not data.empty:
+            data.to_excel(writer, sheet_name=sheet_name, index=False)
+            print(f"  {sheet_name:<12}: {len(data)} rows")
+        else:
+            print(f"  {sheet_name:<12}: (empty — skipped)")
+
+# ── Write all-cases output ────────────────────────────────────────────────────
+# Denominators = total respondents in each group (fixed per sheet).
+# Every question includes a 'Missing (skipped)' row for non-respondents.
+OUTPUT_FILE_ALLCASES = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies_allcases.xlsx")
+print(f"\nBuilding all-cases frequency tables ...")
+elig_freqs_allcases   = build_all_frequencies_allcases(eligible,   len(eligible))
+inelig_freqs_allcases = build_all_frequencies_allcases(ineligible, len(ineligible))
+print(f"  Eligible   N = {len(eligible)}")
+print(f"  Ineligible N = {len(ineligible)}")
+
+print(f"\nWriting all-cases file: {OUTPUT_FILE_ALLCASES.name}")
+sheets_allcases = {
+    "eligible":        elig_freqs_allcases,
+    "ineligible":      inelig_freqs_allcases,
+    "county_freq":     county_freq_df,
+    "county":          county_df,
+    "free_text":       free_text_df,
+    "completion_time": completion_time_df,
+    "completion_summary": completion_summary_df,
+}
+
+with pd.ExcelWriter(OUTPUT_FILE_ALLCASES, engine="openpyxl") as writer:
+    for sheet_name, data in sheets_allcases.items():
         if data is not None and not data.empty:
             data.to_excel(writer, sheet_name=sheet_name, index=False)
             print(f"  {sheet_name:<12}: {len(data)} rows")
