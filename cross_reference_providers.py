@@ -322,6 +322,43 @@ for _, row in not_in_master.iterrows():
     city_val = row.get(city_col, "") if city_col else ""
     print(f"  {row[s_last]}, {row[s_first]}  |  {sys_val}  |  {city_val}")
 
+# ── Build mailing list: one row per address ───────────────────────────────────
+def make_mailing_list(df):
+    """Expand wide address columns (address_1, city_1, zip_1, address_2, …)
+    into one row per address.  Providers with no address appear once with blanks."""
+    addr_col_re = re.compile(r'^(address|city|zip)_(\d+)$')
+    slots = sorted({int(m.group(2)) for c in df.columns for m in [addr_col_re.match(c)] if m})
+    if not slots:
+        slots = [1]
+    skip = {f'{t}_{n}' for t in ('address', 'city', 'zip') for n in slots} | {'num_addresses'}
+    base_cols = [c for c in df.columns if c not in skip]
+
+    rows = []
+    for _, row in df.iterrows():
+        base = {c: row[c] for c in base_cols}
+        added = 0
+        for n in slots:
+            raw_addr = row.get(f'address_{n}', '')
+            raw_city = row.get(f'city_{n}', '')
+            raw_zip  = row.get(f'zip_{n}', '')
+            addr = '' if pd.isna(raw_addr) or str(raw_addr).strip().lower() in ('', 'nan') else str(raw_addr).strip()
+            city = '' if pd.isna(raw_city) or str(raw_city).strip().lower() in ('', 'nan') else str(raw_city).strip()
+            zip_ = '' if pd.isna(raw_zip)  or str(raw_zip).strip().lower()  in ('', 'nan') else str(raw_zip).strip()
+            if not addr and not city and not zip_:
+                if n == 1 and added == 0:
+                    rows.append({**base, 'address': '', 'city': '', 'zip': ''})
+                    added += 1
+                continue
+            rows.append({**base, 'address': addr, 'city': city, 'zip': zip_})
+            added += 1
+        if added == 0:
+            rows.append({**base, 'address': '', 'city': '', 'zip': ''})
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+mailing_list_df = make_mailing_list(not_in_master)
+print(f"\nMailing list (not_in_master, one row per address): {len(mailing_list_df)} rows "
+      f"for {len(not_in_master)} providers")
+
 # ── Write output ──────────────────────────────────────────────────────────────
 internal_cols = ["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"]
 
@@ -348,11 +385,13 @@ dropped_df = pd.DataFrame(dropped_dup_addr) if dropped_dup_addr else pd.DataFram
 print(f"\nWriting: {OUTPUT_FILE.name}")
 with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
     not_in_master.to_excel(       writer, sheet_name="not_in_master",        index=False)
+    mailing_list_df.to_excel(     writer, sheet_name="mailing_list",         index=False)
     matched_df.to_excel(          writer, sheet_name="matched",              index=False)
     multi_addr_providers.to_excel(writer, sheet_name="multiple_address_rows", index=False)
     if not dropped_df.empty:
         dropped_df.to_excel(      writer, sheet_name="dropped_rows",         index=False)
-    print(f"  not_in_master         : {len(not_in_master)} providers")
+    print(f"  not_in_master         : {len(not_in_master)} providers (wide — one row per provider)")
+    print(f"  mailing_list          : {len(mailing_list_df)} rows (one row per address)")
     print(f"  matched               : {len(matched_df)} providers")
     print(f"  multiple_address_rows : {len(multi_addr_providers)} providers with 2+ addresses")
     if not dropped_df.empty:
