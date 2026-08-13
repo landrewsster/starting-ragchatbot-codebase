@@ -355,9 +355,22 @@ def make_mailing_list(df):
             rows.append({**base, 'address': '', 'city': '', 'zip': ''})
     return pd.DataFrame(rows).reset_index(drop=True)
 
+# Columns to exclude from the mailing list (redundant or not needed for mailing)
+MAILING_DROP_COLS = ["Role", "role", "Other", "other", "System", "system"]
+
 mailing_list_df = make_mailing_list(not_in_master)
+mailing_list_df = mailing_list_df.drop(
+    columns=[c for c in MAILING_DROP_COLS if c in mailing_list_df.columns],
+    errors="ignore",
+)
+
+n_ml_extra = len(mailing_list_df) - len(not_in_master)
+n_ml_multi = (mailing_list_df.groupby(
+    [c for c in [s_last, s_first] if c in mailing_list_df.columns]
+).size() > 1).sum() if s_last in mailing_list_df.columns else 0
 print(f"\nMailing list (not_in_master, one row per address): {len(mailing_list_df)} rows "
       f"for {len(not_in_master)} providers")
+print(f"  Extra rows from multi-address (not_in_master only): +{n_ml_extra}")
 
 # ── Write output ──────────────────────────────────────────────────────────────
 internal_cols = ["_in_master", "_master_name_match", "_manual_middle", "_match_quality", "_norm_key"]
