@@ -15,18 +15,18 @@ library(stringr)
 library(tidyr)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
+OUTPUT_DIR <- r"(Z:\Data\MCH survey\Data analysis\output)"
 
-freq_candidates <- list.files(BASE, pattern = "frequencies.*\\.xlsx$", full.names = TRUE, ignore.case = TRUE)
+freq_candidates <- list.files(OUTPUT_DIR, pattern = "frequencies.*\\.xlsx$", full.names = TRUE, ignore.case = TRUE)
 if (length(freq_candidates) == 0)
-  stop("No *frequencies*.xlsx file found in: ", BASE)
+  stop("No *frequencies*.xlsx file found in: ", OUTPUT_DIR)
 FREQ_FILE   <- freq_candidates[which.max(file.mtime(freq_candidates))]
 OUTPUT_FILE <- sub("\\.xlsx$", "_report.docx", FREQ_FILE)
 
 cat("Input :", basename(FREQ_FILE), "\n")
 cat("Output:", basename(OUTPUT_FILE), "\n")
 
-# ── Read sheets ───────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────
 available  <- excel_sheets(FREQ_FILE)
 read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, sheet = name) else NULL
 
