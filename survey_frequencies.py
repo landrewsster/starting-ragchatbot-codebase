@@ -569,13 +569,14 @@ def get_branching_denom(df_sub, question_label, group=None, override_only=False)
                     mask = col_lower == pv.lower()
                 n = int(mask.sum())
                 if n == 0:
-                    pv_display = pv if isinstance(pv, str) else " / ".join(pv)
-                    actual = sorted(non_empty.unique().tolist())
-                    print(f"  WARNING: branching rule matched '{short_q(question_label, 60)}' "
-                          f"but parent_value '{pv_display}' found 0 rows.\n"
-                          f"    Parent column: {short_q(parent_col, 70)}\n"
-                          f"    Actual values: {actual[:10]}\n"
-                          f"    → update BRANCHING_RULES parent_value to match")
+                    if group is not None:
+                        pv_display = pv if isinstance(pv, str) else " / ".join(pv)
+                        actual = sorted(non_empty.unique().tolist())
+                        print(f"  WARNING: branching rule matched '{short_q(question_label, 60)}' "
+                              f"but parent_value '{pv_display}' found 0 rows.\n"
+                              f"    Parent column: {short_q(parent_col, 70)}\n"
+                              f"    Actual values: {actual[:10]}\n"
+                              f"    → update BRANCHING_RULES parent_value to match")
                     return None
                 return (n, "Missing (skipped)")
     return None
@@ -951,7 +952,7 @@ def freq_single(series, question_text, ordered=None, n_denom=None, include_missi
     return out
 
 def freq_checkbox_group(df_sub, parent_q, child_cols,
-                         n_denom_override=None, include_missing=False):
+                         n_denom_override=None, include_missing=False, group=None):
     """Frequency table for a checkbox group.
 
     Denominator = rows where at least one child column is checked (Checked/1/Yes).
@@ -978,11 +979,12 @@ def freq_checkbox_group(df_sub, parent_q, child_cols,
         ).any(axis=1)
         n_answered = has_response.sum()
         if n_answered == 0:
-            print(f"  WARNING: skipping checkbox group (all blank): "
-                  f"{short_q(parent_q, 70)}")
-            for _diag_col in child_cols[:2]:
-                _vc = df_sub[_diag_col].astype(str).str.strip().value_counts().head(4).to_dict()
-                print(f"    Diagnostic — '{_diag_col[:60]}' values: {_vc}")
+            if group == "eligible":
+                print(f"  WARNING: skipping checkbox group (all blank): "
+                      f"{short_q(parent_q, 70)}")
+                for _diag_col in child_cols[:2]:
+                    _vc = df_sub[_diag_col].astype(str).str.strip().value_counts().head(4).to_dict()
+                    print(f"    Diagnostic — '{_diag_col[:60]}' values: {_vc}")
             return None
 
     n_denom = n_denom_override if n_denom_override is not None else n_answered
@@ -1139,7 +1141,8 @@ def build_all_frequencies(df_sub, group=None):
                 n_br = _br[0] if _br is not None else None
                 t = freq_checkbox_group(df_sub, parent, child_cols,
                                         n_denom_override=n_br,
-                                        include_missing=(n_br is not None))
+                                        include_missing=(n_br is not None),
+                                        group=group)
                 if t is not None:
                     parts.append(t)
                     ft = free_text_for_question(df_sub, parent)
@@ -1192,7 +1195,8 @@ def build_all_frequencies_allcases(df_sub, n_total):
             if child_cols:
                 t = freq_checkbox_group(df_sub, parent, child_cols,
                                         n_denom_override=n_total,
-                                        include_missing=True)
+                                        include_missing=True,
+                                        group="eligible")
                 if t is not None:
                     parts.append(t)
         else:
