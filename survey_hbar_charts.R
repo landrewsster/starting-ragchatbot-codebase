@@ -20,9 +20,19 @@ library(stringr)
 library(forcats)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE      <- file.path(path.expand("~"), "Downloads", "CRC MDH Project", "MDH analysis")
+BASE      <- "Z:/Data/MCH survey/Data analysis"
 FREQ_FILE <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-15_0947_EDITED_frequencies.xlsx")
-make_out  <- function(tag) sub("\\.xlsx$", paste0("_", tag, ".png"), FREQ_FILE)
+
+# 1. Define the graphics folder path and automatically create it if missing
+GRAPHICS_DIR <- file.path(BASE, "graphics")
+if (!dir.exists(GRAPHICS_DIR)) {
+  dir.create(GRAPHICS_DIR)
+}
+
+# 2. Update this function to route the new .png files directly into that folder
+make_out  <- function(tag) {
+  file.path(GRAPHICS_DIR, paste0(sub("\\.xlsx$", "", basename(FREQ_FILE)), "_", tag, ".png"))
+}
 
 # ── Chart specs ───────────────────────────────────────────────────────────────
 # Each list entry defines one chart.
