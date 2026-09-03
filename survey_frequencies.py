@@ -1595,9 +1595,12 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0, min_demo_completeness=0.70,
         routed_idx = elig_sub.index
 
         for demo_col, demo_name in demo_cols:
-            if demo_col not in df_sub.columns:
-                continue
-            routed_demo = df_sub.loc[routed_idx, demo_col].str.strip()
+            if isinstance(demo_col, pd.Series):
+                routed_demo = demo_col.reindex(routed_idx).fillna("").astype(str).str.strip()
+            else:
+                if demo_col not in df_sub.columns:
+                    continue
+                routed_demo = df_sub.loc[routed_idx, demo_col].str.strip()
             has_demo    = routed_demo.ne("")
             valid_idx   = routed_demo[has_demo].index
             if len(valid_idx) < 4:
