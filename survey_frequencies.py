@@ -1262,7 +1262,8 @@ def detect_started_n(df_sub, screener_cols=None):
     return n
 
 
-def build_missingness(df_sub, started_n=None, total_eligible_n=None, group=None):
+def build_missingness(df_sub, started_n=None, total_eligible_n=None, group=None,
+                      not_submitted_label=None):
     """
     One row per survey question.
 
@@ -1357,17 +1358,19 @@ def build_missingness(df_sub, started_n=None, total_eligible_n=None, group=None)
         }
         # Insert contextual N columns in a readable order
         _show_excluded = (started_n is not None) or (total_eligible_n is not None)
+        _excl_col = not_submitted_label or "N never started"
         if _show_excluded:
-            row["N never started"] = n_never_started
+            row[_excl_col] = n_never_started
         row["N not asked (branched)"] = n_not_asked
         rows.append(row)
 
     df_out = pd.DataFrame(rows) if rows else pd.DataFrame()
     # Reorder columns for readability
     _show_excluded = (started_n is not None) or (total_eligible_n is not None)
+    _excl_col = not_submitted_label or "N never started"
     col_order = (
         ["Question", "Type", "N total eligible"]
-        + (["N never started"] if _show_excluded else [])
+        + ([_excl_col] if _show_excluded else [])
         + ["N not asked (branched)", "N routed to question",
            "N answered", "N skipped (true missing)", "% skipped", "Flag"]
     )
@@ -1982,11 +1985,12 @@ elig_freqs   = build_all_frequencies(completers,  group="eligible")
 elig_freqs   = _add_likert_tests_main(elig_freqs, completers)
 inelig_freqs = build_all_frequencies(ineligible, group="ineligible")
 
-# Missingness — three versions (all use `eligible` N=106 as the baseline so
-# the full attrition picture is visible alongside the analytic sample):
-#   missingness         : denominator = all 106 eligible (screener-qualified)
-#   missingness_started : denominator = those who actually started the full survey
-#   missingness_complete: denominator = 82 completers (analytic sample)
+# Missingness — three versions:
+#   missingness         : denominator = all eligible (screener-qualified)
+#   missingness_started : denominator = those who actually started the full survey;
+#                         "N never started" column = eligible who answered zero main questions
+#   missingness_complete: denominator = completers (analytic sample, Survey_complete=Complete);
+#                         "N did not submit" column = eligible who started but never hit Submit
 _screener_cols = {c for c in (elig_col, days_col) if c}
 _started_n = detect_started_n(eligible, screener_cols=_screener_cols)
 print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
@@ -1994,7 +1998,8 @@ print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
 
 missingness_df           = build_missingness(eligible,   group="eligible")
 missingness_started_df   = build_missingness(eligible,   started_n=_started_n, group="eligible")
-missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible), group="eligible")
+missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible), group="eligible",
+                                             not_submitted_label="N did not submit")
 
 # Add N missing / % missing columns to the eligible sheet so the R report
 # can show or footnote missingness directly in each frequency table.
