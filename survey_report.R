@@ -17,20 +17,41 @@ library(tidyr)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 OUTPUT_DIR <- r"(Z:\Data\MCH survey\Data analysis\output)"
 
-freq_candidates <- list.files(OUTPUT_DIR, pattern = "frequencies.*\\.xlsx$", full.names = TRUE, ignore.case = TRUE)
+# Complete-case file (denominator varies by question)
+freq_candidates <- list.files(OUTPUT_DIR,
+  pattern = "frequencies(?!.*allcases).*\\.xlsx$",
+  full.names = TRUE, ignore.case = TRUE, perl = TRUE)
 if (length(freq_candidates) == 0)
   stop("No *frequencies*.xlsx file found in: ", OUTPUT_DIR)
-FREQ_FILE   <- freq_candidates[which.max(file.mtime(freq_candidates))]
+FREQ_FILE <- freq_candidates[which.max(file.mtime(freq_candidates))]
+
+# All-cases file (fixed N=81, explicit Missing rows for every question)
+allcases_candidates <- list.files(OUTPUT_DIR,
+  pattern = "frequencies_allcases.*\\.xlsx$",
+  full.names = TRUE, ignore.case = TRUE)
+ALLCASES_FILE <- if (length(allcases_candidates) > 0)
+  allcases_candidates[which.max(file.mtime(allcases_candidates))] else NULL
+
+# Set TRUE to read eligible tables from the all-cases file (recommended:
+# shows Missing rows where n>0, footnotes where n=0)
+USE_ALLCASES <- TRUE
+
+TABLE_FILE  <- if (USE_ALLCASES && !is.null(ALLCASES_FILE)) ALLCASES_FILE else FREQ_FILE
 OUTPUT_FILE <- sub("\\.xlsx$", "_report.docx", FREQ_FILE)
 
-cat("Input :", basename(FREQ_FILE), "\n")
-cat("Output:", basename(OUTPUT_FILE), "\n")
+cat("Frequencies (complete-case):", basename(FREQ_FILE), "\n")
+cat("Table source               :", basename(TABLE_FILE), "\n")
+cat("Output                     :", basename(OUTPUT_FILE), "\n")
 
-───────────────────────────────────────────────────────────────
+# ── Read sheets ───────────────────────────────────────────────────────────────
 available  <- excel_sheets(FREQ_FILE)
 read_if    <- function(name) if (name %in% available) read_excel(FREQ_FILE, sheet = name) else NULL
 
-eligible         <- read_if("eligible")
+# eligible sheet comes from TABLE_FILE (all-cases when USE_ALLCASES=TRUE)
+eligible <- {
+  tbl_sheets <- excel_sheets(TABLE_FILE)
+  if ("eligible" %in% tbl_sheets) read_excel(TABLE_FILE, sheet = "eligible") else NULL
+}
 ineligible       <- read_if("ineligible")
 screener_data    <- read_if("screener")
 crosstab_metro     <- read_if("crosstab_metro")
@@ -165,7 +186,18 @@ make_table <- function(df) {
     df <- df %>% select(-any_of(stat_cols_present))
   }
 
-  df <- df %>% filter(!str_detect(str_to_lower(str_squish(Response)), "^missing"))
+  # Separate missing rows from substantive response rows
+  missing_mask <- str_detect(str_to_lower(str_squish(df$Response)), "^missing")
+  missing_rows <- df[missing_mask, ]
+  df           <- df[!missing_mask, ]
+
+  has_missing <- nrow(missing_rows) > 0 &&
+    any(suppressWarnings(as.numeric(missing_rows$n)) > 0, na.rm = TRUE)
+
+  no_missing_note <- if (!has_missing) "No missing responses for this question." else NULL
+
+  if (has_missing) df <- bind_rows(df, missing_rows)
+
   df <- enforce_likert_order(df)
   num_cols <- intersect(c("n", "%"), names(df))
 
@@ -186,7 +218,7 @@ make_table <- function(df) {
   if ("n" %in% names(df))
     ft <- colformat_double(ft, j = "n", digits = 0, na_str = "")
 
-  footer_lines <- c(n_note, stat_note)
+  footer_lines <- c(n_note, stat_note, no_missing_note)
   footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
   if (length(footer_lines) > 0) {
     for (fl in footer_lines)

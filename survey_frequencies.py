@@ -40,7 +40,7 @@ if len(sys.argv) > 1:
 else:
     INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-09-03_1016_EDITED.csv"
 
-OUTPUT_FILE = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies.xlsx")
+OUTPUT_FILE = OUTPUT_DIR / (INPUT_FILE.stem + "_frequencies.xlsx")
 
 print(f"Input : {INPUT_FILE.name}")
 print(f"Output: {OUTPUT_FILE.name}")
@@ -1974,6 +1974,19 @@ print(f"  Detected started N = {_started_n}  (eligible N = {len(eligible)},"
 missingness_df           = build_missingness(eligible,   group="eligible")
 missingness_started_df   = build_missingness(eligible,   started_n=_started_n, group="eligible")
 missingness_complete_df  = build_missingness(completers, total_eligible_n=len(eligible), group="eligible")
+
+# Add N missing / % missing columns to the eligible sheet so the R report
+# can show or footnote missingness directly in each frequency table.
+if not missingness_complete_df.empty and not elig_freqs.empty:
+    _miss_lookup = (
+        missingness_complete_df[["Question", "N skipped (true missing)", "% skipped"]]
+        .rename(columns={
+            "N skipped (true missing)": "N missing",
+            "% skipped":               "% missing",
+        })
+        .drop_duplicates("Question")
+    )
+    elig_freqs = elig_freqs.merge(_miss_lookup, on="Question", how="left")
 
 # MCAR analysis is run after metro is computed (further below) so the metro
 # binary can be passed as an extra demographic variable.
