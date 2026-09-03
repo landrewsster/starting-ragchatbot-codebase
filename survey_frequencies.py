@@ -31,12 +31,14 @@ except ImportError:
     print("      Install with: pip install scipy")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE = Path.home() / "Downloads" / "CRC MDH Project" / "MDH analysis"
+BASE = Path(r"Z:\Data\MCH survey\RedCAP datafile")
+OUTPUT_DIR = Path(r"Z:\Data\MCH survey\Data analysis\output")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 if len(sys.argv) > 1:
     INPUT_FILE = BASE / sys.argv[1]
 else:
-    INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-15_0947_EDITED.csv"
+    INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-09-03_1016_EDITED.csv"
 
 OUTPUT_FILE = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies.xlsx")
 
@@ -2410,7 +2412,7 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
 # Denominator = len(eligible) for all questions (the max analytic sample).
 # Ineligibles are excluded from denominators; they appear only in the complete-
 # case file above for use in the sample summary section of survey_report.R.
-OUTPUT_FILE_ALLCASES = INPUT_FILE.with_name(INPUT_FILE.stem + "_frequencies_allcases.xlsx")
+OUTPUT_FILE_ALLCASES = OUTPUT_DIR / (INPUT_FILE.stem + "_frequencies_allcases.xlsx")
 print(f"\nBuilding all-cases frequency tables (eligible only, N = {len(eligible)}) ...")
 elig_freqs_allcases = build_all_frequencies_allcases(eligible, len(eligible))
 
