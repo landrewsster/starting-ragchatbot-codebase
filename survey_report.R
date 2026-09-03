@@ -17,15 +17,16 @@ library(tidyr)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 OUTPUT_DIR <- r"(Z:\Data\MCH survey\Data analysis\output)"
 
-# Complete-case file (denominator varies by question)
+# Complete-case file (denominator varies by question) — exclude *allcases* files
 freq_candidates <- list.files(OUTPUT_DIR,
-  pattern = "frequencies(?!.*allcases).*\\.xlsx$",
-  full.names = TRUE, ignore.case = TRUE, perl = TRUE)
+  pattern = "frequencies.*\\.xlsx$",
+  full.names = TRUE, ignore.case = TRUE)
+freq_candidates <- freq_candidates[!grepl("allcases", freq_candidates, ignore.case = TRUE)]
 if (length(freq_candidates) == 0)
   stop("No *frequencies*.xlsx file found in: ", OUTPUT_DIR)
 FREQ_FILE <- freq_candidates[which.max(file.mtime(freq_candidates))]
 
-# All-cases file (fixed N=81, explicit Missing rows for every question)
+# All-cases file (fixed N=122, explicit Missing rows for every question)
 allcases_candidates <- list.files(OUTPUT_DIR,
   pattern = "frequencies_allcases.*\\.xlsx$",
   full.names = TRUE, ignore.case = TRUE)
