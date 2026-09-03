@@ -779,6 +779,14 @@ else:
     print(f"\nWARNING: Survey_complete column not found — "
           f"analytic sample = all eligible (N={len(eligible)})")
 
+# Partial completers — eligible respondents who did not submit the full survey
+if _survey_complete_col:
+    _partials = eligible[
+        eligible[_survey_complete_col].str.strip().str.lower() != "complete"
+    ].reset_index(drop=True)
+else:
+    _partials = pd.DataFrame(columns=eligible.columns)
+
 # ── Secondary-specialty hunt: find the eligible form's secondary specialty ────
 # FV ("What is your secondary or sub-specialty, if any?") has only n=16 answers
 # in completers, meaning it is the INELIGIBLE form version.  The eligible form's
@@ -2007,9 +2015,18 @@ mcar_df = pd.DataFrame()
 
 # Respondent-level completeness — how many questions each person skipped
 print("\nBuilding respondent-level completeness ...")
-resp_complete_summary_df, resp_complete_detail_df = build_respondent_completeness(completers)
-print(f"  Respondents with 0 skips: "
-      f"{int((resp_complete_detail_df['N skipped'] == 0).sum())} "
+resp_complete_summary_df, _resp_detail_completers = build_respondent_completeness(completers)
+_resp_detail_completers.insert(0, "Status", "Completer")
+if not _partials.empty:
+    _, _resp_detail_partials = build_respondent_completeness(_partials)
+    _resp_detail_partials.insert(0, "Status", "Partial completer")
+    resp_complete_detail_df = pd.concat(
+        [_resp_detail_completers, _resp_detail_partials], ignore_index=True
+    )
+else:
+    resp_complete_detail_df = _resp_detail_completers
+print(f"  Completers with 0 skips: "
+      f"{int((_resp_detail_completers['N skipped'] == 0).sum())} "
       f"of {len(completers)}")
 
 # ── Diagnose demographic question coverage ────────────────────────────────────
@@ -2439,8 +2456,8 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
 # Ineligibles are excluded from denominators; they appear only in the complete-
 # case file above for use in the sample summary section of survey_report.R.
 OUTPUT_FILE_ALLCASES = OUTPUT_DIR / (INPUT_FILE.stem + "_frequencies_allcases.xlsx")
-print(f"\nBuilding all-cases frequency tables (eligible only, N = {len(eligible)}) ...")
-elig_freqs_allcases = build_all_frequencies_allcases(eligible, len(eligible))
+print(f"\nBuilding all-cases frequency tables (completers only, N = {len(completers)}) ...")
+elig_freqs_allcases = build_all_frequencies_allcases(completers, len(completers))
 
 print(f"\nWriting all-cases file: {OUTPUT_FILE_ALLCASES.name}")
 sheets_allcases = {
