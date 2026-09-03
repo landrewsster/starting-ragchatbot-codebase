@@ -25,8 +25,8 @@ COUNTS = {
     "partial_completers":        31,   # Survey_complete = Incomplete
     "full_completers":          122,   # Survey_complete = Complete (final analytic sample)
     # Ineligible demographics completion (from Inel_demo_complete column)
-    "inel_demo_complete":        None,  # fill in once known (e.g. 246)
-    "inel_demo_incomplete":      None,  # fill in once known (e.g. 21)
+    "inel_demo_complete":        268,   # completed & submitted demographics section
+    "inel_demo_incomplete":       23,   # did not submit (291 - 268)
 }
 
 OUT_PATH = Path(__file__).parent / "survey_flowchart.pptx"
