@@ -980,6 +980,9 @@ def freq_checkbox_group(df_sub, parent_q, child_cols,
         if n_answered == 0:
             print(f"  WARNING: skipping checkbox group (all blank): "
                   f"{short_q(parent_q, 70)}")
+            for _diag_col in child_cols[:2]:
+                _vc = df_sub[_diag_col].astype(str).str.strip().value_counts().head(4).to_dict()
+                print(f"    Diagnostic — '{_diag_col[:60]}' values: {_vc}")
             return None
 
     n_denom = n_denom_override if n_denom_override is not None else n_answered
@@ -1809,7 +1812,10 @@ def _add_likert_tests_crosstab(merged, g1, g0,
         if score_map is None:
             continue
         label = complete_col_labels.get(col, col)
-        q_mask = merged["Question"] == label
+        label_clean = re.sub(r'\s+', ' ', str(label)).strip()
+        q_mask = merged["Question"].apply(
+            lambda q: re.sub(r'\s+', ' ', str(q)).strip() == label_clean
+        )
         if not q_mask.any():
             print(f"  [MW skip] no Question match for label: {short_q(label, 80)}")
             continue
