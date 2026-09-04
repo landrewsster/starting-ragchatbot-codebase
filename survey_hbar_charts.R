@@ -113,23 +113,7 @@ get_sata_data <- function(df, pattern) {
     )
 }
 
-get_missing_note <- function(df, pattern) {
-  # Python writes an explicit "Missing (skipped)" row for every question with n_missing > 0
-  # (both branching and non-branching), so that row is the only reliable source of truth.
-  # Absence of the row means n_missing = 0.
-  miss_row <- df %>%
-    filter(
-      str_detect(Question, regex(pattern, ignore_case = TRUE)),
-      Response == "Missing (skipped)"
-    )
-  if (nrow(miss_row) == 0) return(NULL)
-  n_miss  <- miss_row$n[1]
-  N_denom <- miss_row$N[1]
-  if (is.na(n_miss) || n_miss == 0 || is.na(N_denom)) return(NULL)
-  paste0(round(n_miss / N_denom * 100, 0), "% missing (skipped; n=", n_miss, ")")
-}
-
-make_hbar <- function(df, title = NULL, missing_note = NULL) {
+make_hbar <- function(df, title = NULL) {
   N_denom <- df$N[1]
 
   plot_df <- df %>%
@@ -141,16 +125,11 @@ make_hbar <- function(df, title = NULL, missing_note = NULL) {
 
   x_max <- max(plot_df$pct, na.rm = TRUE)
 
-  caption_base <- paste0(
+  caption_text <- paste0(
     "n = ", N_denom,
     "  |  Each bar shows % of respondents who selected that option;",
-    " totals may exceed 100%"
+    " totals may exceed 100%."
   )
-  caption_text <- if (!is.null(missing_note)) {
-    paste0(caption_base, ".  ", missing_note, ".")
-  } else {
-    paste0(caption_base, ".")
-  }
 
   ggplot(plot_df, aes(x = pct, y = resp_wrapped)) +
     geom_col(fill = "#4472C4", width = 0.65) +
@@ -199,9 +178,8 @@ for (spec in CHARTS) {
   cat(sprintf("Building chart: %s  (%d response options)\n",
               spec$stem, nrow(raw)))
 
-  miss_note  <- get_missing_note(eligible, spec$pattern)
   title_text <- if (!is.null(spec$title)) spec$title else unique(raw$Question)[1]
-  p <- make_hbar(raw, title = title_text, missing_note = miss_note)
+  p <- make_hbar(raw, title = title_text)
   ggsave(make_out(spec$stem), p,
          width = 11, height = spec$height, dpi = 300, bg = "white")
   cat(sprintf("  Saved: %s\n", basename(make_out(spec$stem))))
