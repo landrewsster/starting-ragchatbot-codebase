@@ -210,7 +210,7 @@ make_table <- function(df) {
   has_missing <- nrow(missing_rows) > 0 &&
     any(suppressWarnings(as.numeric(missing_rows$n)) > 0, na.rm = TRUE)
 
-  no_missing_note <- if (!has_missing && is.null(branching_note)) "No missing responses for this question." else NULL
+  no_missing_note <- if (!has_missing) "No missing responses for this question." else NULL
 
   # Sort non-Likert substantive rows by % descending; Likert order is handled below
   if (!is_likert_df(df) && "%" %in% names(df))
