@@ -33,8 +33,9 @@ if (!dir.exists(GRAPHICS_DIR)) {
 }
 
 # 2. Update this function to route the new .png files directly into that folder
-make_out  <- function(tag) {
-  file.path(GRAPHICS_DIR, paste0(sub("\\.xlsx$", "", basename(FREQ_FILE)), "_", tag, ".png"))
+make_out  <- function(tag, suffix = NULL) {
+  full_tag <- if (!is.null(suffix)) paste0(tag, "_", suffix) else tag
+  file.path(GRAPHICS_DIR, paste0(sub("\\.xlsx$", "", basename(FREQ_FILE)), "_", full_tag, ".png"))
 }
 
 # ── Response level sets (ordered inner → outer from center) ───────────────────
