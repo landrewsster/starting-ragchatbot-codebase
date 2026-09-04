@@ -787,13 +787,15 @@ if _survey_complete_col:
         else:
             print("  Record ID 489: NOT FOUND in eligible subset")
     # Exclude "ghost completers" — records marked Complete but who answered
-    # fewer than _MIN_MAIN_Q_PCT of main-survey questions (data quality exclusion).
-    # Branching means not every question is shown to every respondent, so we use
-    # total main-survey column count as a conservative denominator.
+    # fewer than _MIN_MAIN_Q_PCT of main-survey question groups (data quality exclusion).
+    # We count question GROUPS (one per survey question), not raw columns, so that
+    # SATA questions with many choice columns don't inflate the denominator.
+    # Branching means not every question is shown to every respondent; 20% is
+    # intentionally low to catch only near-blank submissions.
     _screener_col_set = {c for c in (elig_col, days_col) if c}
     # Exclude the broad r"specialty" catch-all from DEMO_PATTERNS when building
-    # _main_q_cols so it doesn't misclassify main-survey question columns as
-    # demographic and artificially shrink the 50% threshold.
+    # the main-question list so it doesn't misclassify main-survey columns as
+    # demographic.
     _ghost_demo_pats = [p for p in DEMO_PATTERNS if p != r"specialty"]
     _main_q_cols = [
         c for c in _raw_completers.columns
@@ -804,14 +806,33 @@ if _survey_complete_col:
         and c not in county_skip_cols
         and not COMPLETE_RE.search(c.strip())
     ]
-    _MIN_MAIN_Q_PCT  = 0.50   # must answer ≥50 % of main-survey questions
-    _min_main_thresh = max(2, round(_MIN_MAIN_Q_PCT * len(_main_q_cols)))
-    print(f"  Ghost-completer threshold: ≥{_min_main_thresh} of {len(_main_q_cols)} "
-          f"main-survey questions ({int(_MIN_MAIN_Q_PCT*100)}%)")
-    if _main_q_cols:
-        _n_main = _raw_completers[_main_q_cols].apply(
-            lambda c: c.str.strip().ne("")
-        ).sum(axis=1)
+    # Group columns into question groups: SATA cols → parent question key; others → col itself
+    _cb_set_ghost = set(checkbox_cols)
+    _main_groups: dict[str, list[str]] = {}
+    for _c in _main_q_cols:
+        _gk = parent_question(_c) if _c in _cb_set_ghost else _c
+        _main_groups.setdefault(_gk, []).append(_c)
+    _n_groups = len(_main_groups)
+    _MIN_MAIN_Q_PCT  = 0.20   # must answer ≥20% of main-survey question groups
+    _min_main_thresh = max(2, round(_MIN_MAIN_Q_PCT * _n_groups))
+    print(f"  Ghost-completer threshold: ≥{_min_main_thresh} of {_n_groups} "
+          f"main-survey question groups ({int(_MIN_MAIN_Q_PCT*100)}%)")
+    # Compute per-respondent count of answered groups (vectorised)
+    _group_answered_cols = []
+    for _gk, _gcols in _main_groups.items():
+        _gp = [c for c in _gcols if c in _raw_completers.columns]
+        if not _gp:
+            continue
+        if _gp[0] in _cb_set_ghost:
+            _ga = _raw_completers[_gp].apply(lambda col: col.apply(is_checked)).any(axis=1)
+        else:
+            _ga = _raw_completers[_gp[0]].astype(str).str.strip().ne("")
+        _group_answered_cols.append(_ga)
+    if _group_answered_cols:
+        _n_main = pd.concat(_group_answered_cols, axis=1).sum(axis=1)
+    else:
+        _n_main = pd.Series(0, index=_raw_completers.index)
+    if _main_groups:
         completers = _raw_completers[_n_main >= _min_main_thresh].reset_index(drop=True)
         n_ghost = len(_raw_completers) - len(completers)
         _rid_col = next((c for c in _raw_completers.columns if c.strip() == "Record ID"), None)
@@ -819,12 +840,12 @@ if _survey_complete_col:
         if _rid_col:
             _near = _raw_completers[_n_main <= _min_main_thresh + 2]
             if not _near.empty:
-                print(f"  Near/below threshold (n_main ≤ {_min_main_thresh + 2}):")
+                print(f"  Near/below threshold (n_groups ≤ {_min_main_thresh + 2}):")
                 for _, _row in _near.iterrows():
                     _rid_val = _row[_rid_col]
                     _nm_val  = int(_n_main[_row.name])
                     _status  = "EXCLUDED" if _nm_val < _min_main_thresh else "kept"
-                    print(f"    Record ID {_rid_val}: n_main={_nm_val} ({_status})")
+                    print(f"    Record ID {_rid_val}: n_groups={_nm_val} ({_status})")
         if n_ghost > 0 and _rid_col:
             _ghost_ids = _raw_completers.loc[_n_main < _min_main_thresh, _rid_col].tolist()
             print(f"  Ghost completer(s) excluded — Record ID(s): {_ghost_ids}")
