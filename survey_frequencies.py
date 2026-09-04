@@ -827,6 +827,25 @@ if _survey_complete_col:
 else:
     _partials = pd.DataFrame(columns=eligible.columns)
 
+# ── Sub-specialty denominator diagnostic ─────────────────────────────────────
+# QUESTION_DENOM_OVERRIDES has hardcoded n values for sub-specialty because
+# REDCap exports "None (no secondary specialty)" as blank.  Print value counts
+# so the override can be verified / updated each wave.
+_subspec_pat = re.compile(r"secondary.{0,30}specialty|sub.specialty", re.IGNORECASE)
+for _ss_col in completers.columns:
+    if _subspec_pat.search(_ss_col):
+        _ss_vc = completers[_ss_col].astype(str).str.strip().replace("nan", "").value_counts(dropna=False)
+        _ss_blank = int(completers[_ss_col].astype(str).str.strip().replace("nan", "").eq("").sum())
+        _ss_filled = len(completers) - _ss_blank
+        print(f"\nSub-specialty column: {_ss_col[:80]}")
+        print(f"  Completers (N={len(completers)}): {_ss_filled} with specialty, "
+              f"{_ss_blank} blank (= 'None' in REDCap)")
+        print(f"  → QUESTION_DENOM_OVERRIDES 'eligible' n should be {len(completers)} "
+              f"if all respondents answered (blank = 'None')")
+        for _v, _c in _ss_vc.items():
+            print(f"    {repr(str(_v)):<45} {_c}")
+        break
+
 # ── Secondary-specialty hunt: find the eligible form's secondary specialty ────
 # FV ("What is your secondary or sub-specialty, if any?") has only n=16 answers
 # in completers, meaning it is the INELIGIBLE form version.  The eligible form's
