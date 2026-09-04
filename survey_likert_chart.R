@@ -227,6 +227,9 @@ build_plot_data <- function(df_in, collapsed,
 
   has_dk      <- length(dk_levels)      > 0 && any(df_in$Response %in% dk_levels,      na.rm = TRUE)
   has_neutral <- length(neutral_levels) > 0 && any(df_in$Response %in% neutral_levels, na.rm = TRUE)
+  # "Neither" pulls out to its own zone (like DK). When both are present, Neither
+  # starts one zone-width after DK; when Neither-only, it uses the same start position.
+  neither_start <- if (has_dk) DK_START + 110L else DK_START
   all_resp    <- c(pos_levels, neg_levels, dk_levels, neutral_levels)
 
   # Per-question denominator from the Excel N (denominator) column
@@ -269,20 +272,18 @@ build_plot_data <- function(df_in, collapsed,
     q_order <- anchors$q_short
     n_df    <- df %>% select(Question, category, n_count)
 
-    # Pos/neg bars are offset from center by half the neutral width.
-    # When neutral_pct = 0 (no neutral), this reduces to the standard form.
     plot_df <- bind_rows(
       anchors %>% transmute(Question, q_short, y, category = pos_label,
-                            xmin =  neutral_pct / 2,
-                            xmax =  neutral_pct / 2 + pos_pct),
+                            xmin = 0,
+                            xmax = pos_pct),
       anchors %>% transmute(Question, q_short, y, category = neg_label,
-                            xmin = -(neutral_pct / 2 + neg_pct),
-                            xmax = -neutral_pct / 2)
+                            xmin = -neg_pct,
+                            xmax = 0)
     )
     if (has_neutral)
       plot_df <- bind_rows(plot_df,
         anchors %>% transmute(Question, q_short, y, category = neutral_label,
-                              xmin = -neutral_pct / 2, xmax = neutral_pct / 2))
+                              xmin = neither_start, xmax = neither_start + neutral_pct))
     if (has_dk)
       plot_df <- bind_rows(plot_df,
         anchors %>% transmute(Question, q_short, y, category = "Don't know",
@@ -339,8 +340,8 @@ build_plot_data <- function(df_in, collapsed,
         if (length(r) == 0) NA_real_ else r[1]
       }
 
-      # Neutral half-width shifts the pos/neg stacks away from center
-      neutral_offset <- if (has_neutral) sum(sapply(neutral_levels, get_pct)) / 2 else 0
+      # Neither is pulled out to its own zone; pos/neg stacks stay anchored at zero
+      neutral_offset <- 0
 
       pos_pcts <- sapply(pos_levels, get_pct)
       pos_cum  <- cumsum(c(neutral_offset, pos_pcts))
@@ -365,7 +366,7 @@ build_plot_data <- function(df_in, collapsed,
         bars <- bind_rows(bars, tibble(
           Question = qrow$Question, q_short = qrow$q_short, y = y_val,
           category = neutral_label,
-          xmin = -neutral_pct_val / 2, xmax = neutral_pct_val / 2,
+          xmin = neither_start, xmax = neither_start + neutral_pct_val,
           n_count = neutral_n_val
         ))
       }
@@ -398,7 +399,8 @@ build_plot_data <- function(df_in, collapsed,
       bar_width = abs(xmax - xmin)
     )
 
-  list(plot_df = plot_df, anchors = anchors, q_order = q_order, has_dk = has_dk)
+  list(plot_df = plot_df, anchors = anchors, q_order = q_order, has_dk = has_dk,
+       has_neither = has_neutral, neither_start = neither_start)
 }
 
 # ── Chart builder ─────────────────────────────────────────────────────────────
@@ -417,30 +419,24 @@ make_chart <- function(df_in, collapsed,
   plot_df <- d$plot_df
   anchors <- d$anchors
   q_order <- d$q_order
-  has_dk  <- d$has_dk
+  has_dk        <- d$has_dk
+  has_neither   <- d$has_neither
+  neither_start <- d$neither_start
+  neither_sep   <- neither_start - 4
   n_q     <- length(q_order)
 
-  n_x_pos     <- if (has_dk) N_X_DK else N_X_NODK
-  x_right_lim <- if (has_dk) N_X_DK + 28 else N_X_NODK + 22
+  n_x_pos     <- if (has_dk || has_neither) N_X_DK else N_X_NODK
+  x_right_lim <- if (has_dk || has_neither) N_X_DK + 28 else N_X_NODK + 22
 
   pos_ann <- if (!is.null(pos_arrow)) pos_arrow else paste0(pos_label, " →")
   neg_ann <- if (!is.null(neg_arrow)) neg_arrow else paste0("← ", neg_label)
 
-  caption_text <- if (collapsed) {
-    glue_collapse(c(
-      if (length(pos_levels)     > 1) paste0(pos_label,     " = ", paste(rev(pos_levels),     collapse = " + ")),
-      if (length(neg_levels)     > 1) paste0(neg_label,     " = ", paste(rev(neg_levels),     collapse = " + ")),
-      if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
-      "Percentages of all respondents.",
-      if (!is.null(missing_note)) missing_note
-    ), sep = "  ")
-  } else {
-    glue_collapse(c(
-      if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
-      "Percentages of all respondents.",
-      if (!is.null(missing_note)) missing_note
-    ), sep = "  ")
-  }
+  caption_text <- glue_collapse(c(
+    if (collapsed && length(pos_levels) > 1) paste0(pos_label, " = ", paste(rev(pos_levels), collapse = " + ")),
+    if (collapsed && length(neg_levels) > 1) paste0(neg_label, " = ", paste(rev(neg_levels), collapse = " + ")),
+    "Percentages of all respondents.",
+    if (!is.null(missing_note)) missing_note
+  ), sep = "  ")
 
   p <- ggplot(plot_df) +
     geom_rect(aes(
@@ -505,6 +501,28 @@ make_chart <- function(df_in, collapsed,
         expand = c(0, 0),
         sec.axis = sec_axis(
           transform = ~ . - DK_START,
+          breaks    = seq(0, 100, 25),
+          labels    = paste0(seq(0, 100, 25), "%"),
+          name      = NULL
+        )
+      )
+  } else if (has_neither) {
+    # Neither pulled out to its own zone with its own 0-100% scale at the top
+    p <- p +
+      geom_vline(xintercept = neither_sep, color = "gray60",
+                 linewidth = 0.4, linetype = "dashed") +
+      geom_vline(xintercept = neither_start + c(25, 50, 75, 100),
+                 color = "gray88", linewidth = 0.3) +
+      annotate("text", x = neither_start + 1, y = n_q + 0.75,
+               label = paste0(neutral_label, " →"), hjust = 0, size = 4,
+               color = "gray40", fontface = "bold.italic") +
+      scale_x_continuous(
+        limits = c(-100, x_right_lim),
+        breaks = c(-100, -75, -50, -25, 0, 25, 50, 75, 100),
+        labels = function(x) paste0(abs(x), "%"),
+        expand = c(0, 0),
+        sec.axis = sec_axis(
+          transform = ~ . - neither_start,
           breaks    = seq(0, 100, 25),
           labels    = paste0(seq(0, 100, 25), "%"),
           name      = NULL
