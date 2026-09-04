@@ -114,18 +114,21 @@ get_sata_data <- function(df, pattern) {
 }
 
 get_missing_note <- function(df, pattern) {
+  # total_N = full completer count (max N across all eligible questions)
+  total_N <- max(df$N, na.rm = TRUE)
+  if (!is.finite(total_N) || total_N == 0) return(NULL)
   qs <- df %>%
     filter(
       str_detect(Question, regex(pattern, ignore_case = TRUE)),
       Response != "Missing (skipped)"
     )
   if (nrow(qs) == 0) return(NULL)
-  n_answered <- sum(qs$n,   na.rm = TRUE)
-  N_denom    <- qs$N[1]
-  if (is.na(N_denom) || N_denom == 0) return(NULL)
-  n_miss <- max(N_denom - n_answered, 0L)
+  # For SATA, N_denom = n_answered (those who checked ≥1 option); missing = total_N - N_denom
+  N_denom <- qs$N[1]
+  if (is.na(N_denom)) return(NULL)
+  n_miss <- max(total_N - N_denom, 0L)
   if (n_miss == 0) return(NULL)
-  paste0(round(n_miss / N_denom * 100, 0), "% missing (skipped; n=", n_miss, ")")
+  paste0(round(n_miss / total_N * 100, 0), "% missing (skipped; n=", n_miss, ")")
 }
 
 make_hbar <- function(df, title = NULL, missing_note = NULL) {

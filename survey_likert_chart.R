@@ -530,24 +530,23 @@ glue_collapse <- function(x, sep = "") paste(x[nchar(x) > 0], collapse = sep)
 # Returns a short string like "Up to 3% missing (skipped) across 2 questions"
 # when any question in the chart has missing responses, otherwise NULL.
 get_missing_caption <- function(df_all, patterns) {
+  # total_N = full completer count (max N across all eligible questions)
+  total_N <- max(suppressWarnings(as.numeric(df_all$`N (denominator)`)), na.rm = TRUE)
+  if (!is.finite(total_N) || total_N == 0) return(NULL)
   qs <- df_all %>%
-    filter(sapply(Question, is_q_in, patterns = patterns)) %>%
-    mutate(
-      n_num   = suppressWarnings(as.numeric(n)),
-      N_denom = suppressWarnings(as.numeric(`N (denominator)`))
+    filter(
+      sapply(Question, is_q_in, patterns = patterns),
+      Response != "Missing (skipped)"
     ) %>%
-    filter(!is.na(n_num), !is.na(N_denom),
-           Response != "Missing (skipped)")  # exclude explicit missing rows from sum
+    mutate(N_denom = suppressWarnings(as.numeric(`N (denominator)`))) %>%
+    filter(!is.na(N_denom))
   if (nrow(qs) == 0) return(NULL)
+  # N_denom per question = n_answered; missing = total_N - N_denom
   miss_by_q <- qs %>%
     group_by(Question) %>%
-    summarise(
-      n_answered = sum(n_num, na.rm = TRUE),
-      N_denom    = first(N_denom),
-      .groups    = "drop"
-    ) %>%
-    mutate(n_missing = pmax(N_denom - n_answered, 0L),
-           pct_miss  = n_missing / N_denom * 100) %>%
+    summarise(N_denom = first(N_denom), .groups = "drop") %>%
+    mutate(n_missing = pmax(total_N - N_denom, 0L),
+           pct_miss  = n_missing / total_N * 100) %>%
     filter(n_missing > 0)
   if (nrow(miss_by_q) == 0) return(NULL)
   max_pct <- max(miss_by_q$pct_miss, na.rm = TRUE)
