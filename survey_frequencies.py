@@ -113,6 +113,28 @@ def short_q(s, n=120):
 def norm_val(v):
     return str(v).strip() if str(v).strip() not in ("", "nan") else None
 
+# ── Single-choice questions REDCap exported as checkbox columns ───────────────
+# REDCap occasionally exports radio-button questions with "(choice=…)" column
+# names (same format as true checkboxes).  List question label patterns here so
+# the script reconstructs a single column from the checkbox columns and treats
+# the question as single-choice (adjusted residuals, not Z-tests).
+FORCE_SINGLE_CHOICE_PATTERNS = [
+    r"who in your practice screens patients.+most often",   # Q8
+]
+
+def _is_force_single(parent_q):
+    return any(re.search(p, parent_q, re.IGNORECASE) for p in FORCE_SINGLE_CHOICE_PATTERNS)
+
+def _reconstruct_single_from_checkbox(df_sub, child_cols):
+    """Return a Series with the choice label of the single Checked option per row.
+    Rows where no option is checked are returned as empty string (= missing)."""
+    def _pick(row):
+        for col in child_cols:
+            if is_checked(row[col]):
+                return choice_label(col)
+        return ""
+    return df_sub[child_cols].apply(_pick, axis=1)
+
 # ── Column classification ─────────────────────────────────────────────────────
 checkbox_cols = [c for c in df.columns if "(choice=" in c]
 
@@ -1202,10 +1224,17 @@ def build_all_frequencies(df_sub, group=None):
             if child_cols:
                 _br = get_branching_denom(df_sub, parent, group=group)
                 n_br = _br[0] if _br is not None else None
-                t = freq_checkbox_group(df_sub, parent, child_cols,
-                                        n_denom_override=n_br,
-                                        include_missing=(n_br is not None),
-                                        group=group)
+                if _is_force_single(parent):
+                    # Radio button exported as checkbox columns — treat as single-choice
+                    _series = _reconstruct_single_from_checkbox(df_sub, child_cols)
+                    _ordered = ordered_for_col(parent)
+                    t = freq_single(_series, parent, _ordered,
+                                    n_denom=n_br, include_missing=(n_br is not None))
+                else:
+                    t = freq_checkbox_group(df_sub, parent, child_cols,
+                                            n_denom_override=n_br,
+                                            include_missing=(n_br is not None),
+                                            group=group)
                 if t is not None:
                     parts.append(t)
                     ft = free_text_for_question(df_sub, parent)
@@ -1268,15 +1297,21 @@ def build_all_frequencies_allcases(df_sub, n_total):
             if child_cols:
                 _br   = get_branching_denom(df_sub, parent, group="eligible")
                 n_dem = _br[0] if _br is not None else n_total
-                t = freq_checkbox_group(df_sub, parent, child_cols,
-                                        n_denom_override=n_dem,
-                                        include_missing=True,
-                                        group="eligible")
+                if _is_force_single(parent):
+                    _series  = _reconstruct_single_from_checkbox(df_sub, child_cols)
+                    _ordered = ordered_for_col(parent)
+                    t = freq_single(_series, parent, _ordered,
+                                    n_denom=n_dem, include_missing=True)
+                else:
+                    t = freq_checkbox_group(df_sub, parent, child_cols,
+                                            n_denom_override=n_dem,
+                                            include_missing=True,
+                                            group="eligible")
                 if t is not None:
                     if _br is not None and n_dem < n_total:
+                        q_type = "Single choice" if _is_force_single(parent) else "Select all that apply"
                         t = pd.concat(
-                            [t, _not_asked_row(parent, "Select all that apply",
-                                               n_total - n_dem)],
+                            [t, _not_asked_row(parent, q_type, n_total - n_dem)],
                             ignore_index=True)
                     parts.append(t)
         else:
