@@ -519,12 +519,13 @@ BRANCHING_RULES = [
 #     skipped/None row that appears when include_missing=True)
 QUESTION_DENOM_OVERRIDES = {
     # "None (no secondary specialty)" is a valid radio option but REDCap exports
-    # it as a blank cell.
-    #   eligible:   72 answered (16 actual specialty + 56 "None")
-    #   ineligible: 233 answered (92 actual specialty + 141 "None")
+    # it as a blank cell, so REDCap only counts respondents who chose a named
+    # specialty.  Use "group_size" so the denominator = len(df_sub) at runtime
+    # (everyone in the group was asked this non-branching question) rather than
+    # a hardcoded number that goes stale every wave.
     r"secondary.{0,30}specialty|sub.specialty": {
-        "eligible":   {"n": 72,  "missing_label": "None (no secondary specialty)"},
-        "ineligible": {"n": 233, "missing_label": "None (no secondary specialty)"},
+        "eligible":   {"n": "group_size", "missing_label": "None (no secondary specialty)"},
+        "ineligible": {"n": "group_size", "missing_label": "None (no secondary specialty)"},
     },
 }
 
@@ -583,7 +584,9 @@ def get_branching_denom(df_sub, question_label, group=None, override_only=False)
             if re.search(pat, question_label, re.IGNORECASE) and group in group_map:
                 entry = group_map[group]
                 if isinstance(entry, dict):
-                    return (entry["n"], entry.get("missing_label", "Missing (skipped)"))
+                    raw_n = entry["n"]
+                    n = len(df_sub) if raw_n == "group_size" else int(raw_n)
+                    return (n, entry.get("missing_label", "Missing (skipped)"))
                 return (int(entry), "Missing (skipped)")
     if override_only:
         return None
@@ -827,23 +830,16 @@ if _survey_complete_col:
 else:
     _partials = pd.DataFrame(columns=eligible.columns)
 
-# ── Sub-specialty denominator diagnostic ─────────────────────────────────────
-# QUESTION_DENOM_OVERRIDES has hardcoded n values for sub-specialty because
-# REDCap exports "None (no secondary specialty)" as blank.  Print value counts
-# so the override can be verified / updated each wave.
+# ── Sub-specialty value-count diagnostic (QA only) ────────────────────────────
+# REDCap exports "None (no secondary specialty)" as blank; denominator is set
+# dynamically to len(df_sub) via QUESTION_DENOM_OVERRIDES "group_size" sentinel.
 _subspec_pat = re.compile(r"secondary.{0,30}specialty|sub.specialty", re.IGNORECASE)
 for _ss_col in completers.columns:
     if _subspec_pat.search(_ss_col):
-        _ss_vc = completers[_ss_col].astype(str).str.strip().replace("nan", "").value_counts(dropna=False)
-        _ss_blank = int(completers[_ss_col].astype(str).str.strip().replace("nan", "").eq("").sum())
+        _ss_blank  = int(completers[_ss_col].astype(str).str.strip().replace("nan", "").eq("").sum())
         _ss_filled = len(completers) - _ss_blank
-        print(f"\nSub-specialty column: {_ss_col[:80]}")
-        print(f"  Completers (N={len(completers)}): {_ss_filled} with specialty, "
-              f"{_ss_blank} blank (= 'None' in REDCap)")
-        print(f"  → QUESTION_DENOM_OVERRIDES 'eligible' n should be {len(completers)} "
-              f"if all respondents answered (blank = 'None')")
-        for _v, _c in _ss_vc.items():
-            print(f"    {repr(str(_v)):<45} {_c}")
+        print(f"\nSub-specialty (N={len(completers)}): "
+              f"{_ss_filled} named specialty, {_ss_blank} blank (= 'None')")
         break
 
 # ── Secondary-specialty hunt: find the eligible form's secondary specialty ────
