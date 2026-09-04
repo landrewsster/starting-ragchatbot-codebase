@@ -107,7 +107,7 @@ norm_q <- function(q) str_trim(str_remove(q, "\\s*\\.\\d+\\s*$"))
 
 # ── Likert scale response ordering ────────────────────────────────────────────
 # Canonical order matching the survey presentation
-LIKERT_LEVELS <- c("Strongly agree", "Agree", "Don't know", "Disagree", "Strongly disagree")
+LIKERT_LEVELS <- c("Strongly agree", "Agree", "Disagree", "Strongly disagree", "Don't know")
 
 is_likert_df <- function(df) {
   if (!"Response" %in% names(df)) return(FALSE)
@@ -211,6 +211,10 @@ make_table <- function(df) {
     any(suppressWarnings(as.numeric(missing_rows$n)) > 0, na.rm = TRUE)
 
   no_missing_note <- if (!has_missing && is.null(branching_note)) "No missing responses for this question." else NULL
+
+  # Sort non-Likert substantive rows by % descending; Likert order is handled below
+  if (!is_likert_df(df) && "%" %in% names(df))
+    df <- df %>% arrange(desc(suppressWarnings(as.numeric(.data[["%" ]]))))
 
   if (has_missing) df <- bind_rows(df, missing_rows)
 
@@ -335,6 +339,11 @@ make_crosstab_table <- function(df, label1, label0) {
     display <- display %>% mutate(post_hoc_p = fmt_p(post_hoc_p))
 
   display <- display %>% filter(!str_detect(str_to_lower(str_squish(Response)), "^missing"))
+
+  # Sort non-Likert rows by first group's % descending; Likert order handled below
+  if (!is_likert_df(display) && col_pct1 %in% names(display))
+    display <- display %>% arrange(desc(suppressWarnings(as.numeric(.data[[col_pct1]]))))
+
   display <- enforce_likert_order(display)
 
   # Build Total row: N1/N0 under n columns, everything else blank
