@@ -1178,17 +1178,27 @@ def build_all_frequencies(df_sub, group=None):
 
 
 def build_all_frequencies_allcases(df_sub, n_total):
-    """Like build_all_frequencies but uses n_total as the fixed denominator for
-    every question and always appends a 'Missing (skipped)' row.
+    """Like build_all_frequencies but always appends missing/not-asked rows.
 
-    Used to produce the all-respondents file where N is constant (total group
-    size) rather than varying by question.  Bypasses get_branching_denom so
-    branching questions share the same denominator as non-branching ones.
+    For non-branching questions: denominator = n_total (fixed).
+    For branching questions: denominator = routed N (from get_branching_denom),
+    plus a 'Not asked (branching rule)' row showing the excluded respondents
+    as a share of n_total — so readers can distinguish skips from non-routing.
     """
     parts = []
     emitted_checkbox_parents = set()
     checkbox_set = set(checkbox_cols)
     preferred = _preferred_single_cols(df_sub)
+
+    def _not_asked_row(q_label, q_type, n_not_asked):
+        return pd.DataFrame([{
+            "Question":        re.sub(r'\s+', ' ', str(q_label)).strip(),
+            "Type":            q_type,
+            "Response":        "Not asked (branching rule)",
+            "n":               n_not_asked,
+            "%":               round(n_not_asked / n_total * 100, 1),
+            "N (denominator)": n_total,
+        }])
 
     for col in df_sub.columns:
         if col in free_text_cols or col in system_cols or col in county_skip_cols:
@@ -1201,20 +1211,36 @@ def build_all_frequencies_allcases(df_sub, n_total):
             emitted_checkbox_parents.add(parent)
             child_cols = [c for c in checkbox_groups.get(parent, []) if c in df_sub.columns]
             if child_cols:
+                _br   = get_branching_denom(df_sub, parent, group="eligible")
+                n_dem = _br[0] if _br is not None else n_total
                 t = freq_checkbox_group(df_sub, parent, child_cols,
-                                        n_denom_override=n_total,
+                                        n_denom_override=n_dem,
                                         include_missing=True,
                                         group="eligible")
                 if t is not None:
+                    if _br is not None and n_dem < n_total:
+                        t = pd.concat(
+                            [t, _not_asked_row(parent, "Select all that apply",
+                                               n_total - n_dem)],
+                            ignore_index=True)
                     parts.append(t)
         else:
             if col not in preferred:
                 continue
             label   = complete_col_labels.get(col, col)
             ordered = ordered_for_col(col)
+            _br     = get_branching_denom(df_sub, label, group="eligible")
+            n_dem   = _br[0] if _br is not None else n_total
+            _mlabel = _br[1] if _br is not None else "Missing (skipped)"
             t = freq_single(df_sub[col], label, ordered,
-                            n_denom=n_total, include_missing=True)
+                            n_denom=n_dem, include_missing=True,
+                            missing_label=_mlabel)
             if t is not None:
+                if _br is not None and n_dem < n_total:
+                    t = pd.concat(
+                        [t, _not_asked_row(label, "Single choice",
+                                           n_total - n_dem)],
+                        ignore_index=True)
                 parts.append(t)
 
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()

@@ -159,6 +159,21 @@ enforce_likert_order <- function(df) {
 # ── Flextable helpers ─────────────────────────────────────────────────────────
 # Single-group table: n and % columns, N as footer
 make_table <- function(df) {
+  # Strip "Not asked (branching rule)" rows before computing N or building table;
+  # their count becomes a footer note so readers understand the branching.
+  not_asked_mask <- str_detect(str_to_lower(str_squish(df$Response)), "^not asked")
+  not_asked_rows <- df[not_asked_mask, ]
+  df             <- df[!not_asked_mask, ]
+  branching_note <- NULL
+  if (nrow(not_asked_rows) > 0) {
+    n_na <- suppressWarnings(as.numeric(not_asked_rows$n[1]))
+    if (!is.na(n_na) && n_na > 0)
+      branching_note <- paste0(
+        n_na, " respondents were not routed to this question (branching rule); ",
+        "percentages are based on those who were asked."
+      )
+  }
+
   # Find N: single-choice uses "N (answered)", checkbox uses "N (denominator)"
   n_col <- NA_character_
   n_val <- NA_real_
@@ -195,7 +210,7 @@ make_table <- function(df) {
   has_missing <- nrow(missing_rows) > 0 &&
     any(suppressWarnings(as.numeric(missing_rows$n)) > 0, na.rm = TRUE)
 
-  no_missing_note <- if (!has_missing) "No missing responses for this question." else NULL
+  no_missing_note <- if (!has_missing && is.null(branching_note)) "No missing responses for this question." else NULL
 
   if (has_missing) df <- bind_rows(df, missing_rows)
 
@@ -219,7 +234,7 @@ make_table <- function(df) {
   if ("n" %in% names(df))
     ft <- colformat_double(ft, j = "n", digits = 0, na_str = "")
 
-  footer_lines <- c(n_note, stat_note, no_missing_note)
+  footer_lines <- c(n_note, branching_note, stat_note, no_missing_note)
   footer_lines <- footer_lines[!sapply(footer_lines, is.null)]
   if (length(footer_lines) > 0) {
     for (fl in footer_lines)
