@@ -23,8 +23,8 @@ library(stringr)
 library(forcats)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE      <- "Z:/Data/MCH survey/Data analysis"
-FREQ_FILE <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-06-15_0947_EDITED_frequencies.xlsx")
+BASE      <- "Z:/Data/MCH survey/Data analysis/output"
+FREQ_FILE <- file.path(BASE, "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-09-03_1016_EDITED_frequencies.xlsx")
 
 # 1. Define the graphics folder path and automatically create it if missing
 GRAPHICS_DIR <- file.path(BASE, "graphics")
