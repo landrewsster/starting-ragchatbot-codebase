@@ -629,7 +629,7 @@ make_elig_demo_combined_table <- function(elig_df, county_data = NULL) {
 
     header_indices <- c(header_indices, length(rows) + 1L)
     rows[[length(rows) + 1L]] <- tibble(
-      Response = paste0(q, type_note), n = NA_real_, `%` = NA_real_, N = NA_real_
+      Response = paste0(q, type_note), n = NA_real_, `%` = NA_real_, N = n_val
     )
 
     for (i in seq_len(nrow(q_rows))) {
@@ -637,7 +637,7 @@ make_elig_demo_combined_table <- function(elig_df, county_data = NULL) {
         Response = q_rows$Response[i],
         n        = suppressWarnings(as.numeric(q_rows$n[i])),
         `%`      = suppressWarnings(as.numeric(q_rows$`%`[i])),
-        N        = n_val
+        N        = NA_real_
       )
     }
   }
@@ -657,15 +657,15 @@ make_elig_demo_combined_table <- function(elig_df, county_data = NULL) {
     if (n_tot_t > 0) {
       header_indices <- c(header_indices, length(rows) + 1L)
       rows[[length(rows) + 1L]] <- tibble(
-        Response = "Tenure (years in practice)", n = NA_real_, `%` = NA_real_, N = NA_real_
+        Response = "Tenure (years in practice)", n = NA_real_, `%` = NA_real_, N = as.numeric(n_tot_t)
       )
       rows[[length(rows) + 1L]] <- tibble(
         Response = "20 or more years (tenure = 1)",
-        n = n_high, `%` = round(n_high / n_tot_t * 100, 1), N = as.numeric(n_tot_t)
+        n = n_high, `%` = round(n_high / n_tot_t * 100, 1), N = NA_real_
       )
       rows[[length(rows) + 1L]] <- tibble(
         Response = "Less than 20 years (tenure = 0)",
-        n = n_low, `%` = round(n_low / n_tot_t * 100, 1), N = as.numeric(n_tot_t)
+        n = n_low, `%` = round(n_low / n_tot_t * 100, 1), N = NA_real_
       )
     }
   }
@@ -681,15 +681,15 @@ make_elig_demo_combined_table <- function(elig_df, county_data = NULL) {
     if (n_tot_m > 0) {
       header_indices <- c(header_indices, length(rows) + 1L)
       rows[[length(rows) + 1L]] <- tibble(
-        Response = "Metro (county of practice)", n = NA_real_, `%` = NA_real_, N = NA_real_
+        Response = "Metro (county of practice)", n = NA_real_, `%` = NA_real_, N = as.numeric(n_tot_m)
       )
       rows[[length(rows) + 1L]] <- tibble(
         Response = "Metro (7-county) (metro = 1)",
-        n = as.numeric(n_metro), `%` = round(n_metro / n_tot_m * 100, 1), N = as.numeric(n_tot_m)
+        n = as.numeric(n_metro), `%` = round(n_metro / n_tot_m * 100, 1), N = NA_real_
       )
       rows[[length(rows) + 1L]] <- tibble(
         Response = "Non-metro (metro = 0)",
-        n = as.numeric(n_non), `%` = round(n_non / n_tot_m * 100, 1), N = as.numeric(n_tot_m)
+        n = as.numeric(n_non), `%` = round(n_non / n_tot_m * 100, 1), N = NA_real_
       )
     }
   }
