@@ -864,33 +864,6 @@ for _ss_col in completers.columns:
               f"{_ss_filled} named specialty, {_ss_blank} blank (= 'None')")
         break
 
-# ── Radio-button-as-checkbox diagnostic ───────────────────────────────────────
-# REDCap sometimes exports single-choice (radio) questions with (choice=...) columns
-# just like checkboxes.  A true SATA question can have multiple "Checked" cells per
-# respondent; a radio button will have AT MOST ONE "Checked" cell per respondent.
-# Flag any checkbox group where every completer has ≤1 "Checked" across all child
-# columns — those are almost certainly mis-classified radio buttons.
-_radio_as_checkbox: list[str] = []
-for _rc_parent, _rc_cols in checkbox_groups.items():
-    _rc_child = [c for c in _rc_cols if c in completers.columns]
-    if not _rc_child:
-        continue
-    _rc_checked = completers[_rc_child].apply(
-        lambda col: col.apply(is_checked)
-    ).sum(axis=1)   # number of Checked options per respondent
-    _rc_max = int(_rc_checked.max()) if len(_rc_checked) > 0 else 0
-    if _rc_max <= 1:
-        _radio_as_checkbox.append(_rc_parent)
-
-if _radio_as_checkbox:
-    print(f"\n⚠  POSSIBLE RADIO-BUTTON-AS-CHECKBOX groups ({len(_radio_as_checkbox)}):")
-    print("   (no completer checked >1 option — likely single-choice exported with (choice=) cols)")
-    for _rp in _radio_as_checkbox:
-        _already = "✓ in FORCE_SINGLE_CHOICE_PATTERNS" if _is_force_single(_rp) else "  NOT in FORCE_SINGLE_CHOICE_PATTERNS"
-        print(f"    [{len(checkbox_groups[_rp]):2d} cols] {_already}  {short_q(_rp, 80)}")
-else:
-    print("\nRadio-as-checkbox check: no suspicious groups found (all have ≥1 respondent with 2+ checked).")
-
 # ── Secondary-specialty hunt: find the eligible form's secondary specialty ────
 # FV ("What is your secondary or sub-specialty, if any?") has only n=16 answers
 # in completers, meaning it is the INELIGIBLE form version.  The eligible form's
