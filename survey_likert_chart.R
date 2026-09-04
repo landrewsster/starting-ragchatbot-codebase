@@ -172,7 +172,8 @@ raw <- eligible %>%
       dplyr::if_else(lwr %in% names(resp_norm_lookup),
                      resp_norm_lookup[lwr], Response)
     },
-    n = as.numeric(n)
+    n       = suppressWarnings(as.numeric(n)),
+    N_denom = suppressWarnings(as.numeric(`N (denominator)`))
   ) %>%
   filter(Response %in% ALL_RESP_LEVELS)
 
@@ -228,6 +229,11 @@ build_plot_data <- function(df_in, collapsed,
   has_neutral <- length(neutral_levels) > 0 && any(df_in$Response %in% neutral_levels, na.rm = TRUE)
   all_resp    <- c(pos_levels, neg_levels, dk_levels, neutral_levels)
 
+  # Per-question denominator from the Excel N (denominator) column
+  n_denom_map <- df_in %>%
+    group_by(Question) %>%
+    summarise(n_all = first(N_denom[!is.na(N_denom)]), .groups = "drop")
+
   # ---- COLLAPSED ----
   if (collapsed) {
     df <- df_in %>%
@@ -242,8 +248,9 @@ build_plot_data <- function(df_in, collapsed,
       filter(!is.na(category)) %>%
       group_by(Question, q_short, category) %>%
       summarise(n_count = sum(n, na.rm = TRUE), .groups = "drop") %>%
+      left_join(n_denom_map, by = "Question") %>%
       group_by(Question) %>%
-      mutate(n_all = sum(n_count), pct = n_count / n_all * 100) %>%
+      mutate(n_all = first(n_all), pct = n_count / n_all * 100) %>%
       ungroup()
 
     anchors <- df %>%
@@ -295,8 +302,9 @@ build_plot_data <- function(df_in, collapsed,
       mutate(category = Response) %>%
       group_by(Question, q_short, category) %>%
       summarise(n_count = sum(n, na.rm = TRUE), .groups = "drop") %>%
+      left_join(n_denom_map, by = "Question") %>%
       group_by(Question) %>%
-      mutate(n_all = sum(n_count), pct = n_count / n_all * 100) %>%
+      mutate(n_all = first(n_all), pct = n_count / n_all * 100) %>%
       ungroup()
 
     q_pos_order <- df %>%
