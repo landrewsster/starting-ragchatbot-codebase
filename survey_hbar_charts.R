@@ -114,16 +114,18 @@ get_sata_data <- function(df, pattern) {
 }
 
 get_missing_note <- function(df, pattern) {
-  miss <- df %>%
+  qs <- df %>%
     filter(
       str_detect(Question, regex(pattern, ignore_case = TRUE)),
-      Response == "Missing (skipped)"
+      Response != "Missing (skipped)"
     )
-  if (nrow(miss) == 0) return(NULL)
-  n_miss   <- suppressWarnings(as.numeric(miss$n[1]))
-  pct_miss <- suppressWarnings(as.numeric(miss$`%`[1]))
-  if (is.na(n_miss) || n_miss == 0) return(NULL)
-  paste0(round(pct_miss, 0), "% missing (skipped; n=", n_miss, ")")
+  if (nrow(qs) == 0) return(NULL)
+  n_answered <- sum(qs$n,   na.rm = TRUE)
+  N_denom    <- qs$N[1]
+  if (is.na(N_denom) || N_denom == 0) return(NULL)
+  n_miss <- max(N_denom - n_answered, 0L)
+  if (n_miss == 0) return(NULL)
+  paste0(round(n_miss / N_denom * 100, 0), "% missing (skipped; n=", n_miss, ")")
 }
 
 make_hbar <- function(df, title = NULL, missing_note = NULL) {

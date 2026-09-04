@@ -421,7 +421,7 @@ make_chart <- function(df_in, collapsed,
   n_q     <- length(q_order)
 
   n_x_pos     <- if (has_dk) N_X_DK else N_X_NODK
-  x_right_lim <- if (has_dk) N_X_DK + 14 else N_X_NODK + 14
+  x_right_lim <- if (has_dk) N_X_DK + 28 else N_X_NODK + 22
 
   pos_ann <- if (!is.null(pos_arrow)) pos_arrow else paste0(pos_label, " →")
   neg_ann <- if (!is.null(neg_arrow)) neg_arrow else paste0("← ", neg_label)
@@ -485,7 +485,8 @@ make_chart <- function(df_in, collapsed,
       plot.caption.position = "plot",
       plot.margin           = margin(10, 20, 10, 5)
     ) +
-    guides(fill = guide_legend(nrow = 1))
+    guides(fill = guide_legend(nrow = 1)) +
+    coord_cartesian(clip = "off")
 
   # DK secondary scale (only when Don't know responses are present)
   if (has_dk) {
@@ -529,22 +530,30 @@ glue_collapse <- function(x, sep = "") paste(x[nchar(x) > 0], collapse = sep)
 # Returns a short string like "Up to 3% missing (skipped) across 2 questions"
 # when any question in the chart has missing responses, otherwise NULL.
 get_missing_caption <- function(df_all, patterns) {
-  miss <- df_all %>%
-    filter(
-      sapply(Question, is_q_in, patterns = patterns),
-      Response == "Missing (skipped)"
-    ) %>%
+  qs <- df_all %>%
+    filter(sapply(Question, is_q_in, patterns = patterns)) %>%
     mutate(
-      pct_num = suppressWarnings(as.numeric(`%`)),
-      n_num   = suppressWarnings(as.numeric(n))
+      n_num   = suppressWarnings(as.numeric(n)),
+      N_denom = suppressWarnings(as.numeric(`N (denominator)`))
     ) %>%
-    filter(!is.na(n_num), n_num > 0)
-  if (nrow(miss) == 0) return(NULL)
-  max_pct <- max(miss$pct_num, na.rm = TRUE)
-  n_qs    <- n_distinct(miss$Question)
+    filter(!is.na(n_num), !is.na(N_denom),
+           Response != "Missing (skipped)")  # exclude explicit missing rows from sum
+  if (nrow(qs) == 0) return(NULL)
+  miss_by_q <- qs %>%
+    group_by(Question) %>%
+    summarise(
+      n_answered = sum(n_num, na.rm = TRUE),
+      N_denom    = first(N_denom),
+      .groups    = "drop"
+    ) %>%
+    mutate(n_missing = pmax(N_denom - n_answered, 0L),
+           pct_miss  = n_missing / N_denom * 100) %>%
+    filter(n_missing > 0)
+  if (nrow(miss_by_q) == 0) return(NULL)
+  max_pct <- max(miss_by_q$pct_miss, na.rm = TRUE)
+  n_qs    <- nrow(miss_by_q)
   if (n_qs == 1) {
-    n_miss <- sum(miss$n_num, na.rm = TRUE)
-    paste0(round(max_pct, 0), "% missing (skipped; n=", n_miss, ")")
+    paste0(round(max_pct, 0), "% missing (skipped; n=", miss_by_q$n_missing[1], ")")
   } else {
     paste0("Up to ", round(max_pct, 0), "% missing (skipped) across ", n_qs, " questions")
   }
