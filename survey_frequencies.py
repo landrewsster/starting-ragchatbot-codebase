@@ -437,6 +437,23 @@ BRANCHING_RULES = [
         "parent_value":   ["Yes, all patients (i.e., universal screening)",
                            "No, only some patients"],
     },
+    # Q6–Q13 — all follow-up screening questions → all who screen (Yes + No, only some)
+    # "No, don't screen any patients" skips from Q3 directly to Q14.
+    {
+        "child_patterns": [
+            r"at which.+types of clinical encounters.+screen patients",      # Q6
+            r"during the clinical encounter.+at what point is the screening", # Q7
+            r"who in your practice screens patients.+most often",            # Q8
+            r"has your practice.s approach to screening.+changed",           # Q9
+            r"what actions.+positive screen.+during pregnancy",              # Q10
+            r"what actions.+positive screen.+during breastfeeding",          # Q11
+            r"what.+prompts a toxicology screen",                            # Q12
+            r"what.+prompts a report to child protective",                   # Q13
+        ],
+        "parent_pattern": r"screen all patients who are pregnant or breastfeeding for cannabis",
+        "parent_value":   ["Yes, all patients (i.e., universal screening)",
+                           "No, only some patients"],
+    },
 
     # ── Q14 documentation question branches ───────────────────────────────────
     # Q15 + Q16 — shown to those who answered "Yes" to Q14
