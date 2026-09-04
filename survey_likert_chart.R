@@ -148,7 +148,7 @@ ALL_COLORS <- c(
 # ── Layout constants ──────────────────────────────────────────────────────────
 DK_START <- 110   # primary-axis x where DK bars begin
 DK_SEP   <- DK_START - 4
-MIN_W_N  <- 5     # min bar width (% units) to print n inside bar
+MIN_W_N  <- 10    # min bar width (% units) to print % inside bar
 N_X_DK   <- DK_START + 104   # n= label x when DK scale present
 N_X_NODK <- 103              # n= label x when no DK scale
 
