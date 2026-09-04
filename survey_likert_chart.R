@@ -545,32 +545,26 @@ make_chart <- function(df_in, collapsed,
 glue_collapse <- function(x, sep = "") paste(x[nchar(x) > 0], collapse = sep)
 
 # ── Missing-response footnote helper ─────────────────────────────────────────
-# Returns a short string like "Up to 3% missing (skipped) across 2 questions"
-# when any question in the chart has missing responses, otherwise NULL.
-get_missing_caption <- function(df_all, patterns) {
-  # total_N = full completer count (max N across all eligible questions)
-  total_N <- max(suppressWarnings(as.numeric(df_all$`N (denominator)`)), na.rm = TRUE)
-  if (!is.finite(total_N) || total_N == 0) return(NULL)
-  qs <- df_all %>%
-    filter(
-      sapply(Question, is_q_in, patterns = patterns),
-      Response != "Missing (skipped)"
-    ) %>%
-    mutate(N_denom = suppressWarnings(as.numeric(`N (denominator)`))) %>%
-    filter(!is.na(N_denom))
-  if (nrow(qs) == 0) return(NULL)
-  # N_denom per question = n_answered; missing = total_N - N_denom
-  miss_by_q <- qs %>%
+# valid_questions: character vector of exact Question strings for this chart
+#   (pass unique(raw_X$Question) so only the chart's own questions are checked).
+# Python writes an explicit "Missing (skipped)" row for every question with
+# n_missing > 0, so those rows are the only reliable source of truth.
+get_missing_caption <- function(df_all, valid_questions) {
+  miss_rows <- df_all %>%
+    filter(Question %in% valid_questions,
+           Response == "Missing (skipped)") %>%
+    mutate(n_miss  = suppressWarnings(as.numeric(n)),
+           N_denom = suppressWarnings(as.numeric(`N (denominator)`))) %>%
+    filter(!is.na(n_miss), n_miss > 0, !is.na(N_denom))
+  if (nrow(miss_rows) == 0) return(NULL)
+  miss_by_q <- miss_rows %>%
     group_by(Question) %>%
-    summarise(N_denom = first(N_denom), .groups = "drop") %>%
-    mutate(n_missing = pmax(total_N - N_denom, 0L),
-           pct_miss  = n_missing / total_N * 100) %>%
-    filter(n_missing > 0)
-  if (nrow(miss_by_q) == 0) return(NULL)
+    summarise(n_miss = first(n_miss), N_denom = first(N_denom), .groups = "drop") %>%
+    mutate(pct_miss = n_miss / N_denom * 100)
   max_pct <- max(miss_by_q$pct_miss, na.rm = TRUE)
   n_qs    <- nrow(miss_by_q)
   if (n_qs == 1) {
-    paste0(round(max_pct, 0), "% missing (skipped; n=", miss_by_q$n_missing[1], ")")
+    paste0(round(max_pct, 0), "% missing (skipped; n=", miss_by_q$n_miss[1], ")")
   } else {
     paste0("Up to ", round(max_pct, 0), "% missing (skipped) across ", n_qs, " questions")
   }
@@ -578,14 +572,9 @@ get_missing_caption <- function(df_all, patterns) {
 
 
 # ── Save charts ───────────────────────────────────────────────────────────────
-LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
-CONF_TITLE   <- "Confidence in Discussing Substance Use with Patients"
-KNOW_TITLE   <- "Knowledge of Cannabis Health Risks by Patient Population"
-
-# ── Save charts (uncollapsed only) ───────────────────────────────────────────
-LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
-CONF_TITLE   <- "Confidence in Discussing Substance Use with Patients"
-KNOW_TITLE   <- "Knowledge of Cannabis Health Risks by Patient Population"
+LIKERT_TITLE  <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
+CONF_TITLE    <- "Confidence in Discussing Substance Use with Patients"
+KNOW_TITLE    <- "Knowledge of Cannabis Health Risks by Patient Population"
 OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
 
 # Chart 1 — attitude screening items (3 questions)
@@ -593,7 +582,7 @@ ggsave(make_out("likert_chart1", "uncollapsed"),
        make_chart(raw1, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
                   title = LIKERT_TITLE,
-                  missing_note = get_missing_caption(eligible, CHART1_PATTERNS)),
+                  missing_note = get_missing_caption(eligible, unique(raw1$Question))),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 
@@ -602,7 +591,7 @@ ggsave(make_out("likert_chart2", "uncollapsed"),
        make_chart(raw2, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
                   title = LIKERT_TITLE,
-                  missing_note = get_missing_caption(eligible, CHART2_PATTERNS)),
+                  missing_note = get_missing_caption(eligible, unique(raw2$Question))),
        width = 13, height = 7, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart2", "uncollapsed")), "\n")
 
@@ -612,7 +601,7 @@ ggsave(make_out("confidence", "uncollapsed"),
                   pos_label = "Confident", neg_label = "Not confident",
                   pos_arrow = "Confident →", neg_arrow = "← Not confident",
                   title = CONF_TITLE,
-                  missing_note = get_missing_caption(eligible, CONF_PATTERNS)),
+                  missing_note = get_missing_caption(eligible, unique(raw_conf$Question))),
        width = 12, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("confidence", "uncollapsed")), "\n")
 
@@ -622,7 +611,7 @@ ggsave(make_out("knowledge", "uncollapsed"),
                   pos_label = "Knowledgeable", neg_label = "Not knowledgeable",
                   pos_arrow = "Knowledgeable →", neg_arrow = "← Not knowledgeable",
                   title = KNOW_TITLE,
-                  missing_note = get_missing_caption(eligible, KNOW_PATTERNS)),
+                  missing_note = get_missing_caption(eligible, unique(raw_know$Question))),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("knowledge", "uncollapsed")), "\n")
 
@@ -634,6 +623,6 @@ ggsave(make_out("opinion", "uncollapsed"),
                   neutral_label = "Neither",
                   pos_arrow = "Supportive →", neg_arrow = "← Opposed",
                   title = OPINION_TITLE,
-                  missing_note = get_missing_caption(eligible, OPINION_PATTERNS)),
+                  missing_note = get_missing_caption(eligible, unique(raw_opinion$Question))),
        width = 11, height = 3.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("opinion", "uncollapsed")), "\n")

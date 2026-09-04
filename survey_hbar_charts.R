@@ -114,30 +114,19 @@ get_sata_data <- function(df, pattern) {
 }
 
 get_missing_note <- function(df, pattern) {
-  # Branching questions: Python adds an explicit "Missing (skipped)" row — use it directly
-  # so the "not asked" count (total_N - branching_N) is never mistaken for true skips.
+  # Python writes an explicit "Missing (skipped)" row for every question with n_missing > 0
+  # (both branching and non-branching), so that row is the only reliable source of truth.
+  # Absence of the row means n_missing = 0.
   miss_row <- df %>%
     filter(
       str_detect(Question, regex(pattern, ignore_case = TRUE)),
       Response == "Missing (skipped)"
     )
-  if (nrow(miss_row) > 0) {
-    n_miss  <- miss_row$n[1]
-    N_denom <- miss_row$N[1]
-    if (is.na(n_miss) || n_miss == 0 || is.na(N_denom)) return(NULL)
-    return(paste0(round(n_miss / N_denom * 100, 0), "% missing (skipped; n=", n_miss, ")"))
-  }
-  # Non-branching: N_denom = n_answered; missing = total_N - N_denom
-  total_N <- max(df$N, na.rm = TRUE)
-  if (!is.finite(total_N) || total_N == 0) return(NULL)
-  qs <- df %>%
-    filter(str_detect(Question, regex(pattern, ignore_case = TRUE)))
-  if (nrow(qs) == 0) return(NULL)
-  N_denom <- qs$N[1]
-  if (is.na(N_denom)) return(NULL)
-  n_miss <- max(total_N - N_denom, 0L)
-  if (n_miss == 0) return(NULL)
-  paste0(round(n_miss / total_N * 100, 0), "% missing (skipped; n=", n_miss, ")")
+  if (nrow(miss_row) == 0) return(NULL)
+  n_miss  <- miss_row$n[1]
+  N_denom <- miss_row$N[1]
+  if (is.na(n_miss) || n_miss == 0 || is.na(N_denom)) return(NULL)
+  paste0(round(n_miss / N_denom * 100, 0), "% missing (skipped; n=", n_miss, ")")
 }
 
 make_hbar <- function(df, title = NULL, missing_note = NULL) {
