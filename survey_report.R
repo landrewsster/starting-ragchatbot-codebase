@@ -105,14 +105,28 @@ is_main_q      <- function(q) !is_complete_q(q) & !is_screener_q(q) & !is_demo_q
 # Normalize question text: strip trailing pandas-dedup suffixes (.1, .2 …)
 norm_q <- function(q) str_trim(str_remove(q, "\\s*\\.\\d+\\s*$"))
 
-# ── Likert scale response ordering ────────────────────────────────────────────
-# Canonical order matching the survey presentation
-LIKERT_LEVELS <- c("Strongly agree", "Agree", "Disagree", "Strongly disagree", "Don't know")
+# ── Ordered scale definitions (survey presentation order) ─────────────────────
+SCALE_AGREE      <- c("Strongly agree", "Agree", "Disagree", "Strongly disagree", "Don't know")
+SCALE_SUPPORT    <- c("Very supportive", "Somewhat supportive", "Neither supportive nor opposed",
+                      "Somewhat opposed", "Very opposed")
+SCALE_KNOWLEDGE  <- c("Very knowledgeable", "Somewhat knowledgeable",
+                      "Not very knowledgeable", "Not at all knowledgeable")
+SCALE_CONFIDENCE <- c("Very confident", "Somewhat confident",
+                      "Not very confident", "Not at all confident")
 
-is_likert_df <- function(df) {
-  if (!"Response" %in% names(df)) return(FALSE)
-  sum(str_to_lower(str_squish(df$Response)) %in% str_to_lower(LIKERT_LEVELS)) >= 2
+ALL_ORDERED_SCALES <- list(SCALE_AGREE, SCALE_SUPPORT, SCALE_KNOWLEDGE, SCALE_CONFIDENCE)
+
+# Return the matching ordered scale for df, or NULL if none applies.
+detect_ordered_scale <- function(df) {
+  if (!"Response" %in% names(df)) return(NULL)
+  resp_low <- str_to_lower(str_squish(df$Response))
+  for (scale in ALL_ORDERED_SCALES) {
+    if (sum(resp_low %in% str_to_lower(scale)) >= 2) return(scale)
+  }
+  NULL
 }
+
+is_likert_df <- function(df) !is.null(detect_ordered_scale(df))
 
 # Classify a column as "count" (n), "pct" (%), or "other"
 .col_class <- function(col) {
@@ -121,21 +135,22 @@ is_likert_df <- function(df) {
   "other"
 }
 
-# Reorder rows to match LIKERT_LEVELS and zero-fill any absent options.
+# Reorder rows to match the detected ordered scale and zero-fill absent options.
 # Total and Missing rows are preserved at the bottom in their original order.
 enforce_likert_order <- function(df) {
-  if (!is_likert_df(df)) return(df)
-  resp_lower <- str_to_lower(str_squish(df$Response))
-  likert_low <- str_to_lower(LIKERT_LEVELS)
+  scale <- detect_ordered_scale(df)
+  if (is.null(scale)) return(df)
+  resp_lower  <- str_to_lower(str_squish(df$Response))
+  scale_low   <- str_to_lower(scale)
   total_idx   <- which(resp_lower == "total")
   missing_idx <- which(str_detect(resp_lower, "^missing"))
-  likert_idx  <- which(resp_lower %in% likert_low)
-  other_idx   <- setdiff(seq_len(nrow(df)), c(likert_idx, total_idx, missing_idx))
+  scale_idx   <- which(resp_lower %in% scale_low)
+  other_idx   <- setdiff(seq_len(nrow(df)), c(scale_idx, total_idx, missing_idx))
 
-  likert_rows <- lapply(LIKERT_LEVELS, function(lv) {
+  scale_rows <- lapply(scale, function(lv) {
     idx <- which(str_to_lower(str_squish(df$Response)) == str_to_lower(lv))
     if (length(idx) > 0) return(df[idx[1], , drop = FALSE])
-    # Zero-filled row for this absent Likert option
+    # Zero-filled row for this absent scale option
     new_row <- df[1, , drop = FALSE]
     new_row[["Response"]] <- lv
     for (col in setdiff(names(new_row), "Response")) {
@@ -149,7 +164,7 @@ enforce_likert_order <- function(df) {
   })
 
   bind_rows(c(
-    likert_rows,
+    scale_rows,
     if (length(other_idx)   > 0) list(df[other_idx,   ]) else list(),
     if (length(missing_idx) > 0) list(df[missing_idx, ]) else list(),
     if (length(total_idx)   > 0) list(df[total_idx,   ]) else list()

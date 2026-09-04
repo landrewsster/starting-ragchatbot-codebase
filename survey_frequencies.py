@@ -356,26 +356,41 @@ q_free_text_cols: dict[str, list[str]] = {}
 for _fc, _qk in free_text_associations.items():
     q_free_text_cols.setdefault(_qk, []).append(_fc)
 
-# Ordered response categories for known question types
-ORDERED_LIKERT     = [
-    "Strongly agree", "Agree", "Neither agree nor disagree",
-    "Disagree", "Strongly disagree", "Don't know",
-]
-ORDERED_CONFIDENCE = ["Very confident", "Somewhat confident", "Not confident", "Don't know"]
+# Ordered response categories for known question types (survey presentation order)
+ORDERED_LIKERT     = ["Strongly agree", "Agree", "Disagree", "Strongly disagree", "Don't know"]
+ORDERED_SUPPORT    = ["Very supportive", "Somewhat supportive", "Neither supportive nor opposed",
+                      "Somewhat opposed", "Very opposed"]
+ORDERED_KNOWLEDGE  = ["Very knowledgeable", "Somewhat knowledgeable",
+                      "Not very knowledgeable", "Not at all knowledgeable"]
+ORDERED_CONFIDENCE = ["Very confident", "Somewhat confident",
+                      "Not very confident", "Not at all confident"]
 
 # Numeric scores for ordinal tests (Wilcoxon, Mann-Whitney U).
 # "Don't know" is intentionally absent → becomes NaN → excluded from tests.
 LIKERT_SCORE_MAP = {
-    "strongly agree":             5,
-    "agree":                      4,
-    "neither agree nor disagree": 3,
-    "disagree":                   2,
-    "strongly disagree":          1,
+    "strongly agree":    4,
+    "agree":             3,
+    "disagree":          2,
+    "strongly disagree": 1,
+}
+SUPPORT_SCORE_MAP = {
+    "very supportive":              5,
+    "somewhat supportive":          4,
+    "neither supportive nor opposed": 3,
+    "somewhat opposed":             2,
+    "very opposed":                 1,
+}
+KNOWLEDGE_SCORE_MAP = {
+    "very knowledgeable":         4,
+    "somewhat knowledgeable":     3,
+    "not very knowledgeable":     2,
+    "not at all knowledgeable":   1,
 }
 CONFIDENCE_SCORE_MAP = {
-    "very confident":     3,
-    "somewhat confident": 2,
-    "not confident":      1,
+    "very confident":         4,
+    "somewhat confident":     3,
+    "not very confident":     2,
+    "not at all confident":   1,
 }
 
 LIKERT_PATTERNS = [
@@ -387,6 +402,10 @@ LIKERT_PATTERNS = [
     r"routine toxicology screening",
     r"clinicians should screen",
 ]
+SUPPORT_PATTERNS    = [r"how you feel about the legalization",
+                       r"best describes how you feel about"]
+KNOWLEDGE_PATTERNS  = [r"level of knowledge about the potential health risks",
+                       r"how would you describe your current level of knowledge"]
 CONFIDENCE_PATTERNS = [r"talk about (cannabis|tobacco|alcohol)"]
 
 # Branching rules — questions only shown to respondents who answered a parent
@@ -512,6 +531,10 @@ QUESTION_DENOM_OVERRIDES = {
 def ordered_for_col(col):
     if any(re.search(p, col, re.IGNORECASE) for p in LIKERT_PATTERNS):
         return ORDERED_LIKERT
+    if any(re.search(p, col, re.IGNORECASE) for p in SUPPORT_PATTERNS):
+        return ORDERED_SUPPORT
+    if any(re.search(p, col, re.IGNORECASE) for p in KNOWLEDGE_PATTERNS):
+        return ORDERED_KNOWLEDGE
     if any(re.search(p, col, re.IGNORECASE) for p in CONFIDENCE_PATTERNS):
         return ORDERED_CONFIDENCE
     return None
@@ -1852,11 +1875,15 @@ def _add_pvalues(df, N1, N0, col_n1, col_n0, col_N1=None, col_N0=None):
 
 
 def _score_map_for_col(col):
-    """Return (score_map, null_median) for a Likert/confidence column, or (None, None)."""
+    """Return (score_map, null_median) for an ordered-scale column, or (None, None)."""
     if any(re.search(p, col, re.IGNORECASE) for p in LIKERT_PATTERNS):
-        return LIKERT_SCORE_MAP, 3          # neutral = "Neither agree nor disagree"
+        return LIKERT_SCORE_MAP, 2.5        # midpoint between Agree(3) and Disagree(2)
+    if any(re.search(p, col, re.IGNORECASE) for p in SUPPORT_PATTERNS):
+        return SUPPORT_SCORE_MAP, 3         # midpoint = "Neither supportive nor opposed"
+    if any(re.search(p, col, re.IGNORECASE) for p in KNOWLEDGE_PATTERNS):
+        return KNOWLEDGE_SCORE_MAP, 2.5     # midpoint between Somewhat(3) and Not very(2)
     if any(re.search(p, col, re.IGNORECASE) for p in CONFIDENCE_PATTERNS):
-        return CONFIDENCE_SCORE_MAP, 2      # midpoint = "Somewhat confident"
+        return CONFIDENCE_SCORE_MAP, 2.5    # midpoint between Somewhat(3) and Not very(2)
     return None, None
 
 
