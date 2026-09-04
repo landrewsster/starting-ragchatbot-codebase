@@ -113,7 +113,20 @@ get_sata_data <- function(df, pattern) {
     )
 }
 
-make_hbar <- function(df, title = NULL) {
+get_missing_note <- function(df, pattern) {
+  miss <- df %>%
+    filter(
+      str_detect(Question, regex(pattern, ignore_case = TRUE)),
+      Response == "Missing (skipped)"
+    )
+  if (nrow(miss) == 0) return(NULL)
+  n_miss   <- suppressWarnings(as.numeric(miss$n[1]))
+  pct_miss <- suppressWarnings(as.numeric(miss$`%`[1]))
+  if (is.na(n_miss) || n_miss == 0) return(NULL)
+  paste0(round(pct_miss, 0), "% missing (skipped; n=", n_miss, ")")
+}
+
+make_hbar <- function(df, title = NULL, missing_note = NULL) {
   N_denom <- df$N[1]
 
   plot_df <- df %>%
@@ -124,6 +137,17 @@ make_hbar <- function(df, title = NULL) {
     )
 
   x_max <- max(plot_df$pct, na.rm = TRUE)
+
+  caption_base <- paste0(
+    "n = ", N_denom,
+    "  |  Each bar shows % of respondents who selected that option;",
+    " totals may exceed 100%"
+  )
+  caption_text <- if (!is.null(missing_note)) {
+    paste0(caption_base, ".  ", missing_note, ".")
+  } else {
+    paste0(caption_base, ".")
+  }
 
   ggplot(plot_df, aes(x = pct, y = resp_wrapped)) +
     geom_col(fill = "#4472C4", width = 0.65) +
@@ -143,11 +167,7 @@ make_hbar <- function(df, title = NULL) {
       title   = NULL,
       x       = NULL,
       y       = NULL,
-      caption = paste0(
-        "n = ", N_denom,
-        "  |  Each bar shows % of respondents who selected that option;",
-        " totals may exceed 100%"
-      )
+      caption = caption_text
     ) +
     theme_minimal(base_size = 13) +
     theme(
@@ -176,8 +196,9 @@ for (spec in CHARTS) {
   cat(sprintf("Building chart: %s  (%d response options)\n",
               spec$stem, nrow(raw)))
 
+  miss_note  <- get_missing_note(eligible, spec$pattern)
   title_text <- if (!is.null(spec$title)) spec$title else unique(raw$Question)[1]
-  p <- make_hbar(raw, title = title_text)
+  p <- make_hbar(raw, title = title_text, missing_note = miss_note)
   ggsave(make_out(spec$stem), p,
          width = 11, height = spec$height, dpi = 300, bg = "white")
   cat(sprintf("  Saved: %s\n", basename(make_out(spec$stem))))

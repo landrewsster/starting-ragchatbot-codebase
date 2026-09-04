@@ -400,7 +400,8 @@ make_chart <- function(df_in, collapsed,
                         pos_label = "Positive", neg_label = "Negative",
                         neutral_label = "Neither",
                         pos_arrow = NULL, neg_arrow = NULL,
-                        title = "Cannabis Screening Survey") {
+                        title = "Cannabis Screening Survey",
+                        missing_note = NULL) {
 
   d       <- build_plot_data(df_in, collapsed, pos_levels, neg_levels,
                               dk_levels, neutral_levels,
@@ -422,12 +423,14 @@ make_chart <- function(df_in, collapsed,
       if (length(pos_levels)     > 1) paste0(pos_label,     " = ", paste(rev(pos_levels),     collapse = " + ")),
       if (length(neg_levels)     > 1) paste0(neg_label,     " = ", paste(rev(neg_levels),     collapse = " + ")),
       if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
-      "Percentages of all respondents."
+      "Percentages of all respondents.",
+      if (!is.null(missing_note)) missing_note
     ), sep = "  ")
   } else {
     glue_collapse(c(
       if (length(neutral_levels) > 0) paste0('"', neutral_label, '" bar centered at zero'),
-      "Percentages of all respondents."
+      "Percentages of all respondents.",
+      if (!is.null(missing_note)) missing_note
     ), sep = "  ")
   }
 
@@ -514,6 +517,31 @@ make_chart <- function(df_in, collapsed,
 # ── Caption helper (avoids importing glue) ────────────────────────────────────
 glue_collapse <- function(x, sep = "") paste(x[nchar(x) > 0], collapse = sep)
 
+# ── Missing-response footnote helper ─────────────────────────────────────────
+# Returns a short string like "Up to 3% missing (skipped) across 2 questions"
+# when any question in the chart has missing responses, otherwise NULL.
+get_missing_caption <- function(df_all, patterns) {
+  miss <- df_all %>%
+    filter(
+      sapply(Question, is_q_in, patterns = patterns),
+      Response == "Missing (skipped)"
+    ) %>%
+    mutate(
+      pct_num = suppressWarnings(as.numeric(`%`)),
+      n_num   = suppressWarnings(as.numeric(n))
+    ) %>%
+    filter(!is.na(n_num), n_num > 0)
+  if (nrow(miss) == 0) return(NULL)
+  max_pct <- max(miss$pct_num, na.rm = TRUE)
+  n_qs    <- n_distinct(miss$Question)
+  if (n_qs == 1) {
+    n_miss <- sum(miss$n_num, na.rm = TRUE)
+    paste0(round(max_pct, 0), "% missing (skipped; n=", n_miss, ")")
+  } else {
+    paste0("Up to ", round(max_pct, 0), "% missing (skipped) across ", n_qs, " questions")
+  }
+}
+
 
 # ── Save charts ───────────────────────────────────────────────────────────────
 LIKERT_TITLE <- "Attitudes Toward Cannabis Use During Pregnancy and Breastfeeding"
@@ -530,7 +558,8 @@ OPINION_TITLE <- "Attitudes Toward Cannabis Legalization in Minnesota"
 ggsave(make_out("likert_chart1", "uncollapsed"),
        make_chart(raw1, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE),
+                  title = LIKERT_TITLE,
+                  missing_note = get_missing_caption(eligible, CHART1_PATTERNS)),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 
@@ -538,7 +567,8 @@ cat("Saved:", basename(make_out("likert_chart1", "uncollapsed")), "\n")
 ggsave(make_out("likert_chart2", "uncollapsed"),
        make_chart(raw2, FALSE, LIKERT_POS, LIKERT_NEG, DK,
                   pos_label = "Agree", neg_label = "Disagree",
-                  title = LIKERT_TITLE),
+                  title = LIKERT_TITLE,
+                  missing_note = get_missing_caption(eligible, CHART2_PATTERNS)),
        width = 13, height = 7, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("likert_chart2", "uncollapsed")), "\n")
 
@@ -547,7 +577,8 @@ ggsave(make_out("confidence", "uncollapsed"),
        make_chart(raw_conf, FALSE, CONF_POS, CONF_NEG, DK,
                   pos_label = "Confident", neg_label = "Not confident",
                   pos_arrow = "Confident →", neg_arrow = "← Not confident",
-                  title = CONF_TITLE),
+                  title = CONF_TITLE,
+                  missing_note = get_missing_caption(eligible, CONF_PATTERNS)),
        width = 12, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("confidence", "uncollapsed")), "\n")
 
@@ -556,7 +587,8 @@ ggsave(make_out("knowledge", "uncollapsed"),
        make_chart(raw_know, FALSE, KNOW_POS, KNOW_NEG, character(0),
                   pos_label = "Knowledgeable", neg_label = "Not knowledgeable",
                   pos_arrow = "Knowledgeable →", neg_arrow = "← Not knowledgeable",
-                  title = KNOW_TITLE),
+                  title = KNOW_TITLE,
+                  missing_note = get_missing_caption(eligible, KNOW_PATTERNS)),
        width = 11, height = 4.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("knowledge", "uncollapsed")), "\n")
 
@@ -567,6 +599,7 @@ ggsave(make_out("opinion", "uncollapsed"),
                   pos_label = "Supportive", neg_label = "Opposed",
                   neutral_label = "Neither",
                   pos_arrow = "Supportive →", neg_arrow = "← Opposed",
-                  title = OPINION_TITLE),
+                  title = OPINION_TITLE,
+                  missing_note = get_missing_caption(eligible, OPINION_PATTERNS)),
        width = 11, height = 3.5, dpi = 300, bg = "white")
 cat("Saved:", basename(make_out("opinion", "uncollapsed")), "\n")
