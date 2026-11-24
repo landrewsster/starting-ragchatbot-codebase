@@ -415,7 +415,8 @@ make_crosstab_table <- function(df, label1, label0) {
 # Loop through all questions in a cross-tab sheet and emit one table per question
 add_crosstab_section <- function(doc, ct_df, label1, label0, heading) {
   if (is.null(ct_df) || nrow(ct_df) == 0) return(doc)
-  ct_df <- ct_df %>% filter(is.na(Type) | Type != "Open text")
+  if ("Type" %in% names(ct_df))
+    ct_df <- ct_df %>% filter(is.na(Type) | Type != "Open text")
   if (nrow(ct_df) == 0) return(doc)
 
   doc <- body_add_par(doc, heading, style = "heading 2")
