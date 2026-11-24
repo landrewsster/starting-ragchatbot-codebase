@@ -38,7 +38,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 if len(sys.argv) > 1:
     INPUT_FILE = BASE / sys.argv[1]
 else:
-    INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-11-24_1032.csv"
+    INPUT_FILE = BASE / "MCHHealthcareProvide-DataSetForLauraAndNo_DATA_LABELS_2026-11-24_1032_EDITED.csv"
 
 OUTPUT_FILE = OUTPUT_DIR / (INPUT_FILE.stem + "_frequencies.xlsx")
 
