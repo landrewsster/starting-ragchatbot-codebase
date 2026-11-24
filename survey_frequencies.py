@@ -1875,7 +1875,7 @@ def build_dropout_analysis(completers_df, partials_df):
 
     df = pd.DataFrame(rows)
     n_sig = int((df["p_value"].notna() & (df["p_value"] < 0.05)).sum())
-    print(f"  Dropout analysis: {df['Variable'].nunique()} variables tested, "
+    print(f"  Dropout analysis: {df['Question'].nunique()} variables tested, "
           f"{n_sig} significant at p < .05  "
           f"(completers N={n_comp}, partials N={n_part})")
     return df
