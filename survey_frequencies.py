@@ -1795,6 +1795,91 @@ def build_mcar_analysis(df_sub, min_pct_missing=5.0, min_demo_completeness=0.70,
     return mcar_df
 
 
+def build_dropout_analysis(completers_df, partials_df):
+    """
+    Compare completers vs partial completers on demographic variables.
+    Tests whether dropping off mid-survey is associated with any demographic.
+    Returns a crosstab-style DataFrame (chi-square or Fisher's exact per variable).
+    """
+    if not _SCIPY:
+        print("  Dropout analysis skipped — scipy not installed")
+        return pd.DataFrame()
+    if partials_df is None or partials_df.empty:
+        print("  Dropout analysis skipped — no partial completers")
+        return pd.DataFrame()
+
+    DEMO_TEST_PATTERNS = [
+        (r"what is your gender",                                               "Gender"),
+        (r"what is your age",                                                  "Age"),
+        (r"what is your profession",                                           "Profession"),
+        (r"how long have you been practicing",                                 "Tenure"),
+        (r"which of the following best describes your primary practice setting","Practice setting"),
+        (r"race.{0,10}ethnicity",                                              "Race/ethnicity"),
+        (r"primary specialty",                                                 "Primary specialty"),
+        (r"do you primarily see pregnant",                                     "Primarily prenatal patients"),
+        (r"insurance status of patients",                                      "Patient insurance mix"),
+    ]
+
+    all_elig = pd.concat([completers_df, partials_df], ignore_index=True)
+    n_comp = len(completers_df)
+    n_part = len(partials_df)
+    rows = []
+
+    for pattern, display_name in DEMO_TEST_PATTERNS:
+        col = next(
+            (c for c in all_elig.columns
+             if re.search(pattern, c, re.IGNORECASE) and "(choice=" not in c),
+            None,
+        )
+        if col is None:
+            continue
+
+        comp_vals = completers_df[col].astype(str).str.strip().replace("", pd.NA).dropna()
+        part_vals = partials_df[col].astype(str).str.strip().replace("", pd.NA).dropna()
+        comp_vals = comp_vals[comp_vals.str.lower() != "nan"]
+        part_vals = part_vals[part_vals.str.lower() != "nan"]
+
+        all_cats = sorted(set(comp_vals.unique()) | set(part_vals.unique()))
+        if not all_cats:
+            continue
+
+        comp_counts = comp_vals.value_counts()
+        part_counts = part_vals.value_counts()
+        n_comp_ans  = int(comp_vals.count())
+        n_part_ans  = int(part_vals.count())
+
+        table = [[int(comp_counts.get(c, 0)), int(part_counts.get(c, 0))] for c in all_cats]
+        p_val, test_name, stat_val, _ = _stat_test(table)
+
+        for i, cat in enumerate(all_cats):
+            n_c = int(comp_counts.get(cat, 0))
+            n_p = int(part_counts.get(cat, 0))
+            rows.append({
+                "Variable":        display_name,
+                "Response":        cat,
+                "n (Completers)":  n_c,
+                "% (Completers)":  round(n_c / n_comp_ans * 100, 1) if n_comp_ans > 0 else None,
+                "n (Partials)":    n_p,
+                "% (Partials)":    round(n_p / n_part_ans * 100, 1) if n_part_ans > 0 else None,
+                "N (Completers)":  n_comp_ans,
+                "N (Partials)":    n_part_ans,
+                "p_value":         round(p_val, 4) if p_val is not None and i == 0 else None,
+                "test":            test_name       if i == 0 else None,
+                "stat_value":      stat_val        if i == 0 else None,
+            })
+
+    if not rows:
+        print("  Dropout analysis: no demographic columns found")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    n_sig = int((df["p_value"].notna() & (df["p_value"] < 0.05)).sum())
+    print(f"  Dropout analysis: {df['Variable'].nunique()} variables tested, "
+          f"{n_sig} significant at p < .05  "
+          f"(completers N={n_comp}, partials N={n_part})")
+    return df
+
+
 def _col_scores(series, score_map):
     """Map a raw response Series to numeric Likert/confidence scores.
     Values absent from score_map (e.g. 'Don't know') become NaN and are excluded."""
@@ -2563,6 +2648,10 @@ if elig_col:
     print(f"\nScreener freq: {len(screener_freq_df)} rows "
           f"(N all-screened = {len(_all_screened)})")
 
+# ── Dropout analysis — completers vs partial completers ───────────────────────
+print("\nBuilding dropout analysis ...")
+dropout_df = build_dropout_analysis(completers, _partials)
+
 # ── Write output ──────────────────────────────────────────────────────────────
 print(f"\nWriting: {OUTPUT_FILE.name}")
 
@@ -2574,6 +2663,7 @@ sheets = {
     "missingness_started":    missingness_started_df,
     "missingness_complete":   missingness_complete_df,
     "mcar_analysis":          mcar_df,
+    "dropout_analysis":       dropout_df,
     "resp_complete_summary":  resp_complete_summary_df,
     "resp_complete_detail":   resp_complete_detail_df,
     "crosstab_metro":       crosstab_metro_df,
