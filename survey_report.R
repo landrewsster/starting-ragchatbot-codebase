@@ -55,6 +55,7 @@ eligible <- {
 }
 ineligible       <- read_if("ineligible")
 screener_data    <- read_if("screener")
+dropout_analysis   <- read_if("dropout_analysis")
 crosstab_metro     <- read_if("crosstab_metro")
 crosstab_tenure    <- read_if("crosstab_tenure")
 crosstab_no_screen  <- read_if("crosstab_no_screen")
@@ -1006,6 +1007,10 @@ if (!is.null(completion_time) && nrow(completion_time) > 0) {
 }
 
 # 7. Cross-tabulations
+doc <- add_crosstab_section(
+  doc, dropout_analysis, "Completers", "Partials",
+  "Dropout Analysis: Survey Completers vs Partial Completers (Demographics)"
+)
 doc <- add_crosstab_section(
   doc, crosstab_metro, "Metro", "Non-metro",
   "Cross-Tabulation by Metro / Non-Metro"

@@ -1855,7 +1855,8 @@ def build_dropout_analysis(completers_df, partials_df):
             n_c = int(comp_counts.get(cat, 0))
             n_p = int(part_counts.get(cat, 0))
             rows.append({
-                "Variable":        display_name,
+                "Question":        display_name,
+                "Type":            "Single choice",
                 "Response":        cat,
                 "n (Completers)":  n_c,
                 "% (Completers)":  round(n_c / n_comp_ans * 100, 1) if n_comp_ans > 0 else None,
